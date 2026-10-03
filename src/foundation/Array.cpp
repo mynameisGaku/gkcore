@@ -25,34 +25,53 @@ bool RawArray::Reserve(uint32_t capacity) {
 }
 
 bool RawArray::Append(const void* element) {
-    if (!element || count_ == UINT32_MAX) return false;
-    void* aliasCopy = nullptr;
+    return AppendRange(element, 1);
+}
+
+bool RawArray::AppendRange(const void* elements, uint32_t count) {
+    if (count == 0) return true;
+    if (!elements || elementSize_ == 0 || count > UINT32_MAX - count_) return false;
+    if (count > UINT32_MAX / elementSize_) return false;
+    const uint32_t requiredCount = count_ + count;
+    if (requiredCount > UINT32_MAX / elementSize_) return false;
     const size_t usedBytes = static_cast<size_t>(count_) * elementSize_;
-    if (data_ && elementSize_ != 0) {
-        const uintptr_t base = reinterpret_cast<uintptr_t>(data_);
-        const uintptr_t source = reinterpret_cast<uintptr_t>(element);
-        if (source >= base && source - base < usedBytes &&
-            elementSize_ <= usedBytes - static_cast<size_t>(source - base)) {
-            aliasCopy = Allocate(elementSize_);
-            if (!aliasCopy) return false;
-            memcpy(aliasCopy, element, elementSize_);
-            element = aliasCopy;
-        }
+    const size_t allocatedBytes = static_cast<size_t>(capacity_) * elementSize_;
+    const size_t appendBytes = static_cast<size_t>(count) * elementSize_;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(data_);
+    const uintptr_t source = reinterpret_cast<uintptr_t>(elements);
+    if (appendBytes > UINTPTR_MAX - source || allocatedBytes > UINTPTR_MAX - base) return false;
+    const uintptr_t usedEnd = base + usedBytes;
+    const uintptr_t allocatedEnd = base + allocatedBytes;
+    const uintptr_t sourceEnd = source + appendBytes;
+    const bool overlapsUsed = data_ && source < usedEnd && base < sourceEnd;
+    const bool overlapsAllocation = data_ && source < allocatedEnd && base < sourceEnd;
+    size_t aliasOffset = 0;
+    if (overlapsAllocation) {
+        if (!overlapsUsed) return false;
+        if (source < base) return false;
+        aliasOffset = static_cast<size_t>(source - base);
+        if (aliasOffset > usedBytes || appendBytes > usedBytes - aliasOffset) return false;
     }
-    if (count_ == capacity_) {
+
+    if (requiredCount > capacity_) {
         uint32_t next = capacity_ == 0 ? 4 : capacity_;
-        if (capacity_ != 0) {
-            if (capacity_ > UINT32_MAX / 2) next = UINT32_MAX;
-            else next = capacity_ * 2;
+        while (next < requiredCount) {
+            if (next > UINT32_MAX / 2) {
+                next = requiredCount;
+                break;
+            }
+            next *= 2;
         }
-        if (next <= capacity_ || !Reserve(next)) {
-            Deallocate(aliasCopy);
-            return false;
-        }
+        const uint32_t maximumCount = UINT32_MAX / elementSize_;
+        if (next > maximumCount) next = requiredCount;
+        if (next < requiredCount || !Reserve(next)) return false;
     }
-    memcpy(static_cast<unsigned char*>(data_) + static_cast<size_t>(count_) * elementSize_, element, elementSize_);
-    ++count_;
-    Deallocate(aliasCopy);
+
+    const void* sourceAfterGrowth = overlapsAllocation
+        ? static_cast<const unsigned char*>(data_) + aliasOffset
+        : elements;
+    memcpy(static_cast<unsigned char*>(data_) + usedBytes, sourceAfterGrowth, appendBytes);
+    count_ = requiredCount;
     return true;
 }
 

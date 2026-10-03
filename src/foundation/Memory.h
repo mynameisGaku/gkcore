@@ -1,6 +1,7 @@
 #pragma once
 
 #include <stddef.h>
+#include <stdint.h>
 
 /**
  * C-runtime memory allocation helpers used by foundation containers.
@@ -19,5 +20,16 @@ void* Reallocate(void* memory, size_t size);
  * Releases storage returned by Allocate or Reallocate.
  */
 void Deallocate(void* memory);
+
+#ifdef GKCORE_TESTING
+/**
+ * Allows the requested number of successful allocations before later requests fail.
+ */
+void SetAllocationFailureAfterForTesting(uint32_t successfulAllocations);
+/**
+ * Disables deterministic allocation failure injection.
+ */
+void ResetAllocationFailureForTesting();
+#endif
 
 } // namespace gk

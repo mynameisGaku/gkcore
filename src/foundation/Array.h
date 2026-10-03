@@ -35,6 +35,10 @@ public:
      */
     bool Append(const void* element);
     /**
+     * Appends a record range, including ranges aliased into the used portion of this array.
+     */
+    bool AppendRange(const void* elements, uint32_t count);
+    /**
      * Removes all records while retaining allocated capacity.
      */
     void Clear();
@@ -101,6 +105,10 @@ public:
      * Appends a record, including when value aliases an existing element.
      */
     bool Append(const T& value) { return storage_.Append(&value); }
+    /**
+     * Appends a typed range; a zero count succeeds without requiring a pointer.
+     */
+    bool AppendRange(const T* values, uint32_t count) { return storage_.AppendRange(values, count); }
     /**
      * Removes all records while retaining capacity.
      */
