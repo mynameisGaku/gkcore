@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="620" viewBox="0 0 1080 620" role="img" aria-labelledby="title desc">
+  <title id="title">gkcore の描画処理順</title>
+  <desc id="desc">Scene の 2D と 3D を HDR 描画先へ描き、Bloom と露出・tone mapping を適用した後に UI を合成する実装順です。Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。</desc>
+  <defs>
+    <linearGradient id="scene" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#162a48"/>
+      <stop offset="1" stop-color="#315783"/>
+    </linearGradient>
+    <linearGradient id="effects" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#40305b"/>
+      <stop offset="1" stop-color="#714f91"/>
+    </linearGradient>
+    <linearGradient id="ui" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#164b49"/>
+      <stop offset="1" stop-color="#24756e"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 Z" fill="#7186a3"/>
+    </marker>
+    <style>
+      text { font-family: "Yu Gothic UI", "Meiryo", sans-serif; }
+      .title { fill: #edf4ff; font-size: 25px; font-weight: 700; }
+      .subtitle { fill: #adbed5; font-size: 14px; }
+      .head { fill: #f3f7ff; font-size: 19px; font-weight: 700; }
+      .body { fill: #d6e2f2; font-size: 15px; }
+      .small { fill: #a9bad0; font-size: 13px; }
+      .status { fill: #152339; font-size: 16px; font-weight: 700; }
+      .statusBody { fill: #30425a; font-size: 14px; }
+    </style>
+  </defs>
+  <rect width="1080" height="620" rx="20" fill="#0c1422"/>
+  <text x="48" y="52" class="title">1フレームの描画順</text>
+  <text x="48" y="78" class="subtitle">Scene に効果を適用し、その後 UI を合成</text>
+
+  <g transform="translate(48 123)">
+    <rect width="250" height="222" rx="15" fill="url(#scene)" stroke="#4d78ad" stroke-width="1.5"/>
+    <text x="22" y="38" class="head">Scene</text>
+    <text x="22" y="72" class="body">3D のモデル・図形</text>
+    <text x="22" y="99" class="body">2D のスプライト・図形</text>
+    <path d="M24 130 H226" stroke="#7c9abe" stroke-opacity=".55"/>
+    <text x="22" y="160" class="small">同じゲーム内レイヤー</text>
+    <text x="22" y="185" class="small">3D 深度と 2D 座標を併用</text>
+  </g>
+  <path d="M310 234 H355" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <g transform="translate(370 123)">
+    <rect width="225" height="222" rx="15" fill="url(#effects)" stroke="#9a77bd" stroke-width="1.5"/>
+    <text x="22" y="38" class="head">HDR + ポスト効果</text>
+    <text x="22" y="78" class="body">Bloom</text>
+    <text x="22" y="108" class="body">光の抽出・ぼかし</text>
+    <text x="22" y="138" class="body">露出・階調変換</text>
+    <text x="22" y="185" class="small">2D / 3D の Scene に適用</text>
+  </g>
+  <path d="M607 234 H652" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <g transform="translate(667 123)">
+    <rect width="175" height="222" rx="15" fill="url(#ui)" stroke="#55a89f" stroke-width="1.5"/>
+    <text x="22" y="38" class="head">UI</text>
+    <text x="22" y="78" class="body">文字</text>
+    <text x="22" y="108" class="body">HUD・メニュー</text>
+    <text x="22" y="158" class="small">効果の後で合成</text>
+    <text x="22" y="182" class="small">読みやすさを保つ</text>
+  </g>
+  <path d="M854 234 H899" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <g transform="translate(914 123)">
+    <rect width="120" height="222" rx="15" fill="#1d293a" stroke="#73849a" stroke-width="1.5"/>
+    <rect x="17" y="42" width="86" height="100" rx="5" fill="#080e17" stroke="#93a6bd"/>
+    <path d="M33 120 L50 81 L64 104 L76 67 L89 120Z" fill="#56a0ef" opacity=".86"/>
+    <text x="20" y="177" class="body">画面</text>
+    <text x="20" y="200" class="small">画面へ表示</text>
+  </g>
+
+  <rect x="48" y="389" width="986" height="166" rx="16" fill="#e6edf7"/>
+  <circle cx="82" cy="426" r="7" fill="#d28b32"/>
+  <text x="102" y="432" class="status">描画処理の実装状況</text>
+  <text x="76" y="470" class="statusBody">図形・モデル形状・画像・文字表示と、Scene → HDR/Bloom/露出/階調変換 → UI の経路を実装。</text>
+  <text x="76" y="499" class="statusBody">Windows/MSVC でのリンクと実 GPU 上の表示は未確認。</text>
+  <text x="76" y="531" class="small">処理順を示す図です。実際の画面を撮影した画像ではありません。</text>
+</svg>

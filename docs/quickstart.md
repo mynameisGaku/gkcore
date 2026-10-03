@@ -1,0 +1,51 @@
+# はじめての gkcore
+
+利用側は `<gkcore.h>` だけを読み込み、`gk::` の関数でウィンドウ、入力、描画を操作します。The Forge API はアプリ側へ公開しません。公開 API とサンプルは C++ 標準ライブラリ/STL に依存しない方針です。
+
+## 最小ループ
+
+```cpp
+#include <gkcore.h>
+
+int main() {
+    if (gk::SetWindowSize(1280, 720) != 0) return 1;
+    if (gk::Init() != 0) return 1;
+
+    while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
+        if (gk::BeginFrame() != 0 ||
+            gk::SetDrawLayer(gk::DrawLayer::Scene) != 0 ||
+            gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f,
+                         gk::ColorRGB(70, 150, 240), true) != 0 ||
+            gk::SetDrawLayer(gk::DrawLayer::UI) != 0 ||
+            gk::DrawString(32.0f, 660.0f, "Escape キーで終了", gk::ColorRGB(255, 255, 255)) != 0 ||
+            gk::Present() != 0) break;
+    }
+
+    gk::Shutdown();
+    return 0;
+}
+```
+
+失敗した関数の直後に `gk::GetLastErrorMessage()` を使うと、原因の文字列を確認できます。`ProcessEvents()` はウィンドウが閉じられるまで `true` を返します。
+
+## 2D と 3D を同じフレームに描く
+
+[`examples/mixed_scene.cpp`](../examples/mixed_scene.cpp) は同じフレームの `Scene` 層に 3D 三角形と 2D 矩形を置き、`UI` 層に矩形と日本語文字を描く例です。`gk::DrawString` は Windows のシステム標準フォントを使い、同じ文字列・色・大きさの描画を上限付きキャッシュで再利用します。フォントファイルを別途用意する必要はありません。
+
+PNG / BMP 画像と OBJ / GLB 2.0 モデルは CPU 側で読み取れます。画像は画面上に描画する経路まで実装されています。GLB の画像や PBR 材質を使った描画は未対応です。Windows/MSVC でのリンクと実 GPU 上の表示は未確認です。詳しくは [機能一覧](ROADMAP.md) を確認してください。
+
+3D カメラには `gk::SetCamera(gk::Vec3{...}, gk::Vec3{...})` で位置と注視点を渡します。モデルハンドルは `gk::LoadModel` で取得し、`gk::SetModelPosition`、`gk::SetModelRotation`、`gk::SetModelScale` で指定した値が後続の `gk::DrawModel` に使われます。使い終えたら `gk::DeleteModel` で解放します。画像も `ImageHandle` で管理します。
+
+描画命令は `gk::BeginFrame()` と `gk::Present()` の間に追加します。`gk::DrawLayer::Scene` に 2D/3D のゲーム描画を置くと、HDR 描画先へまとめて描画され、初期設定で有効な Bloom と露出・明るさの調整が適用されます。その後 `gk::DrawLayer::UI` の HUD を合成します。Scene と UI は別の描画層で、それぞれの中の命令順を保ちます。効果は `BeginFrame()` 時点の設定でそのフレームに適用されます。
+
+## キーとマウス
+
+`gk::IsKeyDown(gk::Key::ArrowLeft)` などでキーの現在状態を、`gk::IsMouseButtonDown(gk::MouseButton::Left)` でマウスボタンの状態を調べます。`gk::GetMousePosition(x, y)` はクライアント領域内の座標を返します。入力はアプリの main thread から問い合わせます。ウィンドウに focus がない間はボタン状態が false になり、座標取得は false を返して `x` と `y` に 0 を書き込みます。
+
+## ポストエフェクト
+
+`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled` で効果を調整できます。初期設定では Bloom と tone mapping が有効です。効果は Scene に適用され、UI はその後に合成されます。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
+
+## 開発環境
+
+開発環境の前提条件、The Forge/DXC の取得、ビルドとテストの手順は [`PRE_SETUP.bat`](../PRE_SETUP.bat) にあります。セットアップが成功すると `BUILD READY` と表示します。実 GPU の描画確認は DX12 対応 Windows PC で `PRE_SETUP.bat --gpu-check` を実行します。
