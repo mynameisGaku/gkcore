@@ -1,0 +1,43 @@
+name: Windows native build
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      gpu_smoke:
+        description: Run the optional Direct3D 12 smoke test on a self-hosted GPU runner
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  runtime-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Add the pinned v142 compiler toolset
+        shell: pwsh
+        run: |
+          $programFilesX86 = ${env:ProgramFiles(x86)}
+          $vswhere = Join-Path $programFilesX86 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $installPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if ($LASTEXITCODE -ne 0 -or -not $installPath) { throw 'Visual Studio 2022 C++ workload was not found.' }
+          $installer = Join-Path $programFilesX86 'Microsoft Visual Studio/Installer/setup.exe'
+          & $installer modify --installPath $installPath --add Microsoft.VisualStudio.Component.VC.v142.x86.x64 --quiet --norestart --wait
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "Installing the v142 toolset failed with exit code $LASTEXITCODE." }
+      - name: Verify v142 and build the Runtime SDK
+        shell: cmd
+        run: PRE_SETUP.bat
+
+  gpu-smoke:
+    if: github.event_name == 'workflow_dispatch' && inputs.gpu_smoke
+    runs-on: [self-hosted, Windows, DX12]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the full suite plus Direct3D 12 smoke test
+        shell: cmd
+        run: PRE_SETUP.bat --gpu-check

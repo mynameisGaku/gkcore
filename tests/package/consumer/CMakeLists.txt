@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.20)
+project(gkcorePackageConsumer LANGUAGES CXX)
+find_package(gkcore CONFIG REQUIRED)
+add_executable(package_consumer main.cpp)
+target_link_libraries(package_consumer PRIVATE gkcore::gkcore)

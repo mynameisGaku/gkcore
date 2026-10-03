@@ -1,0 +1,27 @@
+#include "gkcore_postprocess.fsl.h"
+
+STRUCT(PostProcessVertex)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float2, UV, TEXCOORD);
+};
+
+float3 ToneMapAces(float3 color)
+{
+    color = max(color, float3(0.0, 0.0, 0.0));
+    return saturate((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14));
+}
+
+ROOT_SIGNATURE(DefaultRootSignature)
+float4 PS_MAIN(PostProcessVertex input)
+{
+    INIT_MAIN;
+    float3 scene = SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).rgb;
+    float3 bloom = SampleTex2D(gPostBloomTexture, gPostSampler, input.UV).rgb;
+    float3 color = (scene + bloom * gPostConstants.Parameters.x) * gPostConstants.Parameters.y;
+    if (gPostConstants.Parameters.z > 0.5)
+        color = ToneMapAces(color);
+    else
+        color = saturate(color);
+    RETURN(float4(color, 1.0));
+}

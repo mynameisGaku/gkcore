@@ -1,0 +1,15 @@
+STRUCT(PostProcessVertex)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float2, UV, TEXCOORD);
+};
+
+ROOT_SIGNATURE(DefaultRootSignature)
+PostProcessVertex VS_MAIN(SV_VertexID(uint) vertexID)
+{
+    INIT_MAIN;
+    PostProcessVertex output;
+    output.UV = float2((vertexID << 1) & 2, vertexID & 2);
+    output.Position = float4(output.UV * float2(2.0, -2.0) + float2(-1.0, 1.0), 0.0, 1.0);
+    RETURN(output);
+}

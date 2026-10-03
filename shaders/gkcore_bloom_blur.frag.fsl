@@ -1,0 +1,24 @@
+#include "gkcore_postprocess.fsl.h"
+
+STRUCT(PostProcessVertex)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float2, UV, TEXCOORD);
+};
+
+ROOT_SIGNATURE(DefaultRootSignature)
+float4 PS_MAIN(PostProcessVertex input)
+{
+    INIT_MAIN;
+    float2 offset = gPostConstants.Parameters.xy;
+    float3 color = SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).rgb * 0.2270270270;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV + offset).rgb * 0.1945945946;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV - offset).rgb * 0.1945945946;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV + offset * 2.0).rgb * 0.1216216216;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV - offset * 2.0).rgb * 0.1216216216;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV + offset * 3.0).rgb * 0.0540540541;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV - offset * 3.0).rgb * 0.0540540541;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV + offset * 4.0).rgb * 0.0162162162;
+    color += SampleTex2D(gPostSourceTexture, gPostSampler, input.UV - offset * 4.0).rgb * 0.0162162162;
+    RETURN(float4(color, 1.0));
+}

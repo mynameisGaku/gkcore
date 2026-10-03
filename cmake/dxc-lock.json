@@ -1,0 +1,14 @@
+{
+  "release": "1.8.2405",
+  "windows_url": "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2405/dxc_2024_05_24.zip",
+  "windows_sha256": "8d2656e9523e7b3b7c41159237d74f89cc98034056f61f568b8841da0449c965",
+  "files_sha256": {
+    "bin/x64/dxc.exe": "57f182988d60dec4391cda1165c73712e39df73ef2a67285f22d244d8f5007f6",
+    "bin/x64/dxcompiler.dll": "1e8bdd9f7363ff7105bc702252d120d00b25ad92f74d33c93a4b775c0a8eab43",
+    "bin/x64/dxil.dll": "c9dc429a8c1cf61af962a4a33da437f5f3cd7e698fa868ebf0937c4c40abbf07",
+    "lib/x64/dxcompiler.lib": "147a129ba691b07e7189dd5be02d744d00718cedb1f42eaaf5df0f916d299a8a",
+    "LICENSE-LLVM.txt": "729615317e28dd03907e46f0fc3b5e88f7853cee61d1a1471d2749335516b46f",
+    "LICENSE-MIT.txt": "903df5512f7d02609fed0c780a9b704f5a3eeb6e4d84ebe42a29845c81899a3c",
+    "LICENSE-MS.txt": "734f72f239fe7b07b4c7203f294c1a7ce27095687278bab7e56d630d7c672963"
+  }
+}

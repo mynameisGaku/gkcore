@@ -1,0 +1,11 @@
+/build/
+/.build/
+/out/
+/install/
+/.devtools/
+*.user
+*.suo
+*.vcxproj.user
+*.o
+__pycache__/
+*.py[cod]

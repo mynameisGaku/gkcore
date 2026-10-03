@@ -1,0 +1,39 @@
+#include "defaults.h"
+
+#rootsig default.rootsig
+#end
+
+#rootsig compute.rootsig
+#end
+
+#vert gkcore_color.vert
+#include "gkcore_color.vert.fsl"
+#end
+
+#frag gkcore_color.frag
+#include "gkcore_color.frag.fsl"
+#end
+
+#vert gkcore_sprite.vert
+#include "gkcore_sprite.vert.fsl"
+#end
+
+#frag gkcore_sprite.frag
+#include "gkcore_sprite.frag.fsl"
+#end
+
+#vert gkcore_post.vert
+#include "gkcore_post.vert.fsl"
+#end
+
+#frag gkcore_bloom_extract.frag
+#include "gkcore_bloom_extract.frag.fsl"
+#end
+
+#frag gkcore_bloom_blur.frag
+#include "gkcore_bloom_blur.frag.fsl"
+#end
+
+#frag gkcore_post_composite.frag
+#include "gkcore_post_composite.frag.fsl"
+#end

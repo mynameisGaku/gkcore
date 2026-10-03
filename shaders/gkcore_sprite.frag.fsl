@@ -1,0 +1,15 @@
+#include "gkcore_sprite.srt.h"
+
+STRUCT(VSOutput)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+};
+
+ROOT_SIGNATURE(DefaultRootSignature)
+float4 PS_MAIN(VSOutput input)
+{
+    INIT_MAIN;
+    RETURN(SampleTex2D(gImageTexture, gImageSampler, input.UV) * input.Color);
+}

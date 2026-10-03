@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "dev",
+      "displayName": "gkcore development tests (no Forge dependency)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/dev",
+      "cacheVariables": {
+        "GKCORE_BUILD_TESTS": "ON",
+        "GKCORE_BUILD_RUNTIME": "OFF"
+      }
+    },
+    {
+      "name": "runtime-windows",
+      "displayName": "Windows gkcore Runtime SDK",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "toolset": { "value": "v142", "strategy": "set" },
+      "binaryDir": "${sourceDir}/build/runtime-windows",
+      "cacheVariables": {
+        "GKCORE_BUILD_TESTS": "ON",
+        "GKCORE_BUILD_RUNTIME": "ON",
+        "GKCORE_FORGE_ROOT": "${sourceDir}/.devtools/The-Forge",
+        "GKCORE_DXC_ROOT": "${sourceDir}/.devtools/dxc-1.8.2405",
+        "GKCORE_FORGE_BUILD_DIR": "${sourceDir}/build/forge",
+        "GKCORE_SHADER_BUILD_DIR": "${sourceDir}/build/runtime-windows/gkcore_shaders"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "dev", "configurePreset": "dev" },
+    { "name": "runtime-windows", "configurePreset": "runtime-windows", "configuration": "Release" }
+  ],
+  "testPresets": [
+    { "name": "dev", "configurePreset": "dev", "output": { "outputOnFailure": true } },
+    { "name": "runtime-windows", "configurePreset": "runtime-windows", "configuration": "Release", "output": { "outputOnFailure": true } }
+  ]
+}

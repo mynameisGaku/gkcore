@@ -1,0 +1,24 @@
+STRUCT(VSInput)
+{
+    DATA(float4, Position, POSITION);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+};
+
+STRUCT(VSOutput)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+};
+
+ROOT_SIGNATURE(DefaultRootSignature)
+VSOutput VS_MAIN(VSInput input)
+{
+    INIT_MAIN;
+    VSOutput output;
+    output.Position = input.Position;
+    output.Color = input.Color;
+    output.UV = input.UV;
+    RETURN(output);
+}
