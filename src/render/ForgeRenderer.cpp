@@ -2,6 +2,7 @@
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
+#include "../image/Image.h"
 #include "../resources/Resources.h"
 
 #include <stddef.h>
@@ -82,6 +83,7 @@ void ForgeRenderer::Shutdown() {
     width_ = height_ = 0;
     vertices_.Clear();
     runs_.Clear();
+    customDraws_.Clear();
 }
 
 bool ForgeRenderer::Resize(uint32_t width, uint32_t height, String& error) {
@@ -143,6 +145,20 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
     rootSignatureInitialized_ = true;
     if (!postProcess_.Initialize(renderer_, width_, height_, swapChain_->mFormat, error)) return false;
     if (!textureCache_.Initialize(renderer_, graphicsQueue_, error)) return false;
+    const TinyImageFormat displayFormat = swapChain_->ppRenderTargets[0]->mFormat;
+    const TinyImageFormat sceneFormat = postProcess_.SceneTarget()->mFormat;
+    const SampleCount sampleCount = postProcess_.SceneTarget()->mSampleCount;
+    const uint32_t sampleQuality = postProcess_.SceneTarget()->mSampleQuality;
+    if (!customShaders_.Initialize(renderer_, graphicsQueue_, sceneFormat, displayFormat,
+                                   depthTarget_->mFormat, sampleCount, sampleQuality, error)) return false;
+
+    whiteImage_ = detail::CreateImageResource();
+    if (!whiteImage_) return SetError(error, "The white fallback image could not be allocated");
+    whiteImage_->width = 1;
+    whiteImage_->height = 1;
+    const uint8_t whitePixel[4] = {255, 255, 255, 255};
+    if (!whiteImage_->rgba.AppendRange(whitePixel, 4))
+        return SetError(error, "The white fallback image pixels could not be allocated");
 
     ShaderLoadDesc shaderDesc{};
     shaderDesc.mVert.pFileName = "gkcore_color.vert";
@@ -199,8 +215,6 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
     alphaBlend.mBlendAlphaModes[0] = BM_ADD;
     alphaBlend.mColorWriteMasks[0] = COLOR_MASK_ALL;
     alphaBlend.mRenderTargetMask = BLEND_STATE_TARGET_0;
-    const TinyImageFormat displayFormat = swapChain_->ppRenderTargets[0]->mFormat;
-    const TinyImageFormat sceneFormat = postProcess_.SceneTarget()->mFormat;
     auto createPipeline = [&](const char* name, Shader* shader, VertexLayout* vertexLayout,
                               TinyImageFormat colorFormat, TinyImageFormat depthFormat,
                               DepthStateDesc* depthState, BlendStateDesc* blendState, Pipeline** output) {
@@ -259,7 +273,12 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
 
 void ForgeRenderer::DestroyGraphicsResources() {
     if (!renderer_) return;
+    customShaders_.Shutdown();
     textureCache_.Shutdown();
+    if (whiteImage_) {
+        Release(&whiteImage_->reference);
+        whiteImage_ = nullptr;
+    }
     postProcess_.Shutdown();
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
         if (vertexBuffers_[i]) { removeResource(vertexBuffers_[i]); vertexBuffers_[i] = nullptr; }
@@ -291,39 +310,71 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     if (!textureCache_.DrainPendingUploads(error)) return false;
     vertices_.Clear();
     runs_.Clear();
+    customDraws_.Clear();
+    uint32_t customDrawCount = 0;
     for (uint32_t layer = 0; layer < 2; ++layer) {
         for (uint32_t i = 0; i < frame.draws.Count(); ++i) {
             const detail::DrawPacket& draw = frame.draws.At(i);
             if (draw.layer > 1) return SetError(error, "The draw packet has an invalid layer");
-            if (draw.shader.IsValid()) return SetError(error, "Compiled custom pixel shaders are unavailable in the current renderer");
             if (draw.layer != layer) continue;
+
+            const bool customShader = draw.shader.IsValid();
+            bool needsTexture = draw.kind == detail::DrawKind::Image;
+            if (customShader) {
+                if (customDrawCount >= kCustomShaderMaximumDraws)
+                    return SetError(error, "The frame exceeds the 4096 custom shader draw limit");
+                if (draw.shaderConstantCount > kShaderConstantSlotCount)
+                    return SetError(error, "The custom shader draw has too many constant values");
+                needsTexture = customShaders_.RequiresTexture(draw.shader) ||
+                               customShaders_.RequiresSampler(draw.shader);
+            }
+
             const uint32_t first = vertices_.Count();
             if (!AppendDraw(frame, draw, vertices_, kVertexCapacity, error)) return false;
-            if (draw.kind == detail::DrawKind::Image && !textureCache_.Prepare(draw.image, error)) return false;
+            detail::ImageResource* image = nullptr;
+            if (needsTexture) {
+                image = draw.kind == detail::DrawKind::Image ? draw.image : whiteImage_;
+                if (!image) return SetError(error, "The custom shader texture fallback is unavailable");
+                if (!textureCache_.Prepare(image, error)) return false;
+            }
             const uint32_t count = vertices_.Count() - first;
             if (count == 0) continue;
-            const bool textured = draw.kind == detail::DrawKind::Image;
-            const bool alphaBlend = textured && (draw.flags & detail::DrawAlphaBlend) != 0;
-            const bool depthTest = layer == 0 && draw.kind != detail::DrawKind::Rect && !textured;
-            detail::ImageResource* image = textured ? draw.image : nullptr;
-            if (runs_.Count() && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first &&
+            const bool textured = needsTexture;
+            const bool alphaBlend = customShader
+                ? (draw.flags & detail::DrawAlphaBlend) != 0
+                : (textured && (draw.flags & detail::DrawAlphaBlend) != 0);
+            const bool depthTest = layer == 0 && draw.kind != detail::DrawKind::Rect &&
+                                   draw.kind != detail::DrawKind::Image;
+
+            if (customShader) {
+                CustomShaderDraw snapshot{};
+                snapshot.shader = draw.shader;
+                snapshot.constantCount = draw.shaderConstantCount;
+                for (uint32_t constant = 0; constant < draw.shaderConstantCount; ++constant)
+                    snapshot.constants[constant] = draw.shaderConstants[constant];
+                if (!customDraws_.Append(snapshot))
+                    return SetError(error, "The custom shader draw snapshot allocation failed");
+            }
+
+            const bool canBatch = !customShader && runs_.Count() &&
+                !runs_.At(runs_.Count() - 1).customShader &&
+                runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first &&
                 runs_.At(runs_.Count() - 1).depthTest == depthTest &&
                 runs_.At(runs_.Count() - 1).textured == textured &&
                 runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend &&
                 runs_.At(runs_.Count() - 1).layer == draw.layer &&
-                runs_.At(runs_.Count() - 1).image == image) {
+                runs_.At(runs_.Count() - 1).image == image;
+            if (canBatch) {
                 runs_.At(runs_.Count() - 1).count += count;
             } else {
-                const RenderRun run{first, count, depthTest, textured, alphaBlend, draw.layer, image};
+                const RenderRun run{first, count, depthTest, textured, alphaBlend, draw.layer,
+                                    image, draw.shader, customShader ? customDrawCount : 0, customShader};
                 if (!runs_.Append(run)) return SetError(error, "The frame draw-run allocation failed");
             }
+            if (customShader) ++customDrawCount;
         }
     }
     if (vertices_.Count() > kVertexCapacity) return SetError(error, "The frame exceeds the dynamic vertex capacity");
-
-    uint32_t imageIndex = 0;
-    acquireNextImage(renderer_, swapChain_, imageAcquiredSemaphore_, nullptr, &imageIndex);
-    if (imageIndex >= swapChain_->mImageCount) return SetError(error, "The Forge renderer returned an invalid swapchain image index");
 
     GpuCmdRingElement element = getNextGpuCmdRingElement(&commandRing_, true, 1);
     if (!element.pCmdPool || !element.pFence || !element.pSemaphore) return SetError(error, "The Forge command ring is not ready");
@@ -331,6 +382,14 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     getFenceStatus(renderer_, element.pFence, &fenceStatus);
     if (fenceStatus == FENCE_STATUS_INCOMPLETE) waitForFences(renderer_, 1, &element.pFence);
     resetCmdPool(renderer_, element.pCmdPool);
+
+    const uint32_t frameIndex = commandRing_.mPoolIndex;
+    if (!customShaders_.PrepareFrame(frameIndex, customDraws_.Data(), customDraws_.Count(), error)) return false;
+    if (!textureCache_.UploadPending(error)) return false;
+
+    uint32_t imageIndex = 0;
+    acquireNextImage(renderer_, swapChain_, imageAcquiredSemaphore_, nullptr, &imageIndex);
+    if (imageIndex >= swapChain_->mImageCount) return SetError(error, "The Forge renderer returned an invalid swapchain image index");
 
     if (vertices_.Count()) {
         BufferUpdateDesc update{};
@@ -341,9 +400,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
         endUpdateResource(&update);
     }
 
-    if (!textureCache_.UploadPending(error)) return false;
     Cmd* command = element.pCmds[0];
-    const uint32_t frameIndex = commandRing_.mPoolIndex;
     beginCmd(command);
     RenderTarget* renderTarget = swapChain_->ppRenderTargets[imageIndex];
     RenderTargetBarrier toRenderTarget{renderTarget, RESOURCE_STATE_PRESENT, RESOURCE_STATE_RENDER_TARGET};
@@ -371,9 +428,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
         for (uint32_t i = 0; i < runs_.Count(); ++i) {
             const RenderRun& run = runs_.At(i);
             if (run.layer != 0) continue;
-            Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_)
-                                                : (run.depthTest ? depthPipeline_ : scenePipeline_);
-            cmdBindPipeline(command, pipeline);
+            if (run.customShader) {
+                if (!customShaders_.Bind(command, run.shader, frameIndex, run.customDrawIndex,
+                                         run.layer, run.depthTest, run.alphaBlend, error)) {
+                    endCmd(command);
+                    return false;
+                }
+            } else {
+                Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_)
+                                                    : (run.depthTest ? depthPipeline_ : scenePipeline_);
+                cmdBindPipeline(command, pipeline);
+            }
             if (run.textured && !textureCache_.Bind(command, run.image, error)) {
                 endCmd(command);
                 return false;
@@ -409,9 +474,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
         for (uint32_t i = 0; i < runs_.Count(); ++i) {
             const RenderRun& run = runs_.At(i);
             if (run.layer != 1) continue;
-            Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaUiPipeline_ : spriteUiPipeline_)
+            if (run.customShader) {
+                if (!customShaders_.Bind(command, run.shader, frameIndex, run.customDrawIndex,
+                                         run.layer, run.depthTest, run.alphaBlend, error)) {
+                    endCmd(command);
+                    return false;
+                }
+            } else {
+                Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaUiPipeline_ : spriteUiPipeline_)
                                                 : uiPipeline_;
-            cmdBindPipeline(command, pipeline);
+                cmdBindPipeline(command, pipeline);
+            }
             if (run.textured && !textureCache_.Bind(command, run.image, error)) {
                 endCmd(command);
                 return false;
@@ -457,13 +530,19 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     return true;
 }
 
-ShaderHandle ForgeRenderer::LoadPixelShader(const char*, String& error) {
-    error.Assign("Compiled custom pixel shaders are unavailable in the current renderer");
-    return ShaderHandle();
+ShaderHandle ForgeRenderer::LoadPixelShader(const char* path, String& error) {
+    if (!renderer_ || !graphicsQueue_) {
+        error.Assign("The Forge renderer is not initialized");
+        return ShaderHandle();
+    }
+    waitQueueIdle(graphicsQueue_);
+    return customShaders_.Load(path, error);
 }
 
-bool ForgeRenderer::ReleasePixelShader(ShaderHandle, String& error) {
-    return SetError(error, "Compiled custom pixel shaders are unavailable in the current renderer");
+bool ForgeRenderer::ReleasePixelShader(ShaderHandle shader, String& error) {
+    if (!renderer_ || !graphicsQueue_) return SetError(error, "The Forge renderer is not initialized");
+    waitQueueIdle(graphicsQueue_);
+    return customShaders_.Release(shader, error);
 }
 
 }

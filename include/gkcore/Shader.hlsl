@@ -9,14 +9,10 @@ cbuffer GkcoreUserConstants : register(b0, space3)
     float4 gkcoreUserData[64];
 };
 
-/**
- * Optional user texture at register t0 in space 0.
- */
+// Optional pixel texture at register t0 in space 0.
 Texture2D<float4> gkcoreTexture : register(t0, space0);
 
-/**
- * Optional user sampler at register s0 in space 0.
- */
+// Optional pixel sampler at register s0 in space 0.
 SamplerState gkcoreSampler : register(s0, space0);
 
 /**

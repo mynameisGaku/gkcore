@@ -5,6 +5,7 @@
 #include "../internal/Backend.hpp"
 #include "../platform/WindowsWindow.h"
 #include "Geometry.h"
+#include "CustomShaders.h"
 #include "PostProcessRenderer.h"
 #include "TextureCache.h"
 
@@ -36,6 +37,9 @@ struct RenderRun {
     bool alphaBlend;
     uint8_t layer;
     detail::ImageResource* image;
+    ShaderHandle shader;
+    uint32_t customDrawIndex;
+    bool customShader;
 };
 
 /**
@@ -74,11 +78,11 @@ public:
      */
     bool Present(const detail::FramePacket& frame, String& error);
     /**
-     * Returns an explicit unsupported result for unrecognized shader assets.
+     * Loads a validated compiled pixel shader and creates its target variants.
      */
     ShaderHandle LoadPixelShader(const char* path, String& error);
     /**
-     * Returns an explicit unsupported result for shader handles.
+     * Waits for GPU work and releases the shader's pipeline variants.
      */
     bool ReleasePixelShader(ShaderHandle shader, String& error);
 
@@ -98,11 +102,6 @@ private:
      * Releases dependent graphics objects before the renderer is shut down.
      */
     void DestroyGraphicsResources();
-    /**
-     * Records one ordered group of compatible draw packets into the active command.
-     */
-    bool RecordDrawRuns(Cmd* command, uint8_t layer, String& error);
-
     Renderer* renderer_ = nullptr;
     Queue* graphicsQueue_ = nullptr;
     SwapChain* swapChain_ = nullptr;
@@ -116,18 +115,17 @@ private:
     Pipeline* spriteAlphaPipeline_ = nullptr;
     Pipeline* spriteUiPipeline_ = nullptr;
     Pipeline* spriteAlphaUiPipeline_ = nullptr;
-    Pipeline* sceneHdrPipeline_ = nullptr;
-    Pipeline* depthHdrPipeline_ = nullptr;
-    Pipeline* spriteHdrPipeline_ = nullptr;
-    Pipeline* spriteAlphaHdrPipeline_ = nullptr;
     Buffer* vertexBuffers_[kFramesInFlight]{};
     Semaphore* imageAcquiredSemaphore_ = nullptr;
     GpuCmdRing commandRing_{};
     WindowHandle windowHandle_{};
     TextureCache textureCache_;
+    CustomShaders customShaders_;
     PostProcessRenderer postProcess_;
+    detail::ImageResource* whiteImage_ = nullptr;
     Array<Vertex> vertices_;
     Array<RenderRun> runs_;
+    Array<CustomShaderDraw> customDraws_;
     uint32_t width_ = 0;
     uint32_t height_ = 0;
     bool resourceLoaderInitialized_ = false;

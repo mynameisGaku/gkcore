@@ -46,6 +46,7 @@ set(GKCORE_CORE_SOURCES
     src/render/Shaders.cpp
     src/render/ShaderAbi.cpp
     src/render/PostProcess.cpp
+    src/render/CustomShaderPolicy.cpp
     src/render/TextureCachePolicy.cpp)
 
 function(gkcore_enable_warnings target)
@@ -67,6 +68,26 @@ if(GKCORE_BUILD_TESTS)
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_forge_build_plan.py)
     add_test(NAME gkcore.shader_build_plan
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_shader_build_plan.py)
+    add_test(NAME gkcore.pixel_shader_compiler
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_pixel_shader_compiler.py)
+    add_executable(gkcore_shader_interface_tests
+        tests/shader_interface_tests.cpp
+        src/render/ShaderInterface.cpp
+        src/foundation/Memory.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_shader_interface_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_shader_interface_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_shader_interface_tests)
+    add_test(NAME gkcore.shader_interface COMMAND gkcore_shader_interface_tests)
+    add_executable(gkcore_custom_shader_policy_tests
+        tests/custom_shader_policy_tests.cpp
+        src/render/CustomShaderPolicy.cpp
+        src/foundation/Memory.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_custom_shader_policy_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_custom_shader_policy_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_custom_shader_policy_tests)
+    add_test(NAME gkcore.custom_shader_policy COMMAND gkcore_custom_shader_policy_tests)
     add_test(NAME gkcore.setup_plan
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_setup_plan.py)
     add_test(NAME gkcore.dxc_lock
@@ -262,6 +283,9 @@ if(GKCORE_BUILD_RUNTIME)
         src/render/ForgeRenderer.cpp
         src/render/TextureCache.cpp
         src/render/PostProcessRenderer.cpp
+        src/render/CustomShaders.cpp
+        src/render/ShaderReflection.cpp
+        src/render/ShaderInterface.cpp
         src/backends/ForgeBackend.cpp)
     add_library(gkcore::gkcore ALIAS gkcore)
     target_compile_features(gkcore PUBLIC cxx_std_17)
@@ -272,7 +296,8 @@ if(GKCORE_BUILD_RUNTIME)
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/src
             ${GKCORE_FORGE_ROOT}
-            ${_gkcore_forge_common})
+            ${_gkcore_forge_common}
+            ${_gkcore_forge_common}/Graphics/ThirdParty/OpenSource/DirectXShaderCompiler/inc)
     target_compile_definitions(gkcore
         PUBLIC GKCORE_SHARED=1
         PRIVATE GKCORE_BUILDING_LIBRARY=1 _WINDOWS DIRECT3D12 D3D12_AGILITY_SDK=1 D3D12_AGILITY_SDK_VERSION=715 _HAS_EXCEPTIONS=0)
@@ -294,6 +319,33 @@ if(GKCORE_BUILD_RUNTIME)
     target_link_libraries(gkcore_mixed_scene PRIVATE gkcore::gkcore)
 
     if(GKCORE_BUILD_TESTS)
+        add_executable(gkcore_shader_reflection_tests
+            tests/shader_reflection_tests.cpp
+            src/render/ShaderReflection.cpp
+            src/render/ShaderInterface.cpp
+            src/render/Shaders.cpp
+            src/resources/ResourceIO.cpp
+            src/foundation/Memory.cpp
+            src/foundation/Array.cpp
+            src/foundation/String.cpp)
+        target_compile_features(gkcore_shader_reflection_tests PRIVATE cxx_std_17)
+        target_include_directories(gkcore_shader_reflection_tests PRIVATE
+            include src ${GKCORE_FORGE_ROOT} ${_gkcore_forge_common}
+            ${_gkcore_forge_common}/Graphics/ThirdParty/OpenSource/DirectXShaderCompiler/inc)
+        target_compile_definitions(gkcore_shader_reflection_tests PRIVATE
+            DIRECT3D12 GKCORE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        target_link_libraries(gkcore_shader_reflection_tests PRIVATE
+            "${GKCORE_DXC_ROOT}/lib/x64/dxcompiler.lib" dxguid ole32)
+        gkcore_enable_warnings(gkcore_shader_reflection_tests)
+        add_custom_command(TARGET gkcore_shader_reflection_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${GKCORE_DXC_ROOT}/bin/x64/dxcompiler.dll"
+                "$<TARGET_FILE_DIR:gkcore_shader_reflection_tests>"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${GKCORE_DXC_ROOT}/bin/x64/dxil.dll"
+                "$<TARGET_FILE_DIR:gkcore_shader_reflection_tests>")
+        add_test(NAME gkcore.shader_reflection COMMAND gkcore_shader_reflection_tests)
+
         add_executable(gkcore_backend_smoke tests/backend_contract_tests.cpp)
         target_compile_features(gkcore_backend_smoke PRIVATE cxx_std_17)
         target_compile_definitions(gkcore_backend_smoke PRIVATE
@@ -312,6 +364,7 @@ if(GKCORE_BUILD_RUNTIME)
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES docs/THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/gkcore COMPONENT Runtime)
     install(FILES ${_gkcore_runtime_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
     install(FILES ${_gkcore_shader_artifacts} DESTINATION ${CMAKE_INSTALL_BINDIR}/CompiledShaders/DIRECT3D12 COMPONENT Runtime)

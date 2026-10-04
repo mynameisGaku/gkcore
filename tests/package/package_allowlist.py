@@ -30,6 +30,7 @@ RUNTIME_SHADERS = {
 _FIXED = {
     "include/gkcore.h",
     "include/gkcore/Handle.h",
+    "include/gkcore/Shader.hlsl",
     "lib/cmake/gkcore/gkcoreConfig.cmake",
     "lib/cmake/gkcore/gkcoreConfigVersion.cmake",
     "lib/cmake/gkcore/gkcoreTargets.cmake",

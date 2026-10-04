@@ -268,24 +268,25 @@ bool ShaderArtifactContract(String& failure) {
         failure.Assign("pinned DXC pixel shader was accepted as a vertex shader or replaced existing bytecode");
         return false;
     }
-    const char* postShaderNames[] = {
+    const char* compiledPixelShaderNames[] = {
         "gkcore_bloom_extract.frag",
         "gkcore_bloom_blur.frag",
-        "gkcore_post_composite.frag"
+        "gkcore_post_composite.frag",
+        "gkcore_user_tint.frag"
     };
-    for (uint32_t i = 0; i < sizeof(postShaderNames) / sizeof(postShaderNames[0]); ++i) {
+    for (uint32_t i = 0; i < sizeof(compiledPixelShaderNames) / sizeof(compiledPixelShaderNames[0]); ++i) {
         char postShaderPath[1024];
         const int pathLength = snprintf(postShaderPath, sizeof(postShaderPath),
                                         "%s/tests/assets/shaders/%s",
-                                        GKCORE_TEST_SOURCE_DIR, postShaderNames[i]);
+                                        GKCORE_TEST_SOURCE_DIR, compiledPixelShaderNames[i]);
         if (pathLength <= 0 || static_cast<size_t>(pathLength) >= sizeof(postShaderPath)) {
-            failure.Assign("post-process shader fixture asset path is too long");
+            failure.Assign("compiled pixel shader fixture asset path is too long");
             return false;
         }
         render::CompiledShader postShader;
         if (!render::LoadCompiledPixelShader(postShaderPath, postShader, failure) ||
             postShader.bytecode.Count() == 0) {
-            failure.Assign("pinned DXC post-process pixel shader artifact could not be loaded");
+            failure.Assign("pinned DXC pixel shader artifact could not be loaded");
             return false;
         }
     }
