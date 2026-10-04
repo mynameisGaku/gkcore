@@ -32,8 +32,8 @@ EXPECTED_ARTIFACTS = (
 
 
 def shader_command(python: Path, forge_root: Path, dxc_root: Path, output_root: Path,
-                   shader_list: Path | None = None) -> list[str]:
-    fsl = forge_root / "Common_3" / "Tools" / "ForgeShadingLanguage" / "fsl.py"
+                   shader_list: Path | None = None, fsl_script: Path | None = None) -> list[str]:
+    fsl = fsl_script or forge_root / "Common_3" / "Tools" / "ForgeShadingLanguage" / "fsl.py"
     shader_list = shader_list or ROOT / "shaders" / "shaders.list"
     return [
         str(python), str(fsl), str(shader_list),
@@ -44,6 +44,43 @@ def shader_command(python: Path, forge_root: Path, dxc_root: Path, output_root: 
         "-I", str(forge_root / "Common_3" / "Graphics" / "FSL"),
         "--compile",
     ]
+
+
+def copy_compatible_fsl(forge_root: Path, temporary_root: Path) -> Path:
+    """固定FSL一式を一時複製し、Python文字比較の互換修正を加える。"""
+    # 固定Forge内のFSL本体とD3D generator。
+    source_root = forge_root / "Common_3" / "Tools" / "ForgeShadingLanguage"
+    source_generator = source_root / "generators" / "d3d.py"
+    # Windows FSL前処理が相対位置から読み込む実行ファイル。
+    source_mcpp = forge_root / "Common_3" / "Utilities" / "ThirdParty" / "OpenSource" / "mcpp" / "bin" / "mcpp.exe"
+    if not (source_root / "fsl.py").is_file() or not source_generator.is_file() or not source_mcpp.is_file():
+        raise ForgeCheckoutError("The pinned FSL tool or its Windows preprocessor dependency is missing")
+
+    # FSLがForgeの相対配置を維持できる一時root。
+    compatible_root = temporary_root / "The-Forge"
+    compatible_fsl_root = compatible_root / "Common_3" / "Tools" / "ForgeShadingLanguage"
+    shutil.copytree(source_root, compatible_fsl_root, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    compatible_generator = compatible_fsl_root / "generators" / "d3d.py"
+    # 元ファイルを残したまま互換修正するgeneratorの内容。
+    generator_source = compatible_generator.read_bytes()
+    # リソース種別4文字のidentity比較だけを値比較へ直す。
+    for resource_letter in (b"s", b"b", b"t", b"u"):
+        old_comparison = b"resource_type_letter is '" + resource_letter + b"':"
+        new_comparison = b"resource_type_letter == '" + resource_letter + b"':"
+        if generator_source.count(old_comparison) != 1:
+            raise ForgeCheckoutError(
+                f"The pinned FSL generator must contain exactly one identity comparison for {resource_letter.decode('ascii')}"
+            )
+        generator_source = generator_source.replace(old_comparison, new_comparison)
+    if b"resource_type_letter is '" in generator_source:
+        raise ForgeCheckoutError("The pinned FSL generator contains an unsupported resource-letter identity comparison")
+    compatible_generator.write_bytes(generator_source)
+
+    # FSLのWindows前処理が期待する相対位置へ依存物を置く。
+    compatible_mcpp = compatible_root / "Common_3" / "Utilities" / "ThirdParty" / "OpenSource" / "mcpp" / "bin" / "mcpp.exe"
+    compatible_mcpp.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source_mcpp, compatible_mcpp)
+    return compatible_fsl_root / "fsl.py"
 
 
 def copy_fsl_inputs(source_root: Path, destination_root: Path) -> None:
@@ -89,8 +126,9 @@ def compile_shaders(forge_root: Path, dxc_root: Path, output_root: Path, python:
     with tempfile.TemporaryDirectory(prefix="gkcore-fsl-input-") as temporary:
         normalized_source_root = Path(temporary) / "shaders"
         copy_fsl_inputs(ROOT / "shaders", normalized_source_root)
+        fsl_script = copy_compatible_fsl(forge_root, Path(temporary) / "fsl-compat")
         command = shader_command(python, forge_root, dxc_root, output_root,
-                                 normalized_source_root / "shaders.list")
+                                 normalized_source_root / "shaders.list", fsl_script)
         subprocess.run(command, check=True, cwd=ROOT, env=environment)
 
     source_root = binary_output / "DIRECT3D12"

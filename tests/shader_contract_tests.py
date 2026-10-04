@@ -181,12 +181,12 @@ def validate_post_composite_shader_reflection(dump: str, source: str = "<DXC ref
             r"\btexture\s+f32\s+2d\s+T\d+\s+t0(?:,space0)?\s+2\b",
             texture_rows[0] if texture_rows else "", re.IGNORECASE):
         missing.append("two-element Texture2D binding at t0-t1")
-    if not re.search(r"\bsampler\s+NA\s+NA\s+S\d+\s+s0(?:,space0)?\s+1\b",
+    if not re.search(r"\bsampler\s+NA\s+NA\s+S\d+\s+s2(?:,space0)?\s+1\b",
                      resource_section, re.IGNORECASE):
-        missing.append("one sampler binding at s0")
-    if not re.search(r"\bcbuffer\s+NA\s+NA\s+CB\d+\s+cb0(?:,space0)?\s+1\b",
+        missing.append("one sampler binding at s2")
+    if not re.search(r"\bcbuffer\s+NA\s+NA\s+CB\d+\s+cb3(?:,space0)?\s+1\b",
                      resource_section, re.IGNORECASE):
-        missing.append("one constant-buffer binding at b0")
+        missing.append("one constant-buffer binding at b3")
     if missing:
         raise ShaderContractError(
             f"{source}: post-composite shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
@@ -325,8 +325,8 @@ class ShaderReflectionTests(unittest.TestCase):
 ; Resource Bindings:
 ; Name                                 Type  Format         Dim      ID      HLSL Bind  Count
 ; ------------------------------ ---------- ------- ----------- ------- -------------- ------
-;                                   cbuffer      NA          NA     CB0            cb0     1
-;                                   sampler      NA          NA      S0             s0     1
+;                                   cbuffer      NA          NA     CB0            cb3     1
+;                                   sampler      NA          NA      S0             s2     1
 ;                                   texture     f32          2d      T0             t0     2
 ; ViewId state:
 """
@@ -343,6 +343,18 @@ class ShaderReflectionTests(unittest.TestCase):
 ; ViewId state:
 """
         with self.assertRaisesRegex(ShaderContractError, "two-element Texture2D binding at t0-t1"):
+            validate_post_composite_shader_reflection(reflection, "gkcore_post_composite.frag")
+
+    def test_rejects_stale_post_composite_register_offsets(self):
+        reflection = """\
+; Resource Bindings:
+; Name                                 Type  Format         Dim      ID      HLSL Bind  Count
+;                                   cbuffer      NA          NA     CB0            cb0     1
+;                                   sampler      NA          NA      S0             s0     1
+;                                   texture     f32          2d      T0             t0     2
+; ViewId state:
+"""
+        with self.assertRaises(ShaderContractError):
             validate_post_composite_shader_reflection(reflection, "gkcore_post_composite.frag")
 
     def test_runtime_manifest_rejects_compilers(self):
