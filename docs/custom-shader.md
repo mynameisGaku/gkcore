@@ -99,4 +99,4 @@ int main() {
 
 ## 現在の対応範囲
 
-公開 API は shader handle、64 個の `Float4` 定数、描画命令ごとの設定 snapshot を提供し、1 フレームあたり独自 shader を使う描画は最大 4096 件です。D3D12 描画部は共通の頂点シェーダーを使い、Scene/UI、深度検査、alpha blending の pipeline を用意しています。reflection 検査は `b0, space3` の定数と、任意の `t0, space0` / `s0, space0` binding を確認します。独自の頂点 shader と PBR model material shader は対象外です。ポストエフェクト用 shader API と CPU 契約も統合済みで、[専用ガイド](post-effect-shader.md)に使い方をまとめています。Linux DXC で tint HLSL のコンパイルと FSL 形式への変換を確認しましたが、Windows 用 DXC package、Windows COM reflection、Runtime 上の表示を検証した結果ではありません。
+公開 API は shader handle、64 個の `Float4` 定数、描画命令ごとの設定 snapshot を提供し、1 フレームあたり独自 shader を使う描画は最大 4096 件です。D3D12 描画部は共通の頂点シェーダーを使い、Scene/UI、深度検査、alpha blending の pipeline を用意しています。reflection 検査は `b0, space3` の定数と、任意の `t0, space0` / `s0, space0` binding を確認します。独自の頂点 shader と利用者が差し替えるモデル材質 shader ABI は対象外です。モデル描画は gkcore 内蔵の PBR 材質 shader を使います。ポストエフェクト用 shader API と CPU 契約も統合済みで、[専用ガイド](post-effect-shader.md)に使い方をまとめています。Linux DXC で tint HLSL とモデル shader のコンパイル、FSL 形式への変換を確認しましたが、Windows 用 DXC package、Windows COM reflection、Runtime 上の表示を検証した結果ではありません。

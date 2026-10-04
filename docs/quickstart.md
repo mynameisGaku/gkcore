@@ -32,7 +32,7 @@ int main() {
 
 [`examples/mixed_scene.cpp`](../examples/mixed_scene.cpp) は同じフレームの `Scene` 層に 3D 三角形と 2D 矩形を置き、`UI` 層に矩形と日本語文字を描く例です。`gk::DrawString` は Windows のシステム標準フォントを使い、同じ文字列・色・大きさの描画を上限付きキャッシュで再利用します。フォントファイルを別途用意する必要はありません。
 
-PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めます。FBX の ASCII・バイナリ形式、基本色係数、相対パスの PNG 画像取り込みは CPU テストで確認しています。画像描画と、GLB / FBX モデルに基本色係数や基本色画像を適用する経路を実装しています。PBR 照明、影、環境マップ、alpha mode は未対応です。Windows/MSVC でのリンクと実 GPU 上の表示は未確認です。形式ごとの手順は [モデルの読み込み](models.md)、機能一覧は [ROADMAP](ROADMAP.md) を確認してください。
+PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めます。FBX の ASCII・バイナリ形式、基本色係数、相対パスの PNG 画像取り込みは CPU テストで確認しています。GLB の metallic / roughness 係数と基本色、方向光・一様な環境光によるモデル照明を実装しています。OBJ / FBX は非金属・粗い材質の係数で描画します。影、環境マップ、metallic-roughness texture、normal map、alpha mode は未対応です。照明設定、法線、材質計画の CPU テストと Linux shader compile/reflection は成功していますが、Windows/MSVC link と実 GPU 表示は未確認です。形式ごとの手順は [モデルの読み込み](models.md)、[モデル照明ガイド](lighting.md)、機能一覧は [ROADMAP](ROADMAP.md) を確認してください。
 
 3D カメラには `gk::SetCamera(gk::Vec3{...}, gk::Vec3{...})` で位置と注視点を渡します。モデルハンドルは `gk::LoadModel` で取得し、`gk::SetModelPosition`、`gk::SetModelRotation`、`gk::SetModelScale` で指定した値が後続の `gk::DrawModel` に使われます。使い終えたら `gk::DeleteModel` で解放します。画像も `ImageHandle` で管理します。
 

@@ -379,3 +379,42 @@ g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc \
 root が統合後の Release と Debug ASan / UBSan の全 CTest を再実行し、どちらも 23/23 件成功したと報告しました。Release は `/tmp/gkcore-review-build` で 1.20 秒、Debug は `/tmp/gkcore-sanitize-build` で 1.96 秒です。Debug 実行は `ASAN_OPTIONS=detect_leaks=0` のため、リーク検査はしていません。Runtime manifest の 40 path、no-STL 3/3、package 6/6 も再確認しました。
 
 同じソースの MinGW `-Wall -Wextra -Wpedantic -Werror` 構文検査では `Draw2D.cpp`、`RectangleGeometry.cpp`、`Geometry.cpp`、`examples/rectangle_outline.cpp`、`tests/backend_contract_tests.cpp` の 5 translation unit が成功しました。固定 The Forge の一時 `ForgeSyntaxConfig` を使った構文検査では `ForgeRenderer.cpp` と Direct3D 12 Runtime の 3 translation unit も成功しました。upstream の macro 警告が 4 件あります。この確認は MSVC の link や Windows 実行を代替しません。Windows/MSVC link と実 GPU 表示は未確認です。
+
+## 2026-10-04: モデルの方向光と材質照明
+
+照明 API の snapshot 契約、モデル材質係数、法線変換と clipping を CPU 側に追加しました。実装前に照明単体 test を baseline 上で compile すると、新しい `src/effects/Lighting.h` が存在しないため失敗しました（診断: `/tmp/gkcore-lighting-unit-red.log`）。別の core API 契約 RED では、`GKCORE_TESTING` と `GKCORE_TEST_SOURCE_DIR` を正しく定義して baseline を compile し、`FramePacket::lighting` と `gk::SetAmbientLight` / `gk::SetDirectionalLight` が未定義で失敗しました（診断: `/tmp/gkcore-lighting-api-red-correct.log`）。最初の core compile 試行は test 用 macro を設定しておらず、無関係な test-hook errors が混じったため RED の証拠として数えていません。
+
+モデル geometry の修正前には、回転済みの欠損法線 fallback をもう一度回転させるケースと、極端な有限 view direction の clipping 補間で値が有限性を保つケースが失敗しました。
+
+```sh
+/tmp/gkcore-model-geometry-regression
+/tmp/gkcore-model-geometry-extreme
+```
+
+両実行は終了コード 1 で、それぞれ `world-space fallback face normal is not rotated a second time`、`extreme finite view-direction interpolation stays finite` と報告しました。修正後は lit geometry の strict C++17 build / run が成功しました。model draw plan、lit geometry、既存 geometry の focused CTest は 3/3 件成功しました。照明 API、法線、材質係数、frame snapshot の CPU 契約も最終 Release / sanitizer の全件へ含まれます。
+
+サンプル用 GLB は一時 C++ runner から `LoadGlbPayload` で読み込み、850 頂点、2 primitive、2 材質（metallic 0 / 1）を確認しました。全頂点の明示法線は有限で、長さが 1 でした。これは GLB CPU 読み込みの確認であり、描画の目視検査ではありません。
+
+Linux の frozen-source Release build と Debug ASan / UBSan build、全 CTest を再実行し、それぞれ 25/25 件成功しました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-review-build --parallel 6
+/tmp/forgedx-review-tools/cmake/data/bin/ctest --test-dir /tmp/gkcore-review-build --output-on-failure -j6
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-sanitize-build --parallel 6
+ASAN_OPTIONS=detect_leaks=0 /tmp/forgedx-review-tools/cmake/data/bin/ctest --test-dir /tmp/gkcore-sanitize-build --output-on-failure -j6
+```
+
+Release の CTest は 1.09 秒、Debug sanitizer の CTest は 1.92 秒で完了しました。`ASAN_OPTIONS=detect_leaks=0` のため LeakSanitizer は実行していません。`GKCORE_BUILD_RUNTIME=OFF` の CPU build なので、これらの成功は Windows/MSVC link や GPU 描画を確認したものではありません。
+
+Linux MinGW `-Wall -Wextra -Wpedantic -Werror -fsyntax-only -Iinclude -Isrc` による最終構文検査では、`src/effects/Lighting.cpp`、`src/render/LightingAbi.cpp`、`src/render/WorldGeometry.cpp`、`src/render/ModelGeometry.cpp`、`src/render/Geometry.cpp`、`src/render/ModelDrawPlan.cpp`、`examples/model_lighting.cpp`、`tests/backend_contract_tests.cpp` の 8 translation unit が成功しました。固定 The Forge の native syntax configuration を使った renderer 2 translation unit の確認も成功しましたが、upstream macro 警告が合わせて 6 件あり、これは MSVC link の結果ではありません。
+
+固定した Forge FSL toolchain で model vertex / pixel stage を生成し、Linux DXC で compile して reflection を検査しました。Linux 向け生成では、その環境の compiler 制約のため FSL 内の root-signature 宣言だけを省いています。
+
+```sh
+python3 tests/shader_contract_tests.py --artifact tests/assets/shaders/gkcore_model.vert --dxc /tmp/gkcore-dxc18-linux/bin/dxc --require-reflection --model-vertex
+python3 tests/shader_contract_tests.py --artifact tests/assets/shaders/gkcore_model.frag --dxc /tmp/gkcore-dxc18-linux/bin/dxc --require-reflection --model-pixel
+```
+
+両コマンドは成功し、lighting constant buffer は `b0, space1` の 32 bytes、画像は `t0`、既存 sprite sampler は `s1` と確認しました。Linux DXC artifact / reflection の確認であり、Windows 用 shader package や Windows COM reflection の確認ではありません。Runtime の no-STL scan は 3/3、package allowlist は 6/6、shader build plan は 1/1 成功しました。更新後の manifest template を Release 構成へ展開して package allowlist validator に渡し、Runtime の 42 path を検査して成功しました。モデル照明の概念図 SVG も XML parser で読み取れることを確認しました。
+
+Windows/MSVC build と link、Windows/DX12 実機の表示、model lighting の目視、Runtime SDK のみを使った利用者 project の build / run は未実施です。GPU smoke は準備されていますが実行されておらず、異なる材質や照明が画面にどう見えるかは未確認です。

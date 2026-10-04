@@ -37,6 +37,17 @@ PRE_SETUP.bat --gpu-check
 
 輪郭矩形の例 `build\runtime-windows\Release\gkcore_rectangle_outline.exe` では、塗りつぶし矩形、`DrawRect(..., false)` の 1 ピクセル幅、`gk::DrawRectOutline` の太線、Scene と UI の描画を見比べられます。Space キーで Bloom を切り替え、Escape キーで終了します。
 
+モデル照明サンプル `build\runtime-windows\Release\gkcore_model_lighting.exe` は、サンプルの GLB を読み込み、非金属・滑らかな球と金属・やや粗い球を並べて描きます。左 / 右キーで方向光を回し、Space で光の方向を約 90 度切り替えます。明るい側と暗い側が移動すること、2 種の材質で反射の色や広がりが異なることを確認します。Escape キーで終了します。
+
+モデルファイルを実行ファイルと同じ場所から読み込むため、そのフォルダーへ移動して起動してください。
+
+```bat
+cd build\runtime-windows\Release
+gkcore_model_lighting.exe
+```
+
+この操作手順は Windows DX12 実機で実行し、法線による明暗と材質の違いが表示されることを目視で確認してください。Linux CPU 契約テストや shader / C++ 構文検査は画面表示の確認を代替しません。現時点で Windows/MSVC link と GPU 上の見た目は未確認です。GPU smoke 自体も画素読み戻しをしないため、手動の目視確認が必要です。
+
 ## 開発テストの実行
 
 リポジトリの開発用テストは次のコマンドで構成・ビルド・実行する設計です。

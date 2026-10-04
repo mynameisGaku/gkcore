@@ -48,7 +48,7 @@ int main() {
 }
 ```
 
-この例は完成後に目指す利用形です。PNG 画像の読み込みと画像描画、GLB の基本色係数・画像をモデルへ適用する経路は実装されていますが、Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。PBR 照明、影、環境マップ、alpha mode は未対応です。`gk::DrawString` は UTF-8 文字列をシステム標準フォントで表示する API として実装済みですが、Windows 上の文字表示は未検証です。
+この例は完成後に目指す利用形です。PNG 画像の読み込みと画像描画、GLB の基本色係数・画像をモデルへ適用する経路は実装されています。Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。`gk::DrawString` は UTF-8 文字列をシステム標準フォントで表示する API として実装済みですが、Windows 上の文字表示は未検証です。モデルの照明範囲と検証状況は [機能サポート状況](ROADMAP.md) に記載します。
 
 ## 完成要件
 
@@ -70,7 +70,13 @@ int main() {
 - `gk::DrawString` で UTF-8 の日本語文字列をシステム標準フォントで表示し、色・サイズを簡単に変えられる。Windows 上の表示確認は残っている。
 - 3D モデルは GLB/glTF 2.0 を基本形式にし、静的 mesh の PBR 材質、texture、camera を読み込む。モデルの位置/回転/拡大率を関数で設定できる。
 - FBX は ASCII / バイナリ形式の静的メッシュと基本色材質を読み込み、GLB / OBJ と同じ `gk::LoadModel` API で使える。右手系の Y-up、メートル単位、階層・幾何変換、UV の画像原点変換を一貫して扱う。アニメーション、スキニング、モーフは対象外。
-- 標準的な環境光、環境マップ、影を簡単な設定で利用でき、初期値でもモデルの形状が認識しやすい。
+- 一様な環境光とワールド空間の方向光を簡単な設定で調整できる。初期値でも GLB モデルの面の向きと丸みを認識できる。
+- `SetAmbientLight(float)` は有限な `[0, 4]` を受け付け、初期値を `0.2` とする。`SetDirectionalLight(Vec3, float)` は有限な非ゼロ方向と有限な `[0, 16]` 強度を受け付け、方向を内部で正規化し、既定強度を `3.0` とする。方向は光がワールド空間を進む向きを表す。
+- 照明値は `BeginFrame()` ごとに取り込まれ、`Shutdown()` 後に初期値へ戻る。無効値で以前の有効値を変更しない。
+- モデル専用材質 shader は GLB の base color factor / texture と metallic / roughness factor を使う。拡散反射は Lambert、直接光の鏡面反射は GGX 分布、Fresnel、Smith masking-shadowing を使う。均一な環境光は簡易な Lambert 寄与とし、環境マップとは区別する。
+- 頂点法線はワールド変換の逆転置で変換し正規化する。法線がない三角形には面法線を使い、退化面には不正な法線を生成しない。
+- 2D 図形・画像・文字と公開カスタム pixel shader は従来どおり unlit で描画する。モデルは UI 層でも材質照明を使い、UI 合成位置に従う。モデル材質用公開 shader ABI は別途固定する。
+- 影、環境マップ / IBL、metallic-roughness texture、normal map、alpha mode の切り替えを標準機能として提供する。
 
 ### ポストエフェクトとシェーダー
 
@@ -94,7 +100,7 @@ int main() {
 製品は以下をすべて満たしたとき完成とします。
 
 1. Windows 10/11 x64 の新しい環境で Runtime SDK だけを使い、The Forge の header を含まない通常の `main()` サンプルを build して起動できる。GPU 統合 test は Windows / DX12 実機上で実行する。固定した The Forge は software adapter を選べないため、upstream に adapter 注入の変更を加えない限り WARP での実行は要件に含めない。
-2. サンプルの同じフレームに静的 GLB の PBR 3D シーン、アルファ付き PNG の 2D スプライト、図形、UTF-8 日本語 UI 文字を描ける。
+2. サンプルの同じフレームに静的 GLB の PBR 3D シーン、アルファ付き PNG の 2D スプライト、図形、UTF-8 日本語 UI 文字を描ける。別の照明サンプルでは同一形状の非金属材質と金属材質を描き、方向光を操作すると面の明暗と反射の違いを観察できる。
 3. HDR、Bloom、トーンマップ、色調整、FXAA が 2D/3D シーンに反映し、明示的に UI を後段で合成して読みやすさを保つ。Windows/DX12 実機 CI では、GPU ごとに保存した基準画像と比較する。同じ GPU、driver、画像内で RGB のいずれかが 2/255 を超えて異なる画素の割合を 1% 以下、全 RGB channel の平均絶対誤差を 2/255 以下とする。異なる GPU 間で同じ画像になることは求めない。
 4. Direct3D 12 向け HLSL/FSL を開発用の Forge FSL toolchain と DXC で編集・compile し、生成された `@FSL` artifact 内の DXIL stage を Runtime が選んで読み込める。頂点/ピクセル/ポストエフェクト ABI に従う。Runtime に FSL/DXC compiler tool を含めない。構文 error は source 上の位置とともに報告する。
 5. ウィンドウの resize、終了処理、device 再初期化、無効な handle/file、描画初期化失敗、shader reload を自動 test または再現手順で確認し、理由を取得できる。
