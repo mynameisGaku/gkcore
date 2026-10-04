@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../internal/Backend.hpp"
+#include "ModelDrawPlan.h"
 
 /**
  * CPU-side draw conversion and geometry preparation.
@@ -37,5 +38,12 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
  */
 bool AppendSprite(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                   Array<Vertex>& vertices, uint32_t vertexLimit, String& error);
+
+/**
+ * Expands one validated model primitive using its linear base-color factor and index range.
+ */
+bool AppendModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw,
+                     const ModelPartPlan& part, Array<Vertex>& vertices,
+                     uint32_t vertexLimit, String& error);
 
 }

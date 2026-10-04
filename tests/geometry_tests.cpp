@@ -1,4 +1,5 @@
 #include "../src/render/Geometry.h"
+#include "../src/render/ModelDrawPlan.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -206,6 +207,71 @@ void TestModelUvsStayWithProjectedCorners() {
         }
         Require(matched, "each projected model corner retains its own indexed UV");
     }
+}
+
+void TestModelPartRangeAndLinearBaseColor() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-0.7f, -0.5f, 0.0f, 0.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, -0.5f, 0.0f, 1.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(-0.3f, 0.5f, 0.0f, 0.0f, 1.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, -0.5f, 0.0f, 0.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.7f, -0.5f, 0.0f, 1.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.3f, 0.5f, 0.0f, 0.0f, 1.0f));
+    for (uint32_t i = 0; i < 6; ++i) model.indices.Append(i);
+
+    gk::detail::FramePacket frame{};
+    frame.width = 640;
+    frame.height = 480;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0.0f, 0.0f, -5.0f};
+    draw.cameraTarget = {0.0f, 0.0f, 0.0f};
+    draw.modelScale = {1.0f, 1.0f, 1.0f};
+    const float redFactor[4] = {0.25f, 0.5f, 0.75f, 0.4f};
+    const float blueFactor[4] = {0.1f, 0.2f, 0.9f, 1.0f};
+    const gk::render::ModelPartPlan redPart = {0, 3, 0, -1,
+                                               {redFactor[0], redFactor[1], redFactor[2], redFactor[3]}};
+    const gk::render::ModelPartPlan bluePart = {3, 3, 1, -1,
+                                                {blueFactor[0], blueFactor[1], blueFactor[2], blueFactor[3]}};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendModelPart(frame, draw, redPart, vertices, 32, error),
+            "one model part appends only its index range");
+    Require(vertices.Count() == 3, "first model part emits one triangle");
+    Require(vertices.At(0).color[0] == redFactor[0] && vertices.At(0).color[1] == redFactor[1] &&
+            vertices.At(0).color[2] == redFactor[2] && vertices.At(0).color[3] == redFactor[3],
+            "model base-color factors stay linear and preserve alpha");
+    Require(gk::render::AppendModelPart(frame, draw, bluePart, vertices, 32, error),
+            "second model part appends its own range");
+    Require(vertices.Count() == 6, "separate model parts append independent triangle ranges");
+    Require(vertices.At(3).color[0] == blueFactor[0] && vertices.At(3).color[2] == blueFactor[2],
+            "each part receives its own material factor");
+}
+
+void TestFullyClippedModelPartProducesNoVertices() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-0.5f, -0.5f, -10.0f, 0.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.5f, -0.5f, -10.0f, 1.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, 0.5f, -10.0f, 0.5f, 1.0f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+    gk::detail::FramePacket frame{};
+    frame.width = 640;
+    frame.height = 480;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0.0f, 0.0f, -5.0f};
+    draw.cameraTarget = {0.0f, 0.0f, 0.0f};
+    draw.modelScale = {1.0f, 1.0f, 1.0f};
+    const gk::render::ModelPartPlan part = {0, 3, 0, 0, {1.0f, 1.0f, 1.0f, 1.0f}};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendModelPart(frame, draw, part, vertices, 32, error),
+            "fully clipped model primitive is a successful empty draw");
+    Require(vertices.Count() == 0, "fully clipped model primitive contributes no render vertices");
 }
 
 void TestNearClipInterpolatesModelUvs() {
@@ -423,6 +489,8 @@ void TestSpriteRejectsInvalidResourceAndBounds() {
 int main() {
     TestModelUvsSurviveProjectionAndTransform();
     TestModelUvsStayWithProjectedCorners();
+    TestModelPartRangeAndLinearBaseColor();
+    TestFullyClippedModelPartProducesNoVertices();
     TestRectClipVertices();
     TestTriangleProjection();
     TestNearPlaneClippingAndDepth();

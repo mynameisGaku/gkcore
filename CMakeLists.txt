@@ -43,6 +43,7 @@ set(GKCORE_CORE_SOURCES
     src/effects/Effects.cpp
     src/effects/Shaders.cpp
     src/render/Geometry.cpp
+    src/render/ModelDrawPlan.cpp
     src/render/Shaders.cpp
     src/render/ShaderAbi.cpp
     src/render/PostProcess.cpp
@@ -88,6 +89,16 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_custom_shader_policy_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_custom_shader_policy_tests)
     add_test(NAME gkcore.custom_shader_policy COMMAND gkcore_custom_shader_policy_tests)
+    add_executable(gkcore_model_draw_plan_tests
+        tests/model_draw_plan_tests.cpp
+        src/render/ModelDrawPlan.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_model_draw_plan_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_draw_plan_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_draw_plan_tests)
+    add_test(NAME gkcore.model_draw_plan COMMAND gkcore_model_draw_plan_tests)
     add_test(NAME gkcore.setup_plan
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_setup_plan.py)
     add_test(NAME gkcore.dxc_lock
@@ -132,7 +143,7 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_geometry_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_geometry_tests)
     add_test(NAME gkcore.geometry COMMAND gkcore_geometry_tests)
-    target_sources(gkcore_geometry_tests PRIVATE src/render/PostProcess.cpp)
+    target_sources(gkcore_geometry_tests PRIVATE src/render/PostProcess.cpp src/render/ModelDrawPlan.cpp)
     add_executable(gkcore_texture_cache_policy_tests
         tests/texture_cache_policy_tests.cpp
         src/render/TextureCachePolicy.cpp)

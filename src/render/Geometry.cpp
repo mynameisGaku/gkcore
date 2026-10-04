@@ -161,7 +161,8 @@ bool ClipPlane(const ViewPoint* input, uint32_t inputCount, double planeZ, bool 
  * Projects view-space position and its UV attributes into the renderer vertex format.
  */
 bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height,
-                 uint32_t packedColor, Vertex& output, String& error) {
+                 uint32_t packedColor, const float* linearColor,
+                 Vertex& output, String& error) {
     const double aspect = static_cast<double>(width) / static_cast<double>(height);
     const double focal = 1.7320508075688772;
     constexpr double nearPlane = 0.1;
@@ -176,7 +177,12 @@ bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height,
         !StoreFloat(point.z, output.position[3], error) ||
         !StoreFloat(point.u, output.uv[0], error) ||
         !StoreFloat(point.v, output.uv[1], error)) return false;
-    StoreColor(packedColor, output.color);
+    if (linearColor) {
+        for (uint32_t component = 0; component < 4; ++component)
+            output.color[component] = linearColor[component];
+    } else {
+        StoreColor(packedColor, output.color);
+    }
     return true;
 }
 
@@ -201,7 +207,8 @@ bool AppendTriangle(Array<Vertex>& vertices, const Vertex* triangle,
  */
 bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                          const Vec3* points, const float sourceUvs[3][2], bool applyModelTransform,
-                         Array<Vertex>& vertices, uint32_t vertexLimit, String& error) {
+                         Array<Vertex>& vertices, uint32_t vertexLimit, String& error,
+                         const float* linearColor = nullptr) {
     ViewPoint first[8]{};
     ViewPoint second[8]{};
     for (uint32_t i = 0; i < 3; ++i) {
@@ -229,7 +236,8 @@ bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPac
     }
     Vertex projected[8]{};
     for (uint32_t i = 0; i < count; ++i) {
-        if (!ProjectView(first[i], frame.width, frame.height, draw.color, projected[i], error)) return false;
+        if (!ProjectView(first[i], frame.width, frame.height, draw.color, linearColor,
+                         projected[i], error)) return false;
     }
     for (uint32_t i = 1; i + 1 < count; ++i) {
         const Vertex triangle[3] = {projected[0], projected[i], projected[i + 1]};
@@ -387,6 +395,47 @@ bool AppendSprite(const detail::FramePacket& frame, const detail::DrawPacket& dr
             error.Assign("The frame vertex allocation failed");
             return false;
         }
+    }
+    return true;
+}
+
+/**
+ * Expands only the index range selected for one material primitive.
+ */
+bool AppendModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw,
+                     const ModelPartPlan& part, Array<Vertex>& vertices,
+                     uint32_t vertexLimit, String& error) {
+    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 ||
+        frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 ||
+        part.firstIndex > draw.model->indices.Count() ||
+        part.indexCount > draw.model->indices.Count() - part.firstIndex) {
+        error.Assign("The model part or frame bounds are invalid");
+        return false;
+    }
+    for (uint32_t component = 0; component < 4; ++component) {
+        const float factor = part.baseColorFactor[component];
+        if (!(factor >= 0.0f && factor <= 1.0f) || !isfinite(factor)) {
+            error.Assign("The model material base-color factor is invalid");
+            return false;
+        }
+    }
+    const detail::ModelResource& model = *draw.model;
+    for (uint32_t indexOffset = 0; indexOffset < part.indexCount; indexOffset += 3) {
+        Vec3 points[3]{};
+        float uvs[3][2]{};
+        for (uint32_t corner = 0; corner < 3; ++corner) {
+            const uint32_t index = model.indices.At(part.firstIndex + indexOffset + corner);
+            if (index >= model.vertices.Count()) {
+                error.Assign("The model part contains an invalid vertex index");
+                return false;
+            }
+            const detail::ModelVertex& source = model.vertices.At(index);
+            points[corner] = {source.position[0], source.position[1], source.position[2]};
+            uvs[corner][0] = source.uv[0];
+            uvs[corner][1] = source.uv[1];
+        }
+        if (!AppendWorldTriangle(frame, draw, points, uvs, true, vertices, vertexLimit, error,
+                                 part.baseColorFactor)) return false;
     }
     return true;
 }
