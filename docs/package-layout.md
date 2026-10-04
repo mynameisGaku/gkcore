@@ -9,6 +9,7 @@
 ```text
 include/gkcore.h
 include/gkcore/Handle.h
+include/gkcore/Shader.hlsl
 bin/gkcore.dll
 bin/D3D12Core.dll
 bin/dxcompiler.dll
@@ -19,6 +20,10 @@ bin/CompiledShaders/DIRECT3D12/gkcore_color.vert
 bin/CompiledShaders/DIRECT3D12/gkcore_color.frag
 bin/CompiledShaders/DIRECT3D12/gkcore_sprite.vert
 bin/CompiledShaders/DIRECT3D12/gkcore_sprite.frag
+bin/CompiledShaders/DIRECT3D12/gkcore_post.vert
+bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag
+bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag
+bin/CompiledShaders/DIRECT3D12/gkcore_post_composite.frag
 bin/CompiledShaders/DIRECT3D12/default.rootsig
 bin/CompiledShaders/DIRECT3D12/compute.rootsig
 lib/gkcore.lib
@@ -38,6 +43,8 @@ share/licenses/gkcore/NVAPI-SDK-License.pdf
 share/licenses/gkcore/LICENSE-LLVM.txt
 share/licenses/gkcore/LICENSE-MIT.txt
 share/licenses/gkcore/LICENSE-MS.txt
+share/licenses/gkcore/stb-image-LICENSE.txt
+share/licenses/gkcore/cgltf-LICENSE.txt
 ```
 
 Allowlist はこの一覧以外の Runtime file を拒否します。対象 DLL の由来と個別ライセンス文書は CMake install rules と The Forge source tree からコピーします。The Forge と DXC の固定版は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記録されています。gkcore 自身の配布ライセンスは未決定で、依存の配布条件を含む最終 audit も未完了です。したがって、この一覧は検査契約であり、再配布許可が確定したという意味ではありません。

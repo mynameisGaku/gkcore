@@ -44,7 +44,11 @@ PNG / BMP 画像と OBJ / GLB 2.0 モデルは CPU 側で読み取れます。�
 
 ## ポストエフェクト
 
-`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled` で効果を調整できます。初期設定では Bloom と tone mapping が有効です。効果は Scene に適用され、UI はその後に合成されます。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
+`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled` で効果を調整できます。初期設定では Bloom とトーンマッピングが有効です。効果は Scene に適用され、UI はその後に合成されます。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
+
+## カスタムシェーダー
+
+HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC でのビルドと実 GPU 上の表示は未確認です。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
 
 ## 開発環境
 
