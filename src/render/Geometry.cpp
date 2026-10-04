@@ -5,15 +5,26 @@
 #include <float.h>
 #include <math.h>
 
+/**
+ * CPU vertex generation shared by the renderer and portable geometry tests.
+ */
 namespace gk::render {
 namespace {
 
+/**
+ * Carries camera-space position and UVs until the polygon has passed depth clipping.
+ */
 struct ViewPoint {
     double x;
     double y;
     double z;
+    double u;
+    double v;
 };
 
+/**
+ * Converts packed sRGB channels for the linear-light vertex pipeline.
+ */
 void StoreColor(uint32_t packed, float* color) {
     color[0] = SrgbToLinear(static_cast<float>((packed >> 16) & 255u) / 255.0f);
     color[1] = SrgbToLinear(static_cast<float>((packed >> 8) & 255u) / 255.0f);
@@ -21,6 +32,9 @@ void StoreColor(uint32_t packed, float* color) {
     color[3] = 1.0f;
 }
 
+/**
+ * Stores a finite double value when it is representable by the GPU vertex format.
+ */
 bool StoreFloat(double value, float& output, String& error) {
     if (!isfinite(value) || fabs(value) > FLT_MAX) {
         error.Assign("The draw coordinates exceed the renderer's numeric range");
@@ -30,8 +44,11 @@ bool StoreFloat(double value, float& output, String& error) {
     return true;
 }
 
-bool TransformToView(Vec3 source, const detail::DrawPacket& draw, bool applyModelTransform,
-                     ViewPoint& output, String& error) {
+/**
+ * Applies an optional model transform and camera transform without changing source UVs.
+ */
+bool TransformToView(Vec3 source, const float sourceUv[2], const detail::DrawPacket& draw,
+                     bool applyModelTransform, ViewPoint& output, String& error) {
     double px = source.x;
     double py = source.y;
     double pz = source.z;
@@ -85,6 +102,8 @@ bool TransformToView(Vec3 source, const detail::DrawPacket& draw, bool applyMode
     output.x = dx * rightX + dy * rightY + dz * rightZ;
     output.y = dx * upX + dy * upY + dz * upZ;
     output.z = dx * forwardX + dy * forwardY + dz * forwardZ;
+    output.u = sourceUv[0];
+    output.v = sourceUv[1];
     if (!isfinite(output.x) || !isfinite(output.y) || !isfinite(output.z)) {
         error.Assign("The draw coordinates exceed the renderer's numeric range");
         return false;
@@ -92,9 +111,22 @@ bool TransformToView(Vec3 source, const detail::DrawPacket& draw, bool applyMode
     return true;
 }
 
+/**
+ * Appends a clip vertex without exceeding the fixed polygon scratch capacity.
+ */
+bool AppendClipPoint(ViewPoint* output, uint32_t& outputCount, const ViewPoint& point) {
+    if (outputCount >= 8) return false;
+    output[outputCount++] = point;
+    return true;
+}
+
+/**
+ * Clips positions and linear per-vertex attributes against one view-space depth plane.
+ */
 bool ClipPlane(const ViewPoint* input, uint32_t inputCount, double planeZ, bool keepGreater,
                ViewPoint* output, uint32_t& outputCount) {
     outputCount = 0;
+    if (inputCount > 8) return false;
     if (inputCount == 0) return true;
     for (uint32_t i = 0; i < inputCount; ++i) {
         const ViewPoint& a = input[i];
@@ -102,23 +134,32 @@ bool ClipPlane(const ViewPoint* input, uint32_t inputCount, double planeZ, bool 
         const bool insideA = keepGreater ? a.z >= planeZ : a.z <= planeZ;
         const bool insideB = keepGreater ? b.z >= planeZ : b.z <= planeZ;
         if (insideA && insideB) {
-            output[outputCount++] = b;
+            if (!AppendClipPoint(output, outputCount, b)) return false;
         } else if (insideA && !insideB) {
             const double t = (planeZ - a.z) / (b.z - a.z);
-            output[outputCount++] = {a.x + (b.x - a.x) * t,
-                                     a.y + (b.y - a.y) * t,
-                                     planeZ};
+            const ViewPoint intersection = {a.x + (b.x - a.x) * t,
+                                            a.y + (b.y - a.y) * t,
+                                            planeZ,
+                                            a.u + (b.u - a.u) * t,
+                                            a.v + (b.v - a.v) * t};
+            if (!AppendClipPoint(output, outputCount, intersection)) return false;
         } else if (!insideA && insideB) {
             const double t = (planeZ - a.z) / (b.z - a.z);
-            output[outputCount++] = {a.x + (b.x - a.x) * t,
-                                     a.y + (b.y - a.y) * t,
-                                     planeZ};
-            output[outputCount++] = b;
+            const ViewPoint intersection = {a.x + (b.x - a.x) * t,
+                                            a.y + (b.y - a.y) * t,
+                                            planeZ,
+                                            a.u + (b.u - a.u) * t,
+                                            a.v + (b.v - a.v) * t};
+            if (!AppendClipPoint(output, outputCount, intersection) ||
+                !AppendClipPoint(output, outputCount, b)) return false;
         }
     }
     return outputCount <= 8;
 }
 
+/**
+ * Projects view-space position and its UV attributes into the renderer vertex format.
+ */
 bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height,
                  uint32_t packedColor, Vertex& output, String& error) {
     const double aspect = static_cast<double>(width) / static_cast<double>(height);
@@ -132,11 +173,16 @@ bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height,
     if (!StoreFloat(clipX, output.position[0], error) ||
         !StoreFloat(clipY, output.position[1], error) ||
         !StoreFloat(clipZ, output.position[2], error) ||
-        !StoreFloat(point.z, output.position[3], error)) return false;
+        !StoreFloat(point.z, output.position[3], error) ||
+        !StoreFloat(point.u, output.uv[0], error) ||
+        !StoreFloat(point.v, output.uv[1], error)) return false;
     StoreColor(packedColor, output.color);
     return true;
 }
 
+/**
+ * Appends one projected triangle after checking remaining output capacity.
+ */
 bool AppendTriangle(Array<Vertex>& vertices, const Vertex* triangle,
                     uint32_t vertexLimit, String& error) {
     if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < 3) {
@@ -150,18 +196,37 @@ bool AppendTriangle(Array<Vertex>& vertices, const Vertex* triangle,
     return true;
 }
 
+/**
+ * Clips, projects, and appends a world-space triangle with perspective-correct UV payloads.
+ */
 bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw,
-                         const Vec3* points, bool applyModelTransform,
+                         const Vec3* points, const float sourceUvs[3][2], bool applyModelTransform,
                          Array<Vertex>& vertices, uint32_t vertexLimit, String& error) {
     ViewPoint first[8]{};
     ViewPoint second[8]{};
     for (uint32_t i = 0; i < 3; ++i) {
-        if (!TransformToView(points[i], draw, applyModelTransform, first[i], error)) return false;
+        if (!isfinite(sourceUvs[i][0]) || !isfinite(sourceUvs[i][1])) {
+            error.Assign("The model contains non-finite texture coordinates");
+            return false;
+        }
+        if (!TransformToView(points[i], sourceUvs[i], draw, applyModelTransform, first[i], error)) return false;
     }
     uint32_t count = 0;
-    ClipPlane(first, 3, 0.1, true, second, count);
-    ClipPlane(second, count, 1000.0, false, first, count);
+    if (!ClipPlane(first, 3, 0.1, true, second, count) ||
+        !ClipPlane(second, count, 1000.0, false, first, count)) {
+        error.Assign("The clipped triangle exceeds the polygon scratch capacity");
+        return false;
+    }
     if (count < 3) return true;
+    const uint32_t requiredVertices = (count - 2) * 3;
+    if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < requiredVertices) {
+        error.Assign("The frame exceeds the dynamic vertex capacity");
+        return false;
+    }
+    if (!vertices.Reserve(vertices.Count() + requiredVertices)) {
+        error.Assign("The frame vertex allocation failed");
+        return false;
+    }
     Vertex projected[8]{};
     for (uint32_t i = 0; i < count; ++i) {
         if (!ProjectView(first[i], frame.width, frame.height, draw.color, projected[i], error)) return false;
@@ -172,9 +237,11 @@ bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPac
     }
     return true;
 }
+} // namespace
 
-}
-
+/**
+ * Dispatches each API draw kind to screen-space or world-space vertex generation.
+ */
 bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                 Array<Vertex>& vertices, uint32_t vertexLimit, String& error) {
     if (draw.kind == detail::DrawKind::Rect) {
@@ -198,12 +265,15 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
             return false;
         Vertex rectangle[6]{};
         const float points[6][2] = {{left,top},{right,top},{right,bottom},{left,top},{right,bottom},{left,bottom}};
+        const float uvs[6][2] = {{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
         for (uint32_t i = 0; i < 6; ++i) {
             rectangle[i].position[0] = points[i][0];
             rectangle[i].position[1] = points[i][1];
             rectangle[i].position[2] = 0.0f;
             rectangle[i].position[3] = 1.0f;
             StoreColor(draw.color, rectangle[i].color);
+            rectangle[i].uv[0] = uvs[i][0];
+            rectangle[i].uv[1] = uvs[i][1];
             if (!vertices.Append(rectangle[i])) {
                 error.Assign("The frame vertex allocation failed");
                 return false;
@@ -219,7 +289,8 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
             error.Assign("Unfilled 3D triangles are unavailable in the current renderer");
             return false;
         }
-        return AppendWorldTriangle(frame, draw, draw.points, false, vertices, vertexLimit, error);
+        const float noUvs[3][2] = {};
+        return AppendWorldTriangle(frame, draw, draw.points, noUvs, false, vertices, vertexLimit, error);
     }
     if (draw.kind == detail::DrawKind::Model && draw.model) {
         const detail::ModelResource& model = *draw.model;
@@ -229,6 +300,7 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
         }
         for (uint32_t i = 0; i < model.indices.Count(); i += 3) {
             Vec3 points[3]{};
+            float uvs[3][2]{};
             for (uint32_t j = 0; j < 3; ++j) {
                 const uint32_t index = model.indices.At(i + j);
                 if (index >= model.vertices.Count()) {
@@ -237,8 +309,10 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
                 }
                 const detail::ModelVertex& source = model.vertices.At(index);
                 points[j] = {source.position[0], source.position[1], source.position[2]};
+                uvs[j][0] = source.uv[0];
+                uvs[j][1] = source.uv[1];
             }
-            if (!AppendWorldTriangle(frame, draw, points, true, vertices, vertexLimit, error)) return false;
+            if (!AppendWorldTriangle(frame, draw, points, uvs, true, vertices, vertexLimit, error)) return false;
         }
         return true;
     }
@@ -246,6 +320,9 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
     return false;
 }
 
+/**
+ * Expands one validated image into a clip-space quad with normalized source UVs.
+ */
 bool AppendSprite(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                   Array<Vertex>& vertices, uint32_t vertexLimit, String& error) {
     if (!draw.image || draw.image->width == 0 || draw.image->height == 0 ||

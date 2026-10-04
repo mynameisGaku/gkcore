@@ -17,6 +17,16 @@ void FillImagePixels(gk::detail::ImageResource& image) {
     for (uint32_t i = 0; i < count; ++i) image.rgba.Append(static_cast<uint8_t>(255));
 }
 
+gk::detail::ModelVertex MakeModelVertex(float x, float y, float z, float u, float v) {
+    gk::detail::ModelVertex vertex{};
+    vertex.position[0] = x;
+    vertex.position[1] = y;
+    vertex.position[2] = z;
+    vertex.uv[0] = u;
+    vertex.uv[1] = v;
+    return vertex;
+}
+
 void TestRectClipVertices() {
     gk::detail::FramePacket frame{};
     frame.width = 200;
@@ -38,6 +48,10 @@ void TestRectClipVertices() {
     Require(std::fabs(vertices.At(2).position[0] + 0.4f) < 0.0001f, "rectangle right maps to clip space");
     Require(std::fabs(vertices.At(2).color[0] - 0.79129794f) < 0.0001f,
             "packed sRGB red channel is converted to linear light");
+    Require(vertices.At(0).uv[0] == 0.0f && vertices.At(0).uv[1] == 0.0f,
+            "rect top-left has normalized sprite UV");
+    Require(vertices.At(2).uv[0] == 1.0f && vertices.At(2).uv[1] == 1.0f,
+            "rect bottom-right has normalized sprite UV");
 }
 
 void TestTriangleProjection() {
@@ -67,6 +81,9 @@ void TestTriangleProjection() {
     Require(leftPoint && rightPoint, "camera projection preserves horizontal orientation");
     Require(upperPoint, "camera projection preserves Y-up orientation");
     Require(std::fabs(vertices.At(0).position[3] - 5.0f) < 0.0001f, "perspective clip W contains view depth");
+    for (uint32_t i = 0; i < vertices.Count(); ++i)
+        Require(vertices.At(i).uv[0] == 0.0f && vertices.At(i).uv[1] == 0.0f,
+                "procedural triangle without UV input uses the zero UV coordinate");
 }
 
 void TestNearPlaneClippingAndDepth() {
@@ -106,6 +123,200 @@ void TestNearPlaneClippingAndDepth() {
     Require(nearDepth.Count() == 3 && farDepth.Count() == 3, "depth comparison triangles remain visible");
     Require(nearDepth.At(0).position[2] / nearDepth.At(0).position[3] <
             farDepth.At(0).position[2] / farDepth.At(0).position[3], "depth increases with view distance");
+}
+
+void TestModelUvsSurviveProjectionAndTransform() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-0.6f, -0.4f, 0.0f, 0.15f, 0.25f));
+    model.vertices.Append(MakeModelVertex(0.7f, -0.3f, 0.2f, 0.85f, 0.2f));
+    model.vertices.Append(MakeModelVertex(0.1f, 0.8f, -0.1f, 0.35f, 0.95f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+
+    gk::detail::FramePacket frame{};
+    frame.width = 800;
+    frame.height = 600;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0, 0, -5};
+    draw.cameraTarget = {0, 0, 0};
+    draw.modelPosition = {0.2f, 0.1f, 0.0f};
+    draw.modelRotation = {0.0f, 0.2f, 0.0f};
+    draw.modelScale = {1.2f, 0.9f, 1.1f};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "transformed model triangle projection preserves UV attributes");
+    Require(vertices.Count() == 3, "unclipped transformed model remains one triangle");
+    const float expected[3][2] = {{0.15f,0.25f},{0.85f,0.2f},{0.35f,0.95f}};
+    bool found[3]{};
+    for (uint32_t i = 0; i < vertices.Count(); ++i) {
+        for (uint32_t j = 0; j < 3; ++j) {
+            if (vertices.At(i).uv[0] == expected[j][0] && vertices.At(i).uv[1] == expected[j][1]) found[j] = true;
+        }
+    }
+    Require(found[0] && found[1] && found[2], "projected model vertices keep the UV set belonging to indexed corners");
+}
+
+void TestModelUvsStayWithProjectedCorners() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-1.0f, -0.5f, 0.0f, 0.1f, 0.2f));
+    model.vertices.Append(MakeModelVertex(0.8f, -0.3f, 0.0f, 0.7f, 0.25f));
+    model.vertices.Append(MakeModelVertex(0.2f, 0.9f, 0.0f, 0.35f, 0.9f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+
+    gk::detail::FramePacket frame{};
+    frame.width = 800;
+    frame.height = 600;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0, 0, -5};
+    draw.cameraTarget = {0, 0, 0};
+    draw.modelScale = {1, 1, 1};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "untransformed model projects to screen with corner UVs");
+    const float focal = 1.7320508075688772f;
+    const float aspect = 800.0f / 600.0f;
+    const float source[3][4] = {
+        {-1.0f, -0.5f, 0.1f, 0.2f},
+        {0.8f, -0.3f, 0.7f, 0.25f},
+        {0.2f, 0.9f, 0.35f, 0.9f}
+    };
+    for (uint32_t corner = 0; corner < 3; ++corner) {
+        const float expectedX = source[corner][0] * focal / aspect / 5.0f;
+        const float expectedY = source[corner][1] * focal / 5.0f;
+        bool matched = false;
+        for (uint32_t i = 0; i < vertices.Count(); ++i) {
+            const gk::render::Vertex& vertex = vertices.At(i);
+            const float ndcX = vertex.position[0] / vertex.position[3];
+            const float ndcY = vertex.position[1] / vertex.position[3];
+            if (std::fabs(ndcX - expectedX) < 0.0001f &&
+                std::fabs(ndcY - expectedY) < 0.0001f) {
+                matched = vertex.uv[0] == source[corner][2] &&
+                          vertex.uv[1] == source[corner][3];
+                break;
+            }
+        }
+        Require(matched, "each projected model corner retains its own indexed UV");
+    }
+}
+
+void TestNearClipInterpolatesModelUvs() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-1.0f, 0.0f, -4.95f, 0.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(1.0f, 0.0f, 0.0f, 1.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, 1.0f, 0.0f, 0.0f, 1.0f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+
+    gk::detail::FramePacket frame{};
+    frame.width = 800;
+    frame.height = 600;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0, 0, -5};
+    draw.cameraTarget = {0, 0, 0};
+    draw.modelScale = {1, 1, 1};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "model crossing the near plane keeps interpolated UV attributes");
+    Require(vertices.Count() == 6, "near-clipped model triangle triangulates as a quad");
+    bool interpolatedU = false;
+    bool interpolatedV = false;
+    bool sourceU = false;
+    bool sourceV = false;
+    for (uint32_t i = 0; i < vertices.Count(); ++i) {
+        const gk::render::Vertex& vertex = vertices.At(i);
+        Require(std::isfinite(vertex.uv[0]) && std::isfinite(vertex.uv[1]), "clipped UV values are finite");
+        Require(vertex.uv[0] >= 0.0f && vertex.uv[0] <= 1.0f &&
+                vertex.uv[1] >= 0.0f && vertex.uv[1] <= 1.0f, "clipped UV stays within edge bounds");
+        interpolatedU = interpolatedU || (vertex.uv[0] > 0.0f && vertex.uv[0] < 1.0f && vertex.uv[1] == 0.0f);
+        interpolatedV = interpolatedV || (vertex.uv[1] > 0.0f && vertex.uv[1] < 1.0f && vertex.uv[0] == 0.0f);
+        sourceU = sourceU || (vertex.uv[0] == 1.0f && vertex.uv[1] == 0.0f);
+        sourceV = sourceV || (vertex.uv[0] == 0.0f && vertex.uv[1] == 1.0f);
+    }
+    Require(interpolatedU && interpolatedV, "near-plane intersections interpolate each UV axis along its edge");
+    Require(sourceU && sourceV, "unclipped model corners preserve their original UV values");
+
+    gk::Array<gk::render::Vertex> bounded;
+    Require(!gk::render::AppendDraw(frame, draw, bounded, 5, error), "clipped output exceeding vertex bound is rejected");
+    Require(bounded.Count() == 0, "vertex-bound failure does not append a partial clipped polygon");
+}
+
+void TestFarClipInterpolatesModelUvs() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(-1.0f, 0.0f, 1000.0f, 0.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(1.0f, 0.0f, 0.0f, 1.0f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, 1.0f, 0.0f, 0.0f, 1.0f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+
+    gk::detail::FramePacket frame{};
+    frame.width = 800;
+    frame.height = 600;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0, 0, -5};
+    draw.cameraTarget = {0, 0, 0};
+    draw.modelScale = {1, 1, 1};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "model beyond the far plane keeps interpolated UV attributes");
+    Require(vertices.Count() == 6, "far-clipped model triangle triangulates as a quad");
+    bool interpolatedU = false;
+    bool interpolatedV = false;
+    bool sourceU = false;
+    bool sourceV = false;
+    for (uint32_t i = 0; i < vertices.Count(); ++i) {
+        const gk::render::Vertex& vertex = vertices.At(i);
+        const float depth = vertex.position[2] / vertex.position[3];
+        Require(depth >= -0.0001f && depth <= 1.0001f, "far-clipped depth stays inside the projection interval");
+        Require(vertex.uv[0] >= 0.0f && vertex.uv[0] <= 1.0f &&
+                vertex.uv[1] >= 0.0f && vertex.uv[1] <= 1.0f, "far-clipped UV stays within edge bounds");
+        interpolatedU = interpolatedU || (vertex.uv[0] > 0.0f && vertex.uv[0] < 1.0f && vertex.uv[1] == 0.0f);
+        interpolatedV = interpolatedV || (vertex.uv[1] > 0.0f && vertex.uv[1] < 1.0f && vertex.uv[0] == 0.0f);
+        sourceU = sourceU || (vertex.uv[0] == 1.0f && vertex.uv[1] == 0.0f);
+        sourceV = sourceV || (vertex.uv[0] == 0.0f && vertex.uv[1] == 1.0f);
+    }
+    Require(interpolatedU && interpolatedV, "far-plane intersections interpolate each UV axis along its edge");
+    Require(sourceU && sourceV, "unclipped far-plane corners preserve their original UV values");
+}
+
+void TestNonFiniteModelUvFailsBeforeClipping() {
+    gk::detail::ModelResource model{};
+    model.vertices.Append(MakeModelVertex(0.0f, 0.0f, -2000.0f, NAN, 0.0f));
+    model.vertices.Append(MakeModelVertex(1.0f, 0.0f, -2000.0f, 0.5f, 0.0f));
+    model.vertices.Append(MakeModelVertex(0.0f, 1.0f, -2000.0f, 0.0f, 0.5f));
+    model.indices.Append(0);
+    model.indices.Append(1);
+    model.indices.Append(2);
+    gk::detail::FramePacket frame{};
+    frame.width = 640;
+    frame.height = 480;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Model;
+    draw.model = &model;
+    draw.cameraPosition = {0, 0, -5};
+    draw.cameraTarget = {0, 0, 0};
+    draw.modelScale = {1, 1, 1};
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(!gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "non-finite model UV fails even if the triangle would clip away");
+    Require(error.Length() != 0 && vertices.Count() == 0, "invalid UV failure reports an error without output vertices");
 }
 
 void TestOutOfRangeCoordinatesReportError() {
@@ -210,9 +421,14 @@ void TestSpriteRejectsInvalidResourceAndBounds() {
 }
 
 int main() {
+    TestModelUvsSurviveProjectionAndTransform();
+    TestModelUvsStayWithProjectedCorners();
     TestRectClipVertices();
     TestTriangleProjection();
     TestNearPlaneClippingAndDepth();
+    TestNearClipInterpolatesModelUvs();
+    TestFarClipInterpolatesModelUvs();
+    TestNonFiniteModelUvFailsBeforeClipping();
     TestOutOfRangeCoordinatesReportError();
     TestSpritePixelsAndTopLeftUv();
     TestCenteredRotatedSpriteGeometry();

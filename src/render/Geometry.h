@@ -9,6 +9,7 @@ namespace gk::render {
 
 /**
  * A clip-space color or textured vertex consumed by built-in Forge pipelines.
+ * Model coordinates retain perspective-correct UVs through homogeneous clipping.
  */
 struct Vertex {
     float position[4];
