@@ -4,7 +4,7 @@
 
 - Develop only on `dev`. Promote reviewed, tested, stable, useful checkpoints from `dev` to `main`; do not wait for the entire SDK to be finished.
 - The root agent owns commits and pushes so parallel work does not race.
-- Keep each small, reviewed change in a local `dev` commit. Remote pushes are paused at the user's request; resume them only when the user asks.
+- Keep each small, verified change in a `dev` commit and push it to the remote `dev` branch. Promote stable, reviewed checkpoints from `dev` to `main`.
 - Write commit messages in Japanese using one of these forms:
   - `feat (x): 〇〇のため、△△を追加`
   - `fix (x): 〇〇のため、△△を修正`
