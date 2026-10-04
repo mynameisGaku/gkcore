@@ -67,6 +67,9 @@ struct FramePacket {
     float bloomIntensity;
     float exposure;
     bool toneMappingEnabled;
+    float saturation = 1.0f;
+    float contrast = 1.0f;
+    bool fxaaEnabled = true;
     Array<DrawPacket> draws;
 };
 

@@ -245,6 +245,21 @@ GKCORE_API int SetBloomIntensity(float intensity);
 GKCORE_API int SetExposure(float exposure);
 
 /**
+ * Sets scene saturation to a finite factor in [0, 2]; 1 preserves saturation.
+ */
+GKCORE_API int SetSaturation(float factor);
+
+/**
+ * Sets scene contrast to a finite factor in [0, 2]; 1 preserves contrast.
+ */
+GKCORE_API int SetContrast(float factor);
+
+/**
+ * Enables or disables FXAA for subsequent frames; it is enabled by default.
+ */
+GKCORE_API int SetFxaaEnabled(bool enabled);
+
+/**
  * Enables or disables tone mapping for subsequent frames.
  */
 GKCORE_API int SetToneMappingEnabled(bool enabled);

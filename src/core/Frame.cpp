@@ -120,6 +120,9 @@ int BeginFrame() {
     context.frame.bloomIntensity = settings.bloomIntensity;
     context.frame.exposure = settings.exposure;
     context.frame.toneMappingEnabled = settings.toneMappingEnabled;
+    context.frame.saturation = settings.saturation;
+    context.frame.contrast = settings.contrast;
+    context.frame.fxaaEnabled = settings.fxaaEnabled;
     context.frameOpen = true;
     detail::ClearError();
     return 0;

@@ -27,6 +27,23 @@ bool SetExposure(float exposure) {
     return true;
 }
 
+bool SetSaturation(float factor) {
+    if (!IsFinite(factor) || factor < 0.0f || factor > 2.0f) return false;
+    settings.saturation = factor;
+    return true;
+}
+
+bool SetContrast(float factor) {
+    if (!IsFinite(factor) || factor < 0.0f || factor > 2.0f) return false;
+    settings.contrast = factor;
+    return true;
+}
+
+bool SetFxaaEnabled(bool enabled) {
+    settings.fxaaEnabled = enabled;
+    return true;
+}
+
 bool SetToneMappingEnabled(bool enabled) { settings.toneMappingEnabled = enabled; return true; }
 
 bool SetLayer(DrawLayer layer) {

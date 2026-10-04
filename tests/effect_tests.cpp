@@ -16,6 +16,8 @@ bool EffectsContract(String& failure) {
     if (!value.bloomEnabled || value.bloomIntensity != 0.15f || value.exposure != 1.0f ||
         !value.toneMappingEnabled || value.layer != DrawLayer::Scene)
         return Fail(failure, "effect defaults are incorrect");
+    if (value.saturation != 1.0f || value.contrast != 1.0f || !value.fxaaEnabled)
+        return Fail(failure, "color and antialiasing effect defaults are incorrect");
     if (!gk::effects::SetBloomEnabled(false) || !gk::effects::SetBloomIntensity(0.8f) ||
         !gk::effects::SetExposure(1.25f) || !gk::effects::SetToneMappingEnabled(false))
         return Fail(failure, "valid effect settings were rejected");
@@ -26,8 +28,17 @@ bool EffectsContract(String& failure) {
         return Fail(failure, "invalid bloom intensity was accepted");
     if (gk::effects::SetExposure(0.0f) || gk::effects::SetExposure(16.01f) || gk::effects::SetExposure(INFINITY))
         return Fail(failure, "invalid exposure was accepted");
+    if (!gk::effects::SetSaturation(0.5f) || !gk::effects::SetContrast(1.5f) ||
+        !gk::effects::SetFxaaEnabled(false))
+        return Fail(failure, "valid color or antialiasing settings were rejected");
+    if (gk::effects::SetSaturation(-0.01f) || gk::effects::SetSaturation(2.01f) ||
+        gk::effects::SetSaturation(NAN) || gk::effects::SetSaturation(INFINITY) ||
+        gk::effects::SetContrast(-0.01f) || gk::effects::SetContrast(2.01f) ||
+        gk::effects::SetContrast(NAN) || gk::effects::SetContrast(INFINITY))
+        return Fail(failure, "invalid saturation or contrast was accepted");
     value = gk::effects::Current();
-    if (value.bloomIntensity != 0.8f || value.exposure != 1.25f)
+    if (value.bloomIntensity != 0.8f || value.exposure != 1.25f ||
+        value.saturation != 0.5f || value.contrast != 1.5f || value.fxaaEnabled)
         return Fail(failure, "rejected effect settings changed active values");
     if (!gk::effects::SetLayer(DrawLayer::UI) || gk::effects::Current().layer != DrawLayer::UI ||
         !gk::effects::SetLayer(DrawLayer::Scene))
@@ -70,6 +81,10 @@ bool EffectsContract(String& failure) {
     if (!independent.SetActiveShader(a) || !independent.DeleteShader(a) ||
         !independent.SetActiveShader(b) || !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1)
         return Fail(failure, "deleting one shader cleared another shader constants");
+    gk::effects::Reset();
+    value = gk::effects::Current();
+    if (value.saturation != 1.0f || value.contrast != 1.0f || !value.fxaaEnabled)
+        return Fail(failure, "effect reset did not restore identity color settings and FXAA");
     return true;
 }
 } // namespace gk::tests

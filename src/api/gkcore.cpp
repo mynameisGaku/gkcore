@@ -90,6 +90,24 @@ int SetExposure(float exposure) {
     return 0;
 }
 
+int SetSaturation(float factor) {
+    if (!effects::SetSaturation(factor)) return detail::SetError("saturation must be finite and in [0, 2]");
+    detail::ClearError();
+    return 0;
+}
+
+int SetContrast(float factor) {
+    if (!effects::SetContrast(factor)) return detail::SetError("contrast must be finite and in [0, 2]");
+    detail::ClearError();
+    return 0;
+}
+
+int SetFxaaEnabled(bool enabled) {
+    effects::SetFxaaEnabled(enabled);
+    detail::ClearError();
+    return 0;
+}
+
 int SetToneMappingEnabled(bool enabled) {
     effects::SetToneMappingEnabled(enabled);
     detail::ClearError();

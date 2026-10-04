@@ -4,6 +4,8 @@
 #include "../src/foundation/Memory.h"
 #include "../src/image/Image.h"
 #include "../src/text/TextCache.h"
+#include "../src/effects/Effects.h"
+#include "../src/render/ModelDrawPlan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,6 +61,18 @@ struct CaptureState {
     bool queuedImageCentered = false;
     bool queuedModelValid = false;
     float queuedModelPositions[2]{};
+    bool baseColorGlbPlanValid = false;
+    uint32_t baseColorGlbModelReferences = 0;
+    uint32_t baseColorGlbPrimitiveCount = 0;
+    uint32_t baseColorGlbMaterialCount = 0;
+    uint32_t baseColorGlbTextureCount = 0;
+    uint32_t baseColorGlbTextureWidth = 0;
+    uint32_t baseColorGlbTextureHeight = 0;
+    uint32_t baseColorGlbFirstIndices[2]{};
+    uint32_t baseColorGlbIndexCounts[2]{};
+    int32_t baseColorGlbMaterialIndices[2]{};
+    int32_t baseColorGlbTextureIndices[2]{};
+    float baseColorGlbFactors[2][4]{};
     uint32_t textRasterizations = 0;
     uint32_t textImageWidth = 2;
     uint32_t textImageHeight = 2;
@@ -74,6 +88,9 @@ struct CaptureState {
     const gk::detail::ImageResource* textImages[4]{};
     bool bloomEnabled = true;
     float exposure = 1.0f;
+    float saturation = 1.0f;
+    float contrast = 1.0f;
+    bool fxaaEnabled = true;
 };
 
 class CaptureBackend final : public gk::detail::Backend {
@@ -153,6 +170,9 @@ public:
         state_.presentedWidth = frame.width;
         state_.bloomEnabled = frame.bloomEnabled;
         state_.exposure = frame.exposure;
+        state_.saturation = frame.saturation;
+        state_.contrast = frame.contrast;
+        state_.fxaaEnabled = frame.fxaaEnabled;
         for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i) {
             state_.cameraX[i] = frame.draws.At(i).cameraPosition.x;
             state_.shaderIds[i] = frame.draws.At(i).shader.value;
@@ -187,6 +207,32 @@ public:
             const gk::detail::DrawPacket& draw = frame.draws.At(i);
             state_.queuedModelValid = draw.model && draw.model->indices.Count() == 3;
             state_.queuedModelPositions[modelDraw++] = draw.modelPosition.x;
+            if (draw.model && draw.model->primitives.Count() == 2) {
+                gk::render::ModelDrawPlan plan;
+                gk::String planError;
+                if (gk::render::BuildModelDrawPlan(*draw.model, plan, planError) &&
+                    plan.parts.Count() == 2) {
+                    state_.baseColorGlbModelReferences = draw.model->reference.references;
+                    state_.baseColorGlbPrimitiveCount = draw.model->primitives.Count();
+                    state_.baseColorGlbMaterialCount = draw.model->materials.Count();
+                    state_.baseColorGlbTextureCount = draw.model->textures.Count();
+                    if (state_.baseColorGlbTextureCount && draw.model->textures.At(0)) {
+                        const gk::detail::ImageResource* texture = draw.model->textures.At(0);
+                        state_.baseColorGlbTextureWidth = texture->width;
+                        state_.baseColorGlbTextureHeight = texture->height;
+                    }
+                    for (uint32_t part = 0; part < 2; ++part) {
+                        const gk::render::ModelPartPlan& source = plan.parts.At(part);
+                        state_.baseColorGlbFirstIndices[part] = source.firstIndex;
+                        state_.baseColorGlbIndexCounts[part] = source.indexCount;
+                        state_.baseColorGlbMaterialIndices[part] = source.materialIndex;
+                        state_.baseColorGlbTextureIndices[part] = source.textureIndex;
+                        for (uint32_t component = 0; component < 4; ++component)
+                            state_.baseColorGlbFactors[part][component] = source.baseColorFactor[component];
+                    }
+                    state_.baseColorGlbPlanValid = true;
+                }
+            }
         }
         return true;
     }
@@ -285,9 +331,15 @@ bool TestFrameStateAndMixedDraws() {
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::SetBloomEnabled(false) == 0);
     CHECK(gk::SetExposure(2.0f) == 0);
+    CHECK(gk::SetSaturation(0.5f) == 0);
+    CHECK(gk::SetContrast(1.5f) == 0);
+    CHECK(gk::SetFxaaEnabled(false) == 0);
     CHECK(gk::Init() == 0);
     CHECK(capture.initializedWidth == 640 && capture.initializedHeight == 480);
     CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::SetSaturation(0.75f) == 0);
+    CHECK(gk::SetContrast(0.75f) == 0);
+    CHECK(gk::SetFxaaEnabled(true) == 0);
     CHECK(gk::SetCamera({2.0f, 0.0f, -5.0f}, {0.0f, 0.0f, 0.0f}) == 0);
     CHECK(gk::DrawRect(1, 2, 30, 40, gk::ColorRGB(4, 5, 6)) == 0);
     CHECK(gk::SetDrawLayer(gk::DrawLayer::UI) == 0);
@@ -307,6 +359,7 @@ bool TestFrameStateAndMixedDraws() {
     CHECK(capture.layers[1] == static_cast<uint8_t>(gk::DrawLayer::UI));
     CHECK(capture.layers[2] == static_cast<uint8_t>(gk::DrawLayer::Scene));
     CHECK(!capture.bloomEnabled && capture.exposure == 2.0f);
+    CHECK(capture.saturation == 0.5f && capture.contrast == 1.5f && !capture.fxaaEnabled);
     CHECK(gk::ProcessEvents());
     CHECK(gk::IsKeyDown(gk::Key::Escape));
     capture.clientWidth = 800;
@@ -316,10 +369,19 @@ bool TestFrameStateAndMixedDraws() {
     CHECK(gk::Present() == 0);
     CHECK(capture.presentedWidth == 800);
     CHECK(capture.bloomEnabled && capture.exposure == 4.0f);
+    CHECK(capture.saturation == 0.75f && capture.contrast == 0.75f && capture.fxaaEnabled);
+    CHECK(gk::SetSaturation(NAN) == -1);
+    CHECK(gk::SetContrast(2.1f) == -1);
+    CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.saturation == 0.75f && capture.contrast == 0.75f);
     capture.eventResult = -1;
     CHECK(!gk::ProcessEvents());
     CHECK(gk::GetLastErrorMessage()[0] == '\0');
     gk::Shutdown();
+    CHECK(gk::effects::Current().saturation == 1.0f);
+    CHECK(gk::effects::Current().contrast == 1.0f && gk::effects::Current().fxaaEnabled);
     CHECK(capture.destroyed);
     return true;
 }
@@ -549,6 +611,38 @@ bool TestQueuedImageSurvivesDeletion() {
     return true;
 }
 
+bool TestCheckedInBaseColorGlbSurvivesPublicDeletion() {
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::Init() == 0);
+    const std::filesystem::path assetPath =
+        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_basecolor.glb";
+    const std::string utf8Path = assetPath.u8string();
+    const gk::ModelHandle model = gk::LoadModel(utf8Path.c_str());
+    CHECK(model.IsValid());
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::DrawModel(model) == 0);
+    CHECK(gk::DeleteModel(model) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.drawCount == 1);
+    CHECK(capture.baseColorGlbPlanValid);
+    CHECK(capture.baseColorGlbModelReferences == 1);
+    CHECK(capture.baseColorGlbPrimitiveCount == 2);
+    CHECK(capture.baseColorGlbMaterialCount == 2);
+    CHECK(capture.baseColorGlbTextureCount == 1);
+    CHECK(capture.baseColorGlbTextureWidth > 0 && capture.baseColorGlbTextureHeight > 0);
+    CHECK(capture.baseColorGlbFirstIndices[0] == 0 && capture.baseColorGlbIndexCounts[0] == 3);
+    CHECK(capture.baseColorGlbFirstIndices[1] == 3 && capture.baseColorGlbIndexCounts[1] == 3);
+    CHECK(capture.baseColorGlbMaterialIndices[0] == 0 && capture.baseColorGlbMaterialIndices[1] == 1);
+    CHECK(capture.baseColorGlbTextureIndices[0] == 0 && capture.baseColorGlbTextureIndices[1] == -1);
+    CHECK(capture.baseColorGlbFactors[0][0] == 0.8f && capture.baseColorGlbFactors[0][1] == 0.65f &&
+          capture.baseColorGlbFactors[0][2] == 0.35f && capture.baseColorGlbFactors[0][3] == 1.0f);
+    CHECK(capture.baseColorGlbFactors[1][0] == 0.25f && capture.baseColorGlbFactors[1][1] == 0.7f &&
+          capture.baseColorGlbFactors[1][2] == 0.4f && capture.baseColorGlbFactors[1][3] == 0.9f);
+    gk::Shutdown();
+    return true;
+}
+
 bool TestShaderLifetimesAndSnapshots() {
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
@@ -670,6 +764,7 @@ int main() {
     if (!TestTextCacheMemoryBound()) ++failures;
     if (!TestTextCacheEntryBound()) ++failures;
     if (!TestQueuedImageSurvivesDeletion()) ++failures;
+    if (!TestCheckedInBaseColorGlbSurvivesPublicDeletion()) ++failures;
     if (!TestShaderLifetimesAndSnapshots()) ++failures;
     if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
     return failures == 0 ? 0 : 1;

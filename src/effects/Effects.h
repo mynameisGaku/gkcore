@@ -16,6 +16,9 @@ struct Settings {
     float exposure;
     bool toneMappingEnabled;
     DrawLayer layer;
+    float saturation = 1.0f;
+    float contrast = 1.0f;
+    bool fxaaEnabled = true;
 };
 
 /**
@@ -38,6 +41,18 @@ bool SetBloomIntensity(float intensity);
  * Sets exposure to a finite value in (0, 16].
  */
 bool SetExposure(float exposure);
+/**
+ * Sets saturation to a finite factor in [0, 2], where 1 preserves saturation.
+ */
+bool SetSaturation(float factor);
+/**
+ * Sets contrast to a finite factor in [0, 2], where 1 preserves contrast.
+ */
+bool SetContrast(float factor);
+/**
+ * Enables or disables FXAA for subsequently captured frames.
+ */
+bool SetFxaaEnabled(bool enabled);
 /**
  * Enables or disables scene tone mapping.
  */
