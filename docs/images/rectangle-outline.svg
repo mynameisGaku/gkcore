@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" role="img" aria-labelledby="title desc">
+  <title id="title">輪郭矩形の線幅と描画層</title>
+  <desc id="desc">外側の矩形境界から内側へ向けて線を描き、Scene に描いた輪郭矩形はポスト効果を通った後 UI の下になることを示す概念図です。</desc>
+  <defs>
+    <linearGradient id="scene" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#1d385c"/>
+      <stop offset="1" stop-color="#315b80"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto">
+      <path d="M0,0 L9,4 L0,8 Z" fill="#7186a3"/>
+    </marker>
+    <style>
+      text { font-family: "Yu Gothic UI", "Meiryo", sans-serif; }
+      .title { fill: #edf4ff; font-size: 24px; font-weight: 700; }
+      .label { fill: #e5eefb; font-size: 17px; }
+      .small { fill: #b6c6d9; font-size: 14px; }
+      .dark { fill: #182538; font-size: 15px; }
+    </style>
+  </defs>
+  <rect width="960" height="470" rx="18" fill="#0c1422"/>
+  <text x="36" y="44" class="title">外側の境界から内側へ線を描く</text>
+
+  <rect x="48" y="82" width="430" height="278" rx="14" fill="url(#scene)" stroke="#4d78ad"/>
+  <text x="72" y="116" class="label">Scene または UI の描画層</text>
+  <rect x="116" y="158" width="284" height="150" fill="#d99b3c"/>
+  <rect x="128" y="170" width="260" height="126" fill="#111a28"/>
+  <rect x="128" y="170" width="260" height="126" fill="none" stroke="#6f8bad" stroke-dasharray="6 5"/>
+  <path d="M130 145 H159" stroke="#f3c46f" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="170" y="151" class="small">thickness = 12</text>
+  <text x="148" y="331" class="small">線は内側に収まり、指定枠から外へ出ない</text>
+
+  <rect x="520" y="82" width="392" height="278" rx="14" fill="#e8eef7"/>
+  <text x="546" y="117" class="dark" font-weight="700">画面に合成される順序</text>
+  <rect x="554" y="151" width="324" height="52" rx="9" fill="#315b80"/>
+  <text x="576" y="184" class="label">Scene: 2D / 3D 図形</text>
+  <path d="M716 210 V228" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="554" y="238" width="324" height="52" rx="9" fill="#65477f"/>
+  <text x="576" y="271" class="label">HDR とポスト効果</text>
+  <path d="M716 297 V315" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
+  <rect x="554" y="325" width="324" height="26" rx="8" fill="#267568"/>
+  <text x="576" y="345" class="dark">UI を最後に合成</text>
+
+  <text x="48" y="415" class="small">概念図です。実際の GPU 画面を撮影した画像ではありません。</text>
+  <text x="48" y="441" class="small">Windows / MSVC の実行と実 GPU 上の見た目は別途確認が必要です。</text>
+</svg>
