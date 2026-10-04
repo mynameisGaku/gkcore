@@ -58,7 +58,7 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Windows Runtime の build には固定版 The Forge、DXC 1.8.2405、Visual Studio 2022 の C++ 開発環境、v142/MSVC 1929 toolset、CMake 3.21 以降、Windows 10 SDK が必要です。`PRE_SETUP.bat` は前提を確認し、固定依存物を取得して The Forge の library/shader、gkcore Runtime/sample、CTest を build します。GPU smoke は必要な場合にだけ有効にします。Linux では Runtime を無効にして CPU テストを実行します。
+Windows Runtime の build には指定バージョンの The Forge、DXC 1.8.2405、Windows 10 SDK、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は前提を確認し、依存物を取得して The Forge の library/shader、gkcore Runtime/sample、CTest を build します。GPU smoke は必要な場合にだけ有効にします。Linux では Runtime を無効にして CPU テストを実行します。
 
 Windows でも The Forge を使わない CPU 契約テストを構成・ビルド・実行できます。Visual Studio 2026 x64 の例です。
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Exercise the deterministic MSBuild invocations without requiring Windows."""
 from pathlib import Path
 import sys
@@ -29,6 +29,12 @@ class ForgeBuildPlanTests(unittest.TestCase):
         import inspect
         from build_forge import build
         self.assertIn("dxc_root", inspect.signature(build).parameters)
+
+    def test_compiler_environment_adds_utf8_without_discarding_existing_cl_options(self):
+        from build_forge import compiler_environment
+        environment = compiler_environment({"CL": "/W3 /DKEEP=1"}, Path("/tools/dxc"))
+        self.assertEqual(environment["CL"], "/W3 /DKEEP=1 /utf-8")
+        self.assertEqual(environment["FSL_COMPILER_DXC"], str(Path("/tools/dxc/bin/x64").resolve()))
 
 
 if __name__ == "__main__":

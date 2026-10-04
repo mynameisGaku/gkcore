@@ -438,3 +438,19 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 修正後、Debug と Release の全 target build が成功し、CTest は各 26/26 件成功しました。CI と同じ構成コマンドをローカルの Windows clean shell で実行すると、従来の Ninja generator 指定は compiler 検出に失敗しました。generator の自動選択と Release 構成を明示する形へ直し、`build/ci-windows-fixed` の configure 成功を確認しました。主な実測ログは `build/dev-windows/{configure-final.log,build-debug-nan-red.log,build-debug-green.log,ctest-debug-green.log,build-release-green.log,ctest-release-green.log}` にあります。
 
 この検証は Windows/MSVC での CPU 契約と開発用 target の build / link を対象とします。`GKCORE_BUILD_RUNTIME=OFF` のため、The Forge を含む Runtime の build / link、DX12 実行、GPU 表示の確認ではありません。Runtime build が必要とする Visual Studio 2022 / v142 toolset はこの PC にないため、`tools/setup.py` の前提確認で停止し、Runtime 側の検証は未実施です。
+
+## 2026-10-05: Windows The Forge / OS build の文字コード
+
+Visual Studio 18 / MSBuild 18.10.1 に導入した v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.28000.0、CMake 4.3.1 で The Forge の Renderer / OS Release|x64 build を確認しました。最初は CP932 環境で `MemoryTracking.c` の C4819 が `/WX` により C2220 となり、OS build が失敗しました（RED: `build/native-validation/forge-release-x64.log`）。既存の `CL` 環境設定を維持したまま compiler option に `/utf-8` を追加し、Renderer と OS の build が成功しました（GREEN: `build/native-validation/forge-release-x64-utf8.log`）。関連する focused unittest 3 件も成功し、指定バージョンの The Forge 1,825 ファイルと DXC 7 ファイルの検証も成功しました。
+
+この結果は The Forge の Renderer / OS build と依存ファイル検査の確認です。gkcore Runtime の build / link、DX12 実行、GPU 表示の成功を示すものではありません。前項の CPU テスト記録にある v142 未導入の前提確認は、この toolset を導入する前の時点の結果です。
+
+## 2026-10-05: Visual Studio検出と依存アーカイブの取得
+
+VS2026にv142を導入した環境で、従来のセットアップはVS2022だけを検索して失敗しました。VS2026のみの構成を再現するテストでも同じ失敗を確認しました（`build/dev-windows/setup-vs2026-red.log`）。修正後はv142、MSBuild、CMake generatorを同じVisual Studio instanceから選択します。CMakeのバージョンに応じたVS2022への選択切り替え、v142不足の診断、GPU smoke指定時にも全CTestを実行する契約を含め、`python -B tests/package/test_setup_plan.py` の8件が成功しました。実環境でもVS2026と導入済みv142の検出を確認しました。
+
+The Forgeの取得先URLが、保存済みSHA-256と異なる形式のアーカイブを返していました。公式codeload URLのアーカイブが既存のSHA-256 `21ac9381f9711de6fa8723704533068b60abc8a02600aa69b608b859045b90ba` と一致することを確認し、URLだけを変更しました。commitと1,825ファイルの検証値は変更していません。
+
+Windowsの長い一時パスへの展開は修正前にWinError 206で失敗しました。長いパスに対応した展開処理を追加し、移動後の内容確認と不正なパスの拒否を含む `python -B tests/package/test_forge_checkout.py` の5件が成功しました。実アーカイブを展開し、既定の `.devtools/The-Forge` でも1,825ファイルの検証に成功しました。今回変更したPythonソースはUTF-8 BOM付き・CRLFで確認しています。
+
+変更後に `ctest --test-dir build/dev-windows -C Debug --output-on-failure` とRelease構成の同コマンドを実行し、どちらも26/26件成功しました。既存のRuntime無効ビルドを使った回帰検証です。ログは `build/native-validation/ctest-tools-debug.log` と `ctest-tools-release.log` に保存しました。

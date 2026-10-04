@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Explicitly fetch or unpack the locked The Forge development dependency."""
 from __future__ import annotations
 
@@ -14,6 +14,16 @@ import tempfile
 from urllib.request import Request, urlopen
 
 from forge_checkout import ForgeCheckoutError, LOCK_PATH, validate_checkout
+
+
+def _extended_windows_path(path: Path) -> Path:
+    """Windowsの長いcheckoutパスを扱うため、絶対パスに長さ対応prefixを付ける。"""
+    absolute = os.path.abspath(os.fspath(path))
+    if os.name != "nt" or absolute.startswith("\\\\?\\"):
+        return Path(absolute)
+    if absolute.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + absolute[2:])
+    return Path("\\\\?\\" + absolute)
 
 
 def download(url: str, target: Path) -> None:
@@ -38,12 +48,13 @@ def extract_safe(archive: Path, temporary: Path, commit: str) -> Path:
             raise ForgeCheckoutError("The Forge archive is empty")
         for member in members:
             path = PurePosixPath(member.name)
-            if path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != expected_root:
+            if "\\" in member.name or path.is_absolute() or ".." in path.parts or not path.parts or path.parts[0] != expected_root:
                 raise ForgeCheckoutError(f"unsafe or unexpected path in archive: {member.name}")
             if member.issym() or member.islnk() or member.isdev():
                 raise ForgeCheckoutError(f"unsupported link/device in archive: {member.name}")
-        tar.extractall(temporary, members=members)
-    return temporary / expected_root
+        extraction_root = _extended_windows_path(temporary)
+        tar.extractall(extraction_root, members=members)
+    return extraction_root / expected_root
 
 
 def main(argv=None) -> int:

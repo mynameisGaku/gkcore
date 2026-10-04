@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Build the pinned Windows x64 Renderer and OS libraries for gkcore development."""
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ from verify_dxc import verify as verify_dxc
 
 
 LIBRARY_PROJECTS = ("Renderer", "OS")
+
+
+def compiler_environment(base_environment, dxc_root):
+    """既存の環境変数とDXCの場所から、MSBuild用のUTF-8コンパイル環境を作る。"""
+    environment = base_environment.copy()
+    environment["FSL_COMPILER_DXC"] = str((Path(dxc_root) / "bin" / "x64").resolve())
+    existing_options = environment.get("CL", "").strip()
+    environment["CL"] = f"{existing_options} /utf-8".strip()
+    return environment
 
 
 def _windows_path(path: Path) -> str:
@@ -51,7 +60,7 @@ def find_msbuild() -> str:
         candidates = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         if result.returncode == 0 and candidates:
             return candidates[0]
-    raise ForgeCheckoutError("MSBuild was not found; install Visual Studio 2022 with the C++ desktop workload and MSBuild")
+    raise ForgeCheckoutError("MSBuild was not found; install Visual Studio 2022 or 2026 with the C++ desktop workload and MSBuild")
 
 
 def build(forge_root: Path, build_root: Path, msbuild: str, dxc_root: Path,
@@ -67,8 +76,7 @@ def build(forge_root: Path, build_root: Path, msbuild: str, dxc_root: Path,
         project = project_root / project_name / f"{project_name}.vcxproj"
         command = project_command(msbuild, project, project_name, build_root, solution_dir, configuration, platform)
         print(f"Building official The Forge {project_name} project ({configuration}|{platform})", flush=True)
-        environment = os.environ.copy()
-        environment["FSL_COMPILER_DXC"] = str((dxc_root / "bin" / "x64").resolve())
+        environment = compiler_environment(os.environ, dxc_root)
         subprocess.run(command, check=True, env=environment)
         library = build_root / project_name / f"{project_name}.lib"
         if not library.is_file():
@@ -96,7 +104,7 @@ def main(argv=None) -> int:
     parser.add_argument("--forge-root", required=True, help="verified pinned The Forge source directory")
     parser.add_argument("--build-dir", required=True, help="development-only output directory")
     parser.add_argument("--dxc-root", required=True, help="verified DXC 1.8.2405 directory")
-    parser.add_argument("--msbuild", help="MSBuild.exe path (auto-detected from VS2022 when omitted)")
+    parser.add_argument("--msbuild", help="MSBuild.exe path (auto-detected from Visual Studio 2022 or 2026 when omitted)")
     parser.add_argument("--configuration", default="Release", choices=("Debug", "Release"))
     parser.add_argument("--platform", default="x64", choices=("x64",))
     parser.add_argument("--dry-run", action="store_true", help="print the exact two upstream commands without running them")

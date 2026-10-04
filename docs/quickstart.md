@@ -52,4 +52,4 @@ HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換
 
 ## 開発環境
 
-開発環境の前提条件、The Forge/DXC の取得、ビルドとテストの手順は [`PRE_SETUP.bat`](../PRE_SETUP.bat) にあります。セットアップが成功すると `BUILD READY` と表示します。実 GPU の描画確認は DX12 対応 Windows PC で `PRE_SETUP.bat --gpu-check` を実行します。
+開発環境は Windows 10/11 x64、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が対象です。CMake は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降が必要です。The Forge/DXC の取得、ビルドとテストの手順は [`PRE_SETUP.bat`](../PRE_SETUP.bat) にあります。セットアップが成功すると `BUILD READY` と表示します。実 GPU の描画確認は DX12 対応 Windows PC で `PRE_SETUP.bat --gpu-check` を実行します。

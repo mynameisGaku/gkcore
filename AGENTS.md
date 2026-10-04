@@ -26,6 +26,8 @@
 
 ## Source and comments
 
+- 追加・変更するコードコメントは自然な日本語にする。example、バージョン、ビルドなど、一般的な技術用語を無理に訳さない。
+- 追加・変更する自作ソースは UTF-8 BOM 付き、改行は CRLF にする。固定バージョンの依存物には形式変更を加えない。
 - Keep comments useful: explain a non-obvious invariant or public usage; do not narrate trivial code.
 - Do not add external product comparisons or attribution in source comments. Required vendor attribution belongs in license/notice files.
 - Document public C++ types, functions, namespaces, and enums with this block-comment form:
