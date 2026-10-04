@@ -23,13 +23,13 @@ int main() {
 }
 ```
 
-現在の描画部は、Scene 層の 2D・3D 描画を HDR 描画先へまとめ、Bloom と露出・トーンマッピングを適用した後に UI 層を合成して画面へ表示します。これらの効果は初期設定で有効です。PNG / BMP 画像のスプライト描画、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。Windows/MSVC でのリンクと実 GPU 上の表示はまだ確認していません。
+描画部は Scene 層の 2D・3D を HDR 描画先へまとめ、Bloom、露出・トーンマッピング、彩度・コントラスト、FXAA を適用してから UI 層を合成します。PNG / BMP 画像のスプライト描画、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。Windows/MSVC でのリンクと実 GPU 上の表示はまだ確認していません。
 
 HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する経路も実装しました。[色を変えるサンプルと使い方](docs/custom-shader.md)を用意しています。こちらも Windows 上の描画は未確認です。
 
 ## 2D・3D とエフェクト
 
-Scene の 2D と 3D を同じ描画先へ重ね、Bloom と露出・トーンマッピングを適用してから UI を合成します。処理順と、Windows/GPU 上では未確認であることを図に示します。
+Scene の 2D と 3D を同じ描画先へ重ね、Bloom、露出・トーンマッピング、色調整、必要に応じた FXAA を適用してから UI を合成します。処理順と、Windows/GPU 上では未確認であることを図に示します。
 
 ![gkcore の描画処理順](docs/images/render-pipeline.svg)
 
@@ -52,6 +52,7 @@ flowchart LR
 ## 詳細
 
 - [クイックスタート](docs/quickstart.md)
+- [ポストエフェクトの使い方](docs/effects.md)
 - [完成仕様](docs/PRODUCT_SPEC.md)
 - [カスタムシェーダー開発](docs/custom-shader.md)
 - [配布物と開発物](docs/package-layout.md)

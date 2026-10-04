@@ -26,6 +26,9 @@ int main() {
     gk::SetCamera(gk::Vec3{0.0f, 2.0f, -8.0f}, gk::Vec3{0.0f, 0.0f, 0.0f});
     gk::SetBloomEnabled(true);
     gk::SetBloomIntensity(0.2f);
+    gk::SetSaturation(1.1f);
+    gk::SetContrast(1.05f);
+    gk::SetFxaaEnabled(true);
     gk::SetToneMappingEnabled(true);
 
     while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
@@ -45,7 +48,7 @@ int main() {
 }
 ```
 
-この例は完成後に目指す利用形です。PNG 画像の読み込みと sprite 描画 pipeline / texture upload の実装がありますが、Windows/GPU 上では未検証です。GLB の PBR 材質と model texture は GPU 描画に未対応です。UI の文字表示にはフォント/文字列 API が必要で、下記の要件に含めます。
+この例は完成後に目指す利用形です。PNG 画像の読み込みと画像描画、GLB の基本色係数・画像をモデルへ適用する経路は実装されていますが、Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。PBR 照明、影、環境マップ、alpha mode は未対応です。`gk::DrawString` は UTF-8 文字列をシステム標準フォントで表示する API として実装済みですが、Windows 上の文字表示は未検証です。
 
 ## 完成要件
 
@@ -63,7 +66,7 @@ int main() {
 - 3D のシーン描画命令は深度テストを使い、同じ層の命令順を保つ。UI 層はポスト処理後に重ね、UI 層の中でも命令順を保つ。Scene と UI の順序は層の指定で決まり、両層をまたいだ全体の呼び出し順とは異なる。
 - 深度テストのある 3D 描画と、画面座標の 2D 描画を明快に使い分けられる。2D/3D の切替を毎回明示的なパス構築として利用者に要求しない。
 - 画像はアルファ付き PNG と BMP を読み込める。2D には拡大縮小、回転、透明度、ブレンドと滑らかな拡大縮小を備える。
-- UTF-8 の日本語文字列を標準フォントで表示でき、色・サイズを簡単に変えられる。
+- `gk::DrawString` で UTF-8 の日本語文字列をシステム標準フォントで表示し、色・サイズを簡単に変えられる。Windows 上の表示確認は残っている。
 - 3D モデルは GLB/glTF 2.0 を基本形式にし、静的 mesh の PBR 材質、texture、camera を読み込む。モデルの位置/回転/拡大率を関数で設定できる。
 - 標準的な環境光、環境マップ、影を簡単な設定で利用でき、初期値でもモデルの形状が認識しやすい。
 

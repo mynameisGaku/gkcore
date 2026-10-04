@@ -32,11 +32,11 @@ int main() {
 
 [`examples/mixed_scene.cpp`](../examples/mixed_scene.cpp) は同じフレームの `Scene` 層に 3D 三角形と 2D 矩形を置き、`UI` 層に矩形と日本語文字を描く例です。`gk::DrawString` は Windows のシステム標準フォントを使い、同じ文字列・色・大きさの描画を上限付きキャッシュで再利用します。フォントファイルを別途用意する必要はありません。
 
-PNG / BMP 画像と OBJ / GLB 2.0 モデルは CPU 側で読み取れます。画像は画面上に描画する経路まで実装されています。GLB の画像や PBR 材質を使った描画は未対応です。Windows/MSVC でのリンクと実 GPU 上の表示は未確認です。詳しくは [機能一覧](ROADMAP.md) を確認してください。
+PNG / BMP 画像と OBJ / GLB 2.0 モデルを読み込めます。画像描画と、GLB モデルに基本色係数や基本色画像を適用する描画経路を実装しています。PBR 照明、影、環境マップ、alpha mode は未対応です。Windows/MSVC でのリンクと実 GPU 上の表示は未確認です。詳しくは [機能一覧](ROADMAP.md) を確認してください。
 
 3D カメラには `gk::SetCamera(gk::Vec3{...}, gk::Vec3{...})` で位置と注視点を渡します。モデルハンドルは `gk::LoadModel` で取得し、`gk::SetModelPosition`、`gk::SetModelRotation`、`gk::SetModelScale` で指定した値が後続の `gk::DrawModel` に使われます。使い終えたら `gk::DeleteModel` で解放します。画像も `ImageHandle` で管理します。
 
-描画命令は `gk::BeginFrame()` と `gk::Present()` の間に追加します。`gk::DrawLayer::Scene` に 2D/3D のゲーム描画を置くと、HDR 描画先へまとめて描画され、初期設定で有効な Bloom と露出・明るさの調整が適用されます。その後 `gk::DrawLayer::UI` の HUD を合成します。Scene と UI は別の描画層で、それぞれの中の命令順を保ちます。効果は `BeginFrame()` 時点の設定でそのフレームに適用されます。
+描画命令は `gk::BeginFrame()` と `gk::Present()` の間に追加します。`gk::DrawLayer::Scene` に 2D/3D のゲーム描画を置くと、HDR 描画先へまとめて描画されます。Scene には Bloom、露出、トーンマッピング、彩度・コントラスト調整、FXAA を適用し、その後 `gk::DrawLayer::UI` の HUD を合成します。Scene と UI は別の描画層で、それぞれの中の命令順を保ちます。効果の設定は `BeginFrame()` の時点で取り込まれるので、変更する場合は次のフレームが始まる前に設定します。
 
 ## キーとマウス
 
@@ -44,7 +44,7 @@ PNG / BMP 画像と OBJ / GLB 2.0 モデルは CPU 側で読み取れます。�
 
 ## ポストエフェクト
 
-`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled` で効果を調整できます。初期設定では Bloom とトーンマッピングが有効です。効果は Scene に適用され、UI はその後に合成されます。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
+`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled`、`gk::SetSaturation`、`gk::SetContrast`、`gk::SetFxaaEnabled` で効果を調整できます。Bloom、トーンマッピング、FXAA は初期設定で有効です。彩度とコントラストの `1.0f` は補正なしです。設定できる範囲や例は [ポストエフェクトの使い方](effects.md) を参照してください。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
 
 ## カスタムシェーダー
 

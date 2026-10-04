@@ -24,6 +24,7 @@ bin/CompiledShaders/DIRECT3D12/gkcore_post.vert
 bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag
 bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag
 bin/CompiledShaders/DIRECT3D12/gkcore_post_composite.frag
+bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag
 bin/CompiledShaders/DIRECT3D12/default.rootsig
 bin/CompiledShaders/DIRECT3D12/compute.rootsig
 lib/gkcore.lib
@@ -63,7 +64,7 @@ docs/                      # API・運用・仕様
 build/forge/                # The Forge の Renderer.lib / OS.lib build output
 ```
 
-The Forge の source checkout は `GKCORE_FORGE_ROOT` で指定し、CMake が暗黙に取得することはありません。`tools/build_forge.py` は固定 source から `Renderer.vcxproj` と `OS.vcxproj` を Release|x64 で build します。OS project の FSL targets が依存側の shader を生成します。DXC 1.8.2405 package は checksum を検証して `.devtools/` に置き、shader compiler と FSL scripts は開発環境だけにします。`tools/build_gkcore_shaders.py` は gkcore の内蔵 color / sprite shaders をコンパイルし、Runtime package には shader binaries と root signatures のみを入れます。DXC の runtime DLL と license file は現在の Runtime allowlist に明記されています。
+The Forge の source checkout は `GKCORE_FORGE_ROOT` で指定し、CMake が暗黙に取得することはありません。`tools/build_forge.py` は固定 source から `Renderer.vcxproj` と `OS.vcxproj` を Release|x64 で build します。OS project の FSL targets が依存側の shader を生成します。DXC 1.8.2405 package は checksum を検証して `.devtools/` に置き、shader compiler と FSL scripts は開発環境だけにします。`tools/build_gkcore_shaders.py` は gkcore の内蔵 color、sprite、post、Bloom、FXAA shaders をコンパイルし、Runtime package にはコンパイル済み shader と root signatures のみを入れます。DXC の runtime DLL と license file は現在の Runtime allowlist に明記されています。
 
 ## 配布検証
 

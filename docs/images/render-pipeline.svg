@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="620" viewBox="0 0 1080 620" role="img" aria-labelledby="title desc">
   <title id="title">gkcore の描画処理順</title>
-  <desc id="desc">Scene の 2D と 3D を HDR 描画先へ描き、Bloom と露出・tone mapping を適用した後に UI を合成する実装順です。Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。</desc>
+  <desc id="desc">Scene の 2D と 3D を HDR 描画先へ描き、Bloom、露出・トーンマッピング、色調整、FXAA を適用した後に UI を合成する処理順を示す概念図です。Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。</desc>
   <defs>
     <linearGradient id="scene" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0" stop-color="#162a48"/>
@@ -30,7 +30,7 @@
   </defs>
   <rect width="1080" height="620" rx="20" fill="#0c1422"/>
   <text x="48" y="52" class="title">1フレームの描画順</text>
-  <text x="48" y="78" class="subtitle">Scene に効果を適用し、その後 UI を合成</text>
+  <text x="48" y="78" class="subtitle">Scene を処理し、その後に UI を合成</text>
 
   <g transform="translate(48 123)">
     <rect width="250" height="222" rx="15" fill="url(#scene)" stroke="#4d78ad" stroke-width="1.5"/>
@@ -48,8 +48,9 @@
     <text x="22" y="38" class="head">HDR + ポスト効果</text>
     <text x="22" y="78" class="body">Bloom</text>
     <text x="22" y="108" class="body">光の抽出・ぼかし</text>
-    <text x="22" y="138" class="body">露出・階調変換</text>
-    <text x="22" y="185" class="small">2D / 3D の Scene に適用</text>
+    <text x="22" y="138" class="body">露出・トーンマッピング</text>
+    <text x="22" y="166" class="body">彩度・コントラスト・FXAA</text>
+    <text x="22" y="198" class="small">2D / 3D の Scene に適用</text>
   </g>
   <path d="M607 234 H652" stroke="#7186a3" stroke-width="3" marker-end="url(#arrow)"/>
 
@@ -74,7 +75,7 @@
   <rect x="48" y="389" width="986" height="166" rx="16" fill="#e6edf7"/>
   <circle cx="82" cy="426" r="7" fill="#d28b32"/>
   <text x="102" y="432" class="status">描画処理の実装状況</text>
-  <text x="76" y="470" class="statusBody">図形・モデル形状・画像・文字表示と、Scene → HDR/Bloom/露出/階調変換 → UI の経路を実装。</text>
+  <text x="76" y="470" class="statusBody">図形・モデル形状・画像・文字表示と、Scene → HDR/Bloom/色調整/FXAA → UI の経路を実装。</text>
   <text x="76" y="499" class="statusBody">Windows/MSVC でのリンクと実 GPU 上の表示は未確認。</text>
   <text x="76" y="531" class="small">処理順を示す図です。実際の画面を撮影した画像ではありません。</text>
 </svg>

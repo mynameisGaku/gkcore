@@ -3,6 +3,12 @@
 int main() {
     if (gk::SetWindowSize(1280, 720) != 0 || gk::Init() != 0) return 1;
 
+    if (gk::SetSaturation(1.1f) != 0 || gk::SetContrast(1.05f) != 0 ||
+        gk::SetFxaaEnabled(true) != 0) {
+        gk::Shutdown();
+        return 1;
+    }
+
     gk::SetCamera(gk::Vec3{0.0f, 0.0f, -6.0f}, gk::Vec3{0.0f, 0.0f, 0.0f});
     bool failed = false;
     while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
