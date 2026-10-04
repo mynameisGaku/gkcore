@@ -8,12 +8,30 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from typing import Optional
 
 from forge_checkout import ForgeCheckoutError, validate_checkout
 from verify_dxc import verify as verify_dxc
 
 
 LIBRARY_PROJECTS = ("Renderer", "OS")
+# 固定ForgeのGUID定義との衝突を避けるRuntime用SDK。
+WINDOWS_SDK_VERSION = "10.0.22621.0"
+# Runtimeのcompileとlinkで使うSDKファイル。
+WINDOWS_SDK_REQUIRED_FILES = (f"Include/{WINDOWS_SDK_VERSION}/um/Windows.h", f"Include/{WINDOWS_SDK_VERSION}/shared/winapifamily.h", f"Include/{WINDOWS_SDK_VERSION}/ucrt/stdio.h", *(f"Lib/{WINDOWS_SDK_VERSION}/um/x64/{name}.lib" for name in ("d3d12", "dxgi", "dxguid", "d3dcompiler", "user32", "gdi32", "shell32", "shlwapi", "ole32", "advapi32", "winmm", "setupapi", "ws2_32", "Xinput9_1_0")), f"Lib/{WINDOWS_SDK_VERSION}/ucrt/x64/ucrt.lib")
+
+
+def verify_windows_sdk(sdk_root: Optional[Path] = None) -> str:
+    """固定Forgeが必要とするWindows SDK 22621のヘッダーとx64ライブラリを確認する。"""
+    if sdk_root is None:
+        program_files = os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")
+        sdk_root = Path(program_files) / "Windows Kits" / "10"
+    missing = [relative_path for relative_path in WINDOWS_SDK_REQUIRED_FILES if not (sdk_root / relative_path).is_file()]
+    if missing:
+        raise ForgeCheckoutError(
+            f"The pinned The Forge Direct3D 12 GUID definitions conflict with dxguid libraries from newer Windows SDKs. "
+            f"Windows SDK {WINDOWS_SDK_VERSION} is required; missing files under {sdk_root}: " + ", ".join(missing))
+    return WINDOWS_SDK_VERSION
 
 
 def compiler_environment(base_environment, dxc_root):
@@ -40,7 +58,7 @@ def project_command(msbuild: str, project: Path, project_name: str, build_root: 
         "/t:Build",
         f"/p:Configuration={configuration}",
         f"/p:Platform={platform}",
-        "/p:WindowsTargetPlatformVersion=10.0",
+        f"/p:WindowsTargetPlatformVersion={WINDOWS_SDK_VERSION}",
         f"/p:SolutionDir={_windows_path(solution_dir)}",
         f"/p:OutDir={_windows_path(output)}",
         f"/p:IntDir={_windows_path(intermediate)}",
@@ -69,6 +87,7 @@ def build(forge_root: Path, build_root: Path, msbuild: str, dxc_root: Path,
     verify_dxc(dxc_root)
     if os.name != "nt":
         raise ForgeCheckoutError("official Forge Renderer/OS projects require Windows and MSVC; cross-building them is unsupported")
+    verify_windows_sdk()
     project_root = forge_root / "Examples_3/Unit_Tests/PC_VS2019/Libraries"
     solution_dir = forge_root / "Examples_3/Unit_Tests/PC_VS2019"
     build_root.mkdir(parents=True, exist_ok=True)

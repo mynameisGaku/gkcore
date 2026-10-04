@@ -11,6 +11,9 @@ import shutil
 import subprocess
 import sys
 
+from build_forge import WINDOWS_SDK_VERSION, verify_windows_sdk
+from forge_checkout import ForgeCheckoutError
+
 ROOT = Path(__file__).resolve().parents[1]
 DEVTOOLS = ROOT / ".devtools"
 FORGE = DEVTOOLS / "The-Forge"
@@ -32,6 +35,7 @@ class WindowsToolchain:
     msbuild_path: Path  # Forgeのビルドに使うMSBuild。
     generator: str  # CMakeが使うVisual Studio generator。
     minimum_cmake: tuple[int, int]  # instanceごとに必要なCMakeの最低バージョン。
+    windows_sdk_version: str = WINDOWS_SDK_VERSION  # 固定Forgeとgkcoreで共通に使うSDK。
 
 
 def require_windows_toolchain() -> WindowsToolchain:
@@ -65,7 +69,8 @@ def require_windows_toolchain() -> WindowsToolchain:
             v142_found = True
             msbuild = installation / "MSBuild" / "Current" / "Bin" / "MSBuild.exe"
             if msbuild.is_file():
-                candidates.append(WindowsToolchain(installation, msbuild, generator, minimum_cmake))
+                candidates.append(WindowsToolchain(installation, msbuild, generator, minimum_cmake,
+                                                   WINDOWS_SDK_VERSION))
 
     if not installations_found:
         raise SetupError("Install Visual Studio 2022 or 2026 with the 'Desktop development with C++' workload.")
@@ -76,12 +81,11 @@ def require_windows_toolchain() -> WindowsToolchain:
     if not candidates:
         raise SetupError("MSBuild.exe is missing from every Visual Studio 2022 or 2026 instance that has v142 14.29 installed.")
 
-    sdk_root = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits/10"
-    sdk_versions = [version for version in (sdk_root / "Include").glob("10.*")
-                    if (version / "um" / "Windows.h").is_file()
-                    and (sdk_root / "Lib" / version.name / "um" / "x64").is_dir()]
-    if not sdk_versions:
-        raise SetupError("A Windows 10 SDK with x64 headers/libraries is required. Add the current Windows 10 SDK in Visual Studio Installer.")
+    sdk_root = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10"
+    try:
+        verify_windows_sdk(sdk_root)
+    except ForgeCheckoutError as exc:
+        raise SetupError(str(exc)) from exc
     cmake = shutil.which("cmake")
     if not cmake:
         raise SetupError("CMake 3.21 or newer is required for Visual Studio 2022; CMake 4.2 or newer is required for Visual Studio 2026.")
@@ -132,6 +136,8 @@ def prepare(gpu_check: bool = False) -> None:
          "--dxc-root", str(DXC), "--output-dir", str(SHADER_BUILD)])
     configure = ["cmake", "-S", str(ROOT), "-B", str(BUILD), "-G", toolchain.generator,
                  "-A", "x64", "-T", "v142", f"-DCMAKE_GENERATOR_INSTANCE={toolchain.installation_path}",
+                 f"-DCMAKE_SYSTEM_VERSION={toolchain.windows_sdk_version}",
+                 f"-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM={toolchain.windows_sdk_version}",
                  "-DGKCORE_BUILD_TESTS=ON", "-DGKCORE_BUILD_RUNTIME=ON",
                  f"-DGKCORE_FORGE_ROOT={FORGE}", f"-DGKCORE_DXC_ROOT={DXC}",
                  f"-DGKCORE_FORGE_BUILD_DIR={FORGE_BUILD}", f"-DGKCORE_SHADER_BUILD_DIR={SHADER_BUILD}",

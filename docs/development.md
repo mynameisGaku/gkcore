@@ -21,6 +21,8 @@ Runtime の公開 API、実装、利用者向けサンプルでは C++ 標準ラ
 
 ルートの `.clang-format` を使って整形します。固定した開発用依存物にはclang-format 12が含まれています。対象は変更する自作コードに限定し、`third_party`や取得済み依存物を一括整形しないでください。FSLのSRT宣言など、formatterが構文を扱えないマクロは元の階層を維持します。
 
+Windows APIも使うコードでは、Windows.hを先に読み込み、その後にgkcore.hを読み込んでください。gkcore.hは公開APIとの衝突を避けるためLoadImageマクロを除去します。Windows側の画像読み込みを呼ぶ場合はLoadImageWまたはLoadImageAを明示します。
+
 ## ブランチの管理
 
 開発中の変更は `dev` に機能単位でコミットし、検証済みの変更をリモートの `dev` へ push します。レビューと必要な検証を通った安定区切りを `dev` から `main` に反映します。
@@ -64,7 +66,9 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-Windows Runtime の build には指定バージョンの The Forge、DXC 1.8.2405、Windows 10 SDK、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は前提を確認し、依存物を取得して The Forge の library/shader、gkcore Runtime/sample、CTest を build します。GPU smoke は必要な場合にだけ有効にします。Linux では Runtime を無効にして CPU テストを実行します。
+Windows Runtime の build には指定バージョンの The Forge、DXC 1.8.2405、Windows SDK 10.0.22621.0、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は前提を確認し、依存物を取得して The Forge の library/shader、gkcore Runtime/sample、CTest を build します。GPU smoke は必要な場合にだけ有効にします。Linux では Runtime を無効にして CPU テストを実行します。
+
+固定したThe ForgeのGUID定義が新しいWindows SDKと重複するため、現在のRuntimeビルドではSDK 10.0.22621.0を選びます。Visual Studio Installerの個別コンポーネントでWindows 11 SDK (10.0.22621.0)を追加してください。CIでも同じ[Microsoft公式のcomponent ID](https://learn.microsoft.com/en-us/visualstudio/install/workload-component-id-vs-build-tools?view=visualstudio)を使って導入します。これは現在の依存バージョンの互換条件です。SDKを変更する場合はThe Forgeとgkcoreを同じSDKで再ビルドし、CMakeの生成したprojectでも選択値を確認します。
 
 Windows でも The Forge を使わない CPU 契約テストを構成・ビルド・実行できます。Visual Studio 2026 x64 の例です。
 

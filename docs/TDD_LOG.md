@@ -464,3 +464,17 @@ UTF-8 BOM付きのFSL入力は固定バージョンのコンパイラで処理�
 `python -B tests/package/test_shader_build_plan.py` の3件と `python -B tests/shader_contract_tests.py` の13件が成功しました。固定ForgeとDXC 1.8.2405を使うWindows実行で13個のshader artifactを生成し、生成物のreflection検査も成功しました（`build/native-validation/shaders-arraybinding-final.log`）。この確認はshaderの生成と割り当てを対象とし、GPU表示や画質の検証ではありません。
 
 中カッコを改行する書式と、括弧・初期化子内部を1行に保つ設定を追加しました。変更したC++とFSLはclang-format 12の再実行で差分が出ず、UTF-8 BOM付き・CRLFを確認しました。整形後もWindowsで13個のshaderを再生成し、reflection検査が成功しました（build/native-validation/shaders-final-format.log）。
+
+## 2026-10-05: Windows Runtimeのリンクと実行ファイルの配置
+
+Visual Studio 18 2026 / v142 14.29.30133、MSVC 19.29.30159、CMake 4.3.1を使用しました。Windows SDK 10.0.28000.0ではdxguid.libと固定Forgeの3つのGUID定義が重複し、LNK2005で失敗しました。XInputの3つの未解決symbolにはXinput9_1_0を追加しました。重複を無視する設定は使わず、SDK 10.0.22621.0をForgeとgkcoreの両方で選択します。
+
+SDK切り替え初期の試行は古いCMake cacheのSDK28000を参照していたため、22621での検証として数えていません。新しいbuild directoryの生成projectが22621を選択していることを確認しました。Forgeも再ビルドし、RendererとOSのlastbuildstateが22621になっていること、実際の再コンパイルと0 warning / 0 errorを確認しました（forge-sdk22621.log）。setupのSDK不足・別バージョン拒否・CMake指定のテスト10件とForgeビルド計画4件が成功しました。
+
+次にWindows.hを先に読み込むとLoadImageマクロによってgk::LoadImageAを要求し、backend smokeのリンクが失敗しました。公開ヘッダーで同名マクロを除去し、配布SDKを使うconsumerにもWindows.h先行の実呼び出しを加えました。
+
+Releaseの全targetがビルドできるようになりました。ビルド出力に実行時DLL5件とshader13件を配置するtargetを追加し、D3D12Core.dllとgkcore_color.vertを消した後の増分ビルドでも両方が復元されました。削除はこの検証用build出力だけを対象としています。
+
+SDK22621のRelease全CTestは30件中29件成功し、配布ファイルの許可リスト検査、SDKのみを使うconsumerのビルド・実行、Windowsのshader reflectionを確認しました（runtime-ctest-release.log）。GPU smokeはgkcore.dll内のアクセス違反で失敗しました。MAPによる例外位置はaddLogFile内で、ログ初期化に必要なRD_LOGのI/O設定不足を特定しました。この時点ではGPU初期化・描画の成功を示しません。配置修正前のsmokeは60秒でtimeoutしましたが、それだけでは停止原因を特定できないため、DLL不足だけが原因だったとは断定していません。
+
+Runtime無効のWindows CPUビルドも更新後のソースでDebug / Releaseを再ビルドし、CTestはそれぞれ26/26件成功しました。build/native-validation/cpu-{debug,release}-final-{build,tests}.logに保存しました。

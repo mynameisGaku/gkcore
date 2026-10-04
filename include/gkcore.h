@@ -1,37 +1,50 @@
-#pragma once
+﻿#pragma once
 
 #include <stdint.h>
 #include <gkcore/Handle.h>
 
 #if defined(_WIN32) && defined(GKCORE_SHARED)
-#  if defined(GKCORE_BUILDING_LIBRARY)
-#    define GKCORE_API __declspec(dllexport)
-#  else
-#    define GKCORE_API __declspec(dllimport)
-#  endif
+#if defined(GKCORE_BUILDING_LIBRARY)
+#define GKCORE_API __declspec(dllexport)
 #else
-#  define GKCORE_API
+#define GKCORE_API __declspec(dllimport)
+#endif
+#else
+#define GKCORE_API
+#endif
+
+#ifdef LoadImage
+// Windows.hの同名マクロが公開関数名を変えないようにする。
+#undef LoadImage
 #endif
 
 /**
  * Simple global API and value types for application window and draw state.
  */
-namespace gk {
+namespace gk
+{
 
 /**
  * A three-component value for positions, rotations, directions, and scales.
  */
-struct Vec3 { float x, y, z; };
+struct Vec3
+{
+    float x, y, z;
+};
 
 /**
  * Four floating-point components, used for shader constants.
  */
-struct Float4 { float x, y, z, w; };
+struct Float4
+{
+    float x, y, z, w;
+};
 
 /**
  * Escape, arrows, common editing keys, Shift/Control, digits, and Latin letters.
  */
-enum class Key : uint8_t {
+enum class Key : uint8_t
+{
     Escape = 1,
     ArrowLeft,
     ArrowUp,
@@ -84,12 +97,21 @@ enum class Key : uint8_t {
 /**
  * Mouse buttons supported by the input query API.
  */
-enum class MouseButton : uint8_t { Left = 0, Right, Middle };
+enum class MouseButton : uint8_t
+{
+    Left = 0,
+    Right,
+    Middle
+};
 
 /**
  * Selects whether queued draws receive scene post-processing.
  */
-enum class DrawLayer : uint8_t { Scene = 0, UI = 1 };
+enum class DrawLayer : uint8_t
+{
+    Scene = 0,
+    UI = 1
+};
 
 /**
  * Initializes the window and renderer. Returns 0 on success and -1 on failure.
@@ -160,8 +182,7 @@ GKCORE_API int DrawImage(ImageHandle image, float x, float y, bool alphaBlend = 
 /**
  * Queues a centered image; angle is in radians and scale must be positive.
  */
-GKCORE_API int DrawImageRotated(ImageHandle image, float centerX, float centerY,
-                                float scale, float angleRadians, bool alphaBlend = true);
+GKCORE_API int DrawImageRotated(ImageHandle image, float centerX, float centerY, float scale, float angleRadians, bool alphaBlend = true);
 
 /**
  * Releases an image handle; queued draws retain its pixels through Present.
@@ -207,15 +228,13 @@ GKCORE_API int SetCamera(Vec3 position, Vec3 target);
  * Queues a screen-space rectangle in the selected draw layer. With filled=false,
  * queues a one-pixel stroke just inside the rectangle bounds.
  */
-GKCORE_API int DrawRect(float x, float y, float width, float height,
-                        uint32_t color, bool filled = true);
+GKCORE_API int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled = true);
 
 /**
  * Queues an inward screen-space stroke. Thickness must be finite and positive;
  * a thickness at least half the smaller dimension covers the whole rectangle.
  */
-GKCORE_API int DrawRectOutline(float x, float y, float width, float height,
-                               uint32_t color, float thickness = 1.0f);
+GKCORE_API int DrawRectOutline(float x, float y, float width, float height, uint32_t color, float thickness = 1.0f);
 
 /**
  * Queues UTF-8 text using the platform's default system font. The default
@@ -223,14 +242,12 @@ GKCORE_API int DrawRectOutline(float x, float y, float width, float height,
  * the same color and size share a bounded main-thread image cache. Text uses
  * the current draw layer and remains alive through Present.
  */
-GKCORE_API int DrawString(float x, float y, const char* utf8Text, uint32_t color,
-                          uint32_t pixelSize = 24);
+GKCORE_API int DrawString(float x, float y, const char* utf8Text, uint32_t color, uint32_t pixelSize = 24);
 
 /**
  * Queues a world-space triangle for 3D drawing.
  */
-GKCORE_API int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color,
-                               bool filled = true);
+GKCORE_API int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color, bool filled = true);
 
 /**
  * Returns a pointer to the latest diagnostic string.

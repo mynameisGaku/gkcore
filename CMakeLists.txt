@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+﻿cmake_minimum_required(VERSION 3.20)
 project(gkcore VERSION 0.1.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
@@ -330,7 +330,10 @@ if(GKCORE_BUILD_RUNTIME)
         message(FATAL_ERROR "The pinned The Forge project files support x64 only.")
     endif()
     if(NOT MSVC_VERSION EQUAL 1929)
-        message(FATAL_ERROR "The pinned The Forge headers require the VS 2019 v142 14.29 compiler (MSVC 1929). Under Visual Studio 2022 configure with `-T v142`; PRE_SETUP.bat selects it automatically.")
+        message(FATAL_ERROR "The pinned The Forge headers require the v142 14.29 compiler (MSVC 1929). Under Visual Studio 2022 or 2026 configure with `-T v142`; PRE_SETUP.bat selects the matching instance.")
+    endif()
+    if(NOT CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION STREQUAL "10.0.22621.0")
+        message(FATAL_ERROR "The pinned The Forge Direct3D 12 GUID definitions conflict with dxguid from newer Windows SDKs. The Runtime requires Windows SDK 10.0.22621.0, but CMake selected ${CMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION}. Rerun PRE_SETUP.bat and configure with a fresh build directory to discard any cached SDK selection.")
     endif()
     if(NOT GKCORE_FORGE_ROOT OR NOT IS_DIRECTORY "${GKCORE_FORGE_ROOT}")
         message(FATAL_ERROR "Set GKCORE_FORGE_ROOT to a verified The Forge checkout. Run PRE_SETUP.bat to fetch and prepare the pinned dependency; CMake never fetches it.")
@@ -450,7 +453,7 @@ if(GKCORE_BUILD_RUNTIME)
         Forge::Renderer
         Forge::OS
         ${_gkcore_forge_libs}
-        d3d12 dxgi dxguid d3dcompiler user32 gdi32 shell32 shlwapi ole32 advapi32 winmm setupapi ws2_32)
+        d3d12 dxgi dxguid d3dcompiler user32 gdi32 shell32 shlwapi ole32 advapi32 winmm setupapi ws2_32 Xinput9_1_0)
     set_target_properties(gkcore PROPERTIES
         OUTPUT_NAME gkcore
         EXPORT_NAME gkcore
@@ -531,6 +534,28 @@ if(GKCORE_BUILD_RUNTIME)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu")
         endif()
+    endif()
+
+    add_custom_target(gkcore_stage_runtime_payload ALL
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:gkcore>"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:gkcore>/CompiledShaders/DIRECT3D12"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_gkcore_runtime_dlls}
+            "$<TARGET_FILE_DIR:gkcore>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            ${_gkcore_shader_artifacts}
+            "$<TARGET_FILE_DIR:gkcore>/CompiledShaders/DIRECT3D12"
+        VERBATIM)
+    add_dependencies(gkcore_stage_runtime_payload gkcore)
+    add_dependencies(gkcore_mixed_scene gkcore_stage_runtime_payload)
+    add_dependencies(gkcore_rectangle_outline gkcore_stage_runtime_payload)
+    add_dependencies(gkcore_custom_post_effect gkcore_stage_runtime_payload)
+    add_dependencies(gkcore_model_lighting gkcore_stage_runtime_payload)
+    if(TARGET gkcore_shader_reflection_tests)
+        add_dependencies(gkcore_shader_reflection_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_backend_smoke)
+        add_dependencies(gkcore_backend_smoke gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

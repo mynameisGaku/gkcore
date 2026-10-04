@@ -10,8 +10,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
 import setup
 
 
+SDK_VERSION = "10.0.22621.0"
+SDK_REQUIRED_FILES = ("Include/10.0.22621.0/um/Windows.h", "Include/10.0.22621.0/shared/winapifamily.h", "Include/10.0.22621.0/ucrt/stdio.h", "Lib/10.0.22621.0/um/x64/d3d12.lib", "Lib/10.0.22621.0/um/x64/dxgi.lib", "Lib/10.0.22621.0/um/x64/dxguid.lib", "Lib/10.0.22621.0/um/x64/d3dcompiler.lib", "Lib/10.0.22621.0/um/x64/user32.lib", "Lib/10.0.22621.0/um/x64/gdi32.lib", "Lib/10.0.22621.0/um/x64/shell32.lib", "Lib/10.0.22621.0/um/x64/shlwapi.lib", "Lib/10.0.22621.0/um/x64/ole32.lib", "Lib/10.0.22621.0/um/x64/advapi32.lib", "Lib/10.0.22621.0/um/x64/winmm.lib", "Lib/10.0.22621.0/um/x64/setupapi.lib", "Lib/10.0.22621.0/um/x64/ws2_32.lib", "Lib/10.0.22621.0/um/x64/Xinput9_1_0.lib", "Lib/10.0.22621.0/ucrt/x64/ucrt.lib")
+
+
 class SetupPlanTests(unittest.TestCase):
-    def _detect_toolchain(self, instances, cmake_version):
+    def _detect_toolchain(self, instances, cmake_version, sdk_version=SDK_VERSION, missing_sdk_file=None):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             program_files = root / "Program Files (x86)"
@@ -19,11 +23,13 @@ class SetupPlanTests(unittest.TestCase):
             vswhere.parent.mkdir(parents=True)
             vswhere.touch()
             sdk = program_files / "Windows Kits" / "10"
-            sdk_header = sdk / "Include" / "10.0.22621.0" / "um" / "Windows.h"
-            sdk_header.parent.mkdir(parents=True)
-            sdk_header.touch()
-            sdk_library = sdk / "Lib" / "10.0.22621.0" / "um" / "x64"
-            sdk_library.mkdir(parents=True)
+            for required_file in SDK_REQUIRED_FILES:
+                if required_file == missing_sdk_file:
+                    continue
+                parts = Path(required_file).parts
+                sdk_file = sdk / parts[0] / sdk_version / Path(*parts[2:])
+                sdk_file.parent.mkdir(parents=True, exist_ok=True)
+                sdk_file.touch()
             paths_by_range = {}
             for version_range, name, has_v142 in instances:
                 instance = root / name
@@ -49,12 +55,22 @@ class SetupPlanTests(unittest.TestCase):
                  patch.object(setup.subprocess, "run", side_effect=run):
                 return setup.require_windows_toolchain()
 
+    def test_sdk_28000_is_rejected_even_when_its_headers_and_libraries_exist(self):
+        with self.assertRaisesRegex(setup.SetupError, "10\.0\.22621\.0.*dxguid"):
+            self._detect_toolchain([("[18.0,19.0)", "VS2026", True)], "4.2.0", "10.0.28000.0")
+
+    def test_missing_pinned_dxguid_library_is_reported(self):
+        with self.assertRaisesRegex(setup.SetupError, "dxguid\.lib"):
+            self._detect_toolchain([("[17.0,18.0)", "VS2022", True)], "3.21.0",
+                                   missing_sdk_file="Lib/10.0.22621.0/um/x64/dxguid.lib")
+
     def test_vs2026_instance_with_v142_is_selected_and_paired_with_its_msbuild(self):
         toolchain = self._detect_toolchain([("[18.0,19.0)", "VS2026", True)], "4.2.0")
 
         self.assertEqual(toolchain.installation_path.name, "VS2026")
         self.assertEqual(toolchain.msbuild_path, toolchain.installation_path / "MSBuild" / "Current" / "Bin" / "MSBuild.exe")
         self.assertEqual(toolchain.generator, "Visual Studio 18 2026")
+        self.assertEqual(toolchain.windows_sdk_version, setup.WINDOWS_SDK_VERSION)
 
     def test_vs2022_instance_with_v142_is_supported_by_cmake_321(self):
         toolchain = self._detect_toolchain([("[17.0,18.0)", "VS2022", True)], "3.21.0")
@@ -108,6 +124,8 @@ class SetupPlanTests(unittest.TestCase):
         configure = next(command for command in commands if command[:2] == ["cmake", "-S"])
         self.assertEqual(configure[configure.index("-G") + 1], toolchain.generator)
         self.assertIn(f"-DCMAKE_GENERATOR_INSTANCE={toolchain.installation_path}", configure)
+        self.assertIn(f"-DCMAKE_SYSTEM_VERSION={setup.WINDOWS_SDK_VERSION}", configure)
+        self.assertIn(f"-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM={setup.WINDOWS_SDK_VERSION}", configure)
         self.assertIn("-DGKCORE_RUN_BACKEND_SMOKE=ON", configure)
         forge_build = next(command for command in commands if str(command[1]).endswith("build_forge.py"))
         self.assertEqual(forge_build[forge_build.index("--msbuild") + 1], str(toolchain.msbuild_path))

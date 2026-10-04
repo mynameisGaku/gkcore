@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Add the pinned v142 compiler toolset
+      - name: Add the pinned compiler toolset and Windows SDK
         shell: pwsh
         run: |
           $programFilesX86 = ${env:ProgramFiles(x86)}
@@ -27,8 +27,8 @@ jobs:
           $installPath = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
           if ($LASTEXITCODE -ne 0 -or -not $installPath) { throw 'Visual Studio 2022 C++ workload was not found.' }
           $installer = Join-Path $programFilesX86 'Microsoft Visual Studio/Installer/setup.exe'
-          & $installer modify --installPath $installPath --add Microsoft.VisualStudio.Component.VC.v142.x86.x64 --quiet --norestart --wait
-          if ($LASTEXITCODE -notin @(0, 3010)) { throw "Installing the v142 toolset failed with exit code $LASTEXITCODE." }
+          & $installer modify --installPath $installPath --add Microsoft.VisualStudio.Component.VC.v142.x86.x64 --add Microsoft.VisualStudio.Component.Windows11SDK.22621 --quiet --norestart --wait
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "Installing the v142 toolset and Windows SDK failed with exit code $LASTEXITCODE." }
       - name: Verify v142 and build the Runtime SDK
         shell: cmd
         run: PRE_SETUP.bat
