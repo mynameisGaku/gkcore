@@ -125,6 +125,8 @@ def compile_shader(source: Path, output: Path, dxc_root: Path, *,
     source = source.resolve()
     output = output.resolve()
     dxc_root = dxc_root.resolve()
+    if source == output:
+        raise ShaderCompileError("source and output paths must differ")
     verify_dxc(dxc_root)
     dxc = dxc_root / "bin" / "x64" / "dxc.exe"
     if not dxc.is_file():
@@ -141,7 +143,8 @@ def compile_shader(source: Path, output: Path, dxc_root: Path, *,
         staged_path = temporary_dir / output.name
         command = shader_command(dxc, source, dxil_path, include_dirs)
         try:
-            result = runner(command, capture_output=True, text=True, check=False, shell=False)
+            result = runner(command, capture_output=True, text=True, encoding="utf-8",
+                            errors="replace", check=False, shell=False)
         except OSError as error:
             raise ShaderCompileError(f"could not execute DXC at {dxc}: {error}") from error
         if result.returncode:

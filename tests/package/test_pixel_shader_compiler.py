@@ -165,6 +165,38 @@ class PixelShaderCompilerTests(TestCase):
                     compiler.compile_shader(source, output, root, runner=vertex_compile)
             self.assertEqual(output.read_bytes(), b"known-good")
 
+    def test_utf8_dxc_diagnostics_survive_a_non_utf8_windows_locale(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            dxc = root / "bin" / "x64" / "dxc.exe"
+            dxc.parent.mkdir(parents=True)
+            dxc.touch()
+            source = root / "shader.hlsl"
+            source.write_text("bad", encoding="utf-8")
+            output = root / "shader.frag"
+
+            def locale_sensitive_runner(command, **kwargs):
+                self.assertFalse(kwargs.get("shell", True))
+                kwargs.setdefault("encoding", "ascii")
+                child = [sys.executable, "-c",
+                         "import sys; sys.stderr.buffer.write('日本語: shader.hlsl(9,2): error'.encode('utf-8')); sys.exit(1)"]
+                return compiler.subprocess.run(child, **kwargs)
+
+            with patch.object(compiler, "verify_dxc", return_value=None):
+                with self.assertRaisesRegex(compiler.ShaderCompileError, "日本語: shader.hlsl\\(9,2\\): error"):
+                    compiler.compile_shader(source, output, root, runner=locale_sensitive_runner)
+            self.assertFalse(output.exists())
+
+    def test_refuses_to_replace_the_hlsl_source_with_compiled_output(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "shader.hlsl"
+            source.write_text("preserve this source", encoding="utf-8")
+            with patch.object(compiler, "verify_dxc", return_value=None):
+                with self.assertRaisesRegex(compiler.ShaderCompileError, "source and output paths must differ"):
+                    compiler.compile_shader(source, source, root)
+            self.assertEqual(source.read_text(encoding="utf-8"), "preserve this source")
+
 
 if __name__ == "__main__":
     main()
