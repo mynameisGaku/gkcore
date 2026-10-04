@@ -101,6 +101,32 @@ int main() {
             break;
         }
 
+        // Exercise the lit model-only buffers in both frame layers, without pixel readback.
+        if (!Check(gk::SetAmbientLight(0.25f), "gk::SetAmbientLight before lit Scene frame") ||
+            !Check(gk::SetDirectionalLight(gk::Vec3{-0.3f, -1.0f, 0.2f}, 3.0f),
+                   "gk::SetDirectionalLight before lit Scene frame") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame lit model-only Scene") ||
+            !Check(gk::SetAmbientLight(0.5f), "gk::SetAmbientLight during lit Scene frame") ||
+            !Check(gk::SetDirectionalLight(gk::Vec3{0.0f, -1.0f, 0.0f}, 0.0f),
+                   "gk::SetDirectionalLight disable during lit Scene frame") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer lit Scene model-only") ||
+            !Check(gk::DrawModel(model), "gk::DrawModel lit model-only Scene") ||
+            !Check(gk::Present(), "gk::Present lit model-only Scene")) break;
+
+        if (!Check(gk::SetAmbientLight(0.15f), "gk::SetAmbientLight before lit UI frame") ||
+            !Check(gk::SetDirectionalLight(gk::Vec3{0.4f, -1.0f, -0.25f}, 5.0f),
+                   "gk::SetDirectionalLight before lit UI frame") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame lit model-only UI") ||
+            !Check(gk::SetDirectionalLight(gk::Vec3{0.0f, -1.0f, 0.0f}, 0.0f),
+                   "gk::SetDirectionalLight disable during lit UI frame") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "gk::SetDrawLayer lit UI model-only") ||
+            !Check(gk::DrawModel(model), "gk::DrawModel lit model-only UI") ||
+            !Check(gk::Present(), "gk::Present lit model-only UI")) break;
+
+        if (!Check(gk::SetAmbientLight(0.2f), "gk::SetAmbientLight restore before mixed frame") ||
+            !Check(gk::SetDirectionalLight(gk::Vec3{-0.4082483f, -0.8164966f, 0.4082483f}, 3.0f),
+                   "gk::SetDirectionalLight restore before mixed frame")) break;
+
         char modelShaderPath[MAX_PATH * 4 + 96]{};
         const int modelShaderPathLength = std::snprintf(modelShaderPath, sizeof(modelShaderPath),
             "%s/tests/assets/shaders/gkcore_user_textured.frag", GKCORE_TEST_SOURCE_DIR);
