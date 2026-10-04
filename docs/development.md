@@ -15,6 +15,10 @@ gkcore は小さな描画 API の約束を、依存の少ないテストで先�
 
 Runtime の公開 API、実装、利用者向けサンプルでは C++ 標準ライブラリ/STL を使わない方針です。テスト、開発ツール、配布物や shader の検査スクリプトでは標準ライブラリを利用できます。Runtime のウィンドウとイベント、描画部、リソース、効果と shader は責務を分け、公開 header と実装を対応するファイルに置きます。共有 handle、vector、string、container は foundation module が管理します。
 
+## ブランチの管理
+
+開発中の変更はローカルの `dev` に機能単位でコミットします。レビューと必要な検証を通った区切りをローカルの `main` に反映します。現在はローカルで管理し、リモートへの push は保留しています。
+
 ## 現在の制限
 
 CMake による開発用 build 設定と、The Forge を使う Windows 描画部があります。Windows 実機での Runtime build と GPU 描画はまだ確認していません。Linux の CPU テストは API の約束を検査しますが、GPU の表示結果は保証しません。
