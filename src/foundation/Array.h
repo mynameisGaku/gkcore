@@ -84,7 +84,7 @@ private:
 template<class T>
 class Array {
     static_assert(__is_trivially_copyable(T), "gk::Array only stores trivially copyable values");
-    static_assert(alignof(T) <= alignof(max_align_t), "gk::Array does not support over-aligned values");
+    static_assert(alignof(T) <= kAllocationAlignment, "gk::Array does not support over-aligned values");
 public:
     /**
      * Creates an empty array.

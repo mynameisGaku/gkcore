@@ -46,7 +46,7 @@ cd build\runtime-windows\Release
 gkcore_model_lighting.exe
 ```
 
-この操作手順は Windows DX12 実機で実行し、法線による明暗と材質の違いが表示されることを目視で確認してください。Linux CPU 契約テストや shader / C++ 構文検査は画面表示の確認を代替しません。現時点で Windows/MSVC link と GPU 上の見た目は未確認です。GPU smoke 自体も画素読み戻しをしないため、手動の目視確認が必要です。
+この操作手順は Windows DX12 実機で実行し、法線による明暗と材質の違いが表示されることを目視で確認してください。CPU 契約テストや shader / C++ 構文検査は画面表示の確認を代替しません。Runtime の Windows/MSVC link と GPU 上の見た目は未確認です。GPU smoke 自体も画素読み戻しをしないため、手動の目視確認が必要です。
 
 ## 開発テストの実行
 
@@ -59,3 +59,16 @@ ctest --test-dir build --output-on-failure
 ```
 
 Windows Runtime の build には固定版 The Forge、DXC 1.8.2405、Visual Studio 2022 の C++ 開発環境、v142/MSVC 1929 toolset、CMake 3.21 以降、Windows 10 SDK が必要です。`PRE_SETUP.bat` は前提を確認し、固定依存物を取得して The Forge の library/shader、gkcore Runtime/sample、CTest を build します。GPU smoke は必要な場合にだけ有効にします。Linux では Runtime を無効にして CPU テストを実行します。
+
+Windows でも The Forge を使わない CPU 契約テストを構成・ビルド・実行できます。Visual Studio 2026 x64 の例です。
+
+```powershell
+cmake -S . -B build/dev-windows -G "Visual Studio 18 2026" -A x64 `
+  -DGKCORE_BUILD_RUNTIME=OFF -DGKCORE_BUILD_TESTS=ON
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+2026-10-05 に Windows x64、Visual Studio 18 2026 / MSVC 19.51.36260.0、Windows SDK 10.0.28000.0、CMake 4.3.1、Python 3.11.9 で実行し、Debug と Release の全 target build、および CTest 26/26 件が成功しました。Windows コンパイラでの CPU 契約と開発用 target の link を確認した結果です。Runtime を無効にしているため、The Forge を含む Runtime の link、DX12 実行、画面表示を確認した結果ではありません。実行ログは `build/dev-windows/` にあります。

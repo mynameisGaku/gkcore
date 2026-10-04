@@ -14,8 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure dependency-light tests
-        run: cmake -S . -B build/dev -G Ninja -DGKCORE_BUILD_TESTS=ON -DGKCORE_BUILD_RUNTIME=OFF
+        run: cmake -S . -B build/dev -DCMAKE_BUILD_TYPE=Release -DGKCORE_BUILD_TESTS=ON -DGKCORE_BUILD_RUNTIME=OFF
       - name: Build tests
-        run: cmake --build build/dev --parallel
+        run: cmake --build build/dev --config Release --parallel
       - name: Run tests
-        run: ctest --test-dir build/dev --output-on-failure
+        run: ctest --test-dir build/dev -C Release --output-on-failure

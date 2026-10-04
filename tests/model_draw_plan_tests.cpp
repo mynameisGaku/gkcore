@@ -1,5 +1,6 @@
 #include "../src/render/ModelDrawPlan.h"
 
+#include <limits>
 #include <stdio.h>
 
 namespace {
@@ -124,13 +125,13 @@ bool TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() {
     model.materials.At(0).baseColorFactor[1] = 1.2f;
     if (!ExpectPreservedFailure(model, plan, error, "out-of-range base-color factor is rejected")) return false;
     model.materials.At(0).baseColorFactor[1] = 1.0f;
-    model.materials.At(0).roughnessFactor = 0.0f / 0.0f;
+    model.materials.At(0).roughnessFactor = std::numeric_limits<float>::quiet_NaN();
     if (!ExpectPreservedFailure(model, plan, error, "non-finite material factor is rejected")) return false;
     model.materials.At(0).roughnessFactor = 1.0f;
     model.materials.At(0).metallicFactor = -0.1f;
     if (!ExpectPreservedFailure(model, plan, error, "negative metallic factor is rejected")) return false;
     model.materials.At(0).metallicFactor = 1.0f;
-    model.materials.At(0).baseColorFactor[2] = 0.0f / 0.0f;
+    model.materials.At(0).baseColorFactor[2] = std::numeric_limits<float>::quiet_NaN();
     if (!ExpectPreservedFailure(model, plan, error, "non-finite base-color factor is rejected")) return false;
     model.materials.At(0).baseColorFactor[2] = 1.0f;
     model.materials.At(0).metallicFactor = 1.01f;
@@ -139,10 +140,10 @@ bool TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() {
     model.materials.At(0).roughnessFactor = -0.01f;
     if (!ExpectPreservedFailure(model, plan, error, "negative roughness factor is rejected")) return false;
     model.materials.At(0).roughnessFactor = 0.5f;
-    model.materials.At(0).metallicFactor = 0.0f / 0.0f;
+    model.materials.At(0).metallicFactor = std::numeric_limits<float>::quiet_NaN();
     if (!ExpectPreservedFailure(model, plan, error, "non-finite metallic factor is rejected")) return false;
     model.materials.At(0).metallicFactor = 0.5f;
-    model.materials.At(0).roughnessFactor = 1.0f / 0.0f;
+    model.materials.At(0).roughnessFactor = std::numeric_limits<float>::infinity();
     if (!ExpectPreservedFailure(model, plan, error, "infinite roughness factor is rejected")) return false;
     return true;
 }

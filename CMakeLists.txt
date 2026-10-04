@@ -72,6 +72,27 @@ endfunction()
 if(GKCORE_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    # Arrayが通常境界を超える型を拒否し、意図した診断で止まることを確認する。
+    set(_gkcore_foundation_alignment_compile_options)
+    if(MSVC)
+        list(APPEND _gkcore_foundation_alignment_compile_options /utf-8)
+    endif()
+    try_compile(GKCORE_FOUNDATION_OVERALIGNED_COMPILE_SUCCEEDED
+        "${CMAKE_CURRENT_BINARY_DIR}/foundation_overaligned_compile_check"
+        SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/tests/foundation_overaligned_compile_fail.cpp"
+        COMPILE_DEFINITIONS ${_gkcore_foundation_alignment_compile_options}
+        CMAKE_FLAGS
+            "-DCMAKE_CXX_STANDARD=17"
+            "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
+        OUTPUT_VARIABLE GKCORE_FOUNDATION_OVERALIGNED_COMPILE_OUTPUT)
+    if(GKCORE_FOUNDATION_OVERALIGNED_COMPILE_SUCCEEDED)
+        message(FATAL_ERROR "gk::Array accepted an over-aligned value type")
+    endif()
+    if(NOT GKCORE_FOUNDATION_OVERALIGNED_COMPILE_OUTPUT MATCHES "gk::Array does not support over-aligned values")
+        message(FATAL_ERROR "The over-aligned Array compile check failed for an unexpected reason:\n${GKCORE_FOUNDATION_OVERALIGNED_COMPILE_OUTPUT}")
+    endif()
+
     add_test(NAME gkcore.package_allowlist
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_allowlist.py)
     add_test(NAME gkcore.forge_checkout

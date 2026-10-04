@@ -2,6 +2,7 @@
 
 #include "../src/foundation/Memory.h"
 
+#include <limits>
 #include <math.h>
 #include <stdio.h>
 
@@ -229,7 +230,7 @@ bool TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() {
     }
     if (!Check(foundInterpolatedNormal, "near clipping linearly interpolates the normal payload")) return false;
     if (!Check(foundNearViewDirection, "near clipping linearly interpolates view direction")) return false;
-    model.vertices.At(0).normal[0] = 0.0f / 0.0f;
+    model.vertices.At(0).normal[0] = std::numeric_limits<float>::quiet_NaN();
     vertices.Clear();
     if (!Check(!AppendLitModelPart(frame, draw, Part(), vertices, 32, error),
                "non-finite model normal is rejected")) return false;

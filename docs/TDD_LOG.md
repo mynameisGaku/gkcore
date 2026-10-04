@@ -418,3 +418,23 @@ python3 tests/shader_contract_tests.py --artifact tests/assets/shaders/gkcore_mo
 両コマンドは成功し、lighting constant buffer は `b0, space1` の 32 bytes、画像は `t0`、既存 sprite sampler は `s1` と確認しました。Linux DXC artifact / reflection の確認であり、Windows 用 shader package や Windows COM reflection の確認ではありません。Runtime の no-STL scan は 3/3、package allowlist は 6/6、shader build plan は 1/1 成功しました。更新後の manifest template を Release 構成へ展開して package allowlist validator に渡し、Runtime の 42 path を検査して成功しました。モデル照明の概念図 SVG も XML parser で読み取れることを確認しました。
 
 Windows/MSVC build と link、Windows/DX12 実機の表示、model lighting の目視、Runtime SDK のみを使った利用者 project の build / run は未実施です。GPU smoke は準備されていますが実行されておらず、異なる材質や照明が画面にどう見えるかは未確認です。
+
+## 2026-10-05: Windows/MSVC CPU 契約テスト
+
+Windows x64 の Visual Studio 18 2026 / MSVC 19.51.36260.0、Windows SDK 10.0.28000.0、CMake 4.3.1、Python 3.11.9 で、Runtime を無効にした開発用全 target を構成・buildし、Debug / Release の全 CTest を実行しました。
+
+```powershell
+cmake -S . -B build/dev-windows -G "Visual Studio 18 2026" -A x64 -DGKCORE_BUILD_RUNTIME=OFF -DGKCORE_BUILD_TESTS=ON
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+初回の MSVC build では `Array.h` の `alignof(max_align_t)` が global `max_align_t` を解決できず、C2187 / C2061 で失敗しました。`Memory.h` に確保時の基準 alignment `kAllocationAlignment` を置き、MSVC では `alignof(double)`、それ以外では `alignof(max_align_t)` を使うよう修正しました。`alignas(std::max_align_t)` を指定した検証用の値型を Array に格納し、Reserve 後および growth 後のアドレスの配置と値の保持を契約テストに追加しました。`alignas(64)` 型の負の compile check は意図した `static_assert` 診断を確認します。assert を一時的に外す mutation 検査でテストが configure 時に失敗することを確認し、変更は復元しました。
+
+次に `tests/model_draw_plan_tests.cpp` と `tests/model_geometry_tests.cpp` の NaN / infinity 生成式に対して MSVC が C2124（定数 0 による除算）を出し、Debug build が失敗しました。テスト式を `<limits>` の `quiet_NaN()` / `infinity()` に置き換えました。この RED はコンパイラ上のテストコード互換性を示し、製品コードの失敗を示すものではありません。
+
+修正後、Debug と Release の全 target build が成功し、CTest は各 26/26 件成功しました。CI と同じ構成コマンドをローカルの Windows clean shell で実行すると、従来の Ninja generator 指定は compiler 検出に失敗しました。generator の自動選択と Release 構成を明示する形へ直し、`build/ci-windows-fixed` の configure 成功を確認しました。主な実測ログは `build/dev-windows/{configure-final.log,build-debug-nan-red.log,build-debug-green.log,ctest-debug-green.log,build-release-green.log,ctest-release-green.log}` にあります。
+
+この検証は Windows/MSVC での CPU 契約と開発用 target の build / link を対象とします。`GKCORE_BUILD_RUNTIME=OFF` のため、The Forge を含む Runtime の build / link、DX12 実行、GPU 表示の確認ではありません。Runtime build が必要とする Visual Studio 2022 / v142 toolset はこの PC にないため、`tools/setup.py` の前提確認で停止し、Runtime 側の検証は未実施です。

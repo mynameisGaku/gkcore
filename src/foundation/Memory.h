@@ -8,6 +8,14 @@
  */
 namespace gk {
 
+#if defined(_MSC_VER)
+// MSVCのmallocが基本型向けに保証する境界を使う。
+constexpr size_t kAllocationAlignment = alignof(double);
+#else
+// 他環境ではC標準のmalloc用最大境界を使う。
+constexpr size_t kAllocationAlignment = alignof(max_align_t);
+#endif
+
 /**
  * Allocates uninitialized storage, returning null when size is zero or allocation fails.
  */

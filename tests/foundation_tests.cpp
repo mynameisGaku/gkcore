@@ -4,12 +4,19 @@
 #include "../src/foundation/RefCount.h"
 #include "../src/foundation/String.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 
 namespace {
 int destroyedRefs = 0;
 void destroyRef(gk::RefCounted*) { ++destroyedRefs; }
+
+// C標準の最大alignment境界を持つ検証用の値型。
+struct alignas(std::max_align_t) FFoundationAlignedRecord {
+    // 配列のreserve後も保持される検証値。
+    uint64_t value;
+};
 }
 
 namespace gk::tests {
@@ -18,6 +25,15 @@ bool FoundationContracts() {
 #ifdef GKCORE_TESTING
     ResetAllocationFailureForTesting();
 #endif
+    static_assert(gk::kAllocationAlignment <= alignof(std::max_align_t), "Array allocation alignment must stay within malloc's standard guarantee");
+    // malloc境界の型を格納する配列。
+    Array<FFoundationAlignedRecord> alignedValues;
+    // reserveとgrowthの後に保持を確かめる値。
+    FFoundationAlignedRecord alignedValue = {17};
+    if (!alignedValues.Reserve(1) || reinterpret_cast<uintptr_t>(alignedValues.Data()) % alignof(FFoundationAlignedRecord) != 0 || !alignedValues.Append(alignedValue) || alignedValues.At(0).value != 17) return false;
+    alignedValue.value = 29;
+    if (!alignedValues.Append(alignedValue) || reinterpret_cast<uintptr_t>(alignedValues.Data()) % alignof(FFoundationAlignedRecord) != 0 || alignedValues.Count() != 2 || alignedValues.At(0).value != 17 || alignedValues.At(1).value != 29) return false;
+
     Array<std::uint32_t> values;
     if (values.Count() != 0 || values.Data() != nullptr || !values.Append(10) || !values.Append(20)) return false;
     if (values.Count() != 2 || values.At(0) != 10 || values.At(1) != 20 || !values.Reserve(16)) return false;
