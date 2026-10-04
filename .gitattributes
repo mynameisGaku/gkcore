@@ -10,6 +10,7 @@ third_party/** -text -whitespace
 /tools/*.py text eol=crlf
 /tests/*.cpp text eol=crlf
 /tests/*.py text eol=crlf
+/tests/support/** text eol=crlf
 /tests/package/*.py text eol=crlf
 /tests/package/consumer/*.cpp text eol=crlf
 /CMakeLists.txt text eol=crlf

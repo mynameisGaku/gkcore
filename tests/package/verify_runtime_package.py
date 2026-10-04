@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Install into an isolated prefix, check its exact manifest, and build a consumer."""
 import argparse
 import os
@@ -7,6 +7,16 @@ import subprocess
 import tempfile
 
 from package_allowlist import validate
+
+
+def consumer_configure_command(install_script, source, consumer_build, generator, prefix, config, gpu_smoke):
+    command = [install_script, "-S", str(source / "tests/package/consumer"), "-B", str(consumer_build),
+               "-G", generator, f"-DCMAKE_PREFIX_PATH={prefix}"]
+    if config:
+        command += [f"-DCMAKE_BUILD_TYPE={config}"]
+    if gpu_smoke:
+        command.append("-DGKCORE_PACKAGE_GPU_SMOKE=ON")
+    return command
 
 
 def run(command, cwd=None):
@@ -20,6 +30,7 @@ def main():
     parser.add_argument("--install-script", required=True)
     parser.add_argument("--build-dir", required=True)
     parser.add_argument("--source-dir", required=True)
+    parser.add_argument("--gpu-smoke", action="store_true")
     args = parser.parse_args()
     source = Path(args.source_dir).resolve()
     build = Path(args.build_dir).resolve()
@@ -34,10 +45,8 @@ def main():
         validate(files)
 
         consumer_build = root / "consumer-build"
-        configure = [args.install_script, "-S", str(source / "tests/package/consumer"), "-B", str(consumer_build),
-                     "-G", args.generator, f"-DCMAKE_PREFIX_PATH={prefix}"]
-        if args.config:
-            configure += [f"-DCMAKE_BUILD_TYPE={args.config}"]
+        configure = consumer_configure_command(args.install_script, source, consumer_build, args.generator,
+                                               prefix, args.config, args.gpu_smoke)
         run(configure)
         run([args.install_script, "--build", str(consumer_build), "--config", args.config or "Release"])
         executable_name = "package_consumer.exe" if os.name == "nt" else "package_consumer"

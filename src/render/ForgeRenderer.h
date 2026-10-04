@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
@@ -11,6 +11,10 @@
 #include "PostProcessRenderer.h"
 #include "PostEffectRenderer.h"
 #include "TextureCache.h"
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+#include "../../tests/support/FrameCapture.h"
+#endif
 
 #include <Graphics/Interfaces/IGraphics.h>
 #include <Graphics/GraphicsConfig.h>
@@ -25,14 +29,16 @@
 #endif
 
 /**
- * The Forge Direct3D 12 renderer and GPU lifetime management.
+ * The ForgeのDirect3D 12描画とGPU資源の寿命を管理する。
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
- * A contiguous group of color or image vertices with matching GPU state.
+ * 描画状態を共有する色付き頂点または画像頂点の連続範囲を表す。
  */
-struct RenderRun {
+struct RenderRun
+{
     uint32_t first;
     uint32_t count;
     bool depthTest;
@@ -47,63 +53,64 @@ struct RenderRun {
 };
 
 /**
- * Owns the The Forge Direct3D 12 renderer and consumes frame snapshots.
+ * The ForgeのDirect3D 12描画資源を所有し、フレームの描画内容を処理する。
  */
-class ForgeRenderer {
-public:
+class ForgeRenderer
+{
+  public:
     /**
-     * Creates an empty renderer owner.
+     * 未初期化の描画資源所有者を作る。
      */
     ForgeRenderer() = default;
     /**
-     * Releases renderer-owned GPU and The Forge resources.
+     * 描画資源所有者が保持するGPU資源とThe Forgeの資源を解放する。
      */
     ~ForgeRenderer();
     /**
-     * GPU objects and queues have a single owner and cannot be copied.
+     * GPU資源とqueueは単独所有のため、複製を禁止する。
      */
     ForgeRenderer(const ForgeRenderer&) = delete;
     ForgeRenderer& operator=(const ForgeRenderer&) = delete;
 
     /**
-     * Creates the renderer, swapchain, depth target, shaders, pipelines, and buffers.
+     * renderer、swapchain、depth target、shader、pipeline、bufferを作成する。
      */
     bool Initialize(HWND window, uint32_t width, uint32_t height, String& error);
     /**
-     * Waits for GPU work and releases all renderer resources.
+     * GPU処理の完了を待ち、描画資源をすべて解放する。
      */
     void Shutdown();
     /**
-     * Recreates swapchain and depth resources for a new client size.
+     * 新しいclient領域の寸法に合わせてswapchainとdepth資源を作り直す。
      */
     bool Resize(uint32_t width, uint32_t height, String& error);
     /**
-     * Draws and presents one captured frame.
+     * 受け取った1フレームを描画して画面へ提示する。
      */
     bool Present(const detail::FramePacket& frame, String& error);
     /**
-     * Loads a validated compiled pixel shader and creates its target variants.
+     * 検証済みのpixel shaderを読み込み、描画先ごとのpipelineを作成する。
      */
     ShaderHandle LoadPixelShader(const char* path, String& error);
     /**
-     * Waits for GPU work and releases the shader's pipeline variants.
+     * GPU処理の完了を待ち、shaderに対応するpipelineを解放する。
      */
     bool ReleasePixelShader(ShaderHandle shader, String& error);
 
-private:
+  private:
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kVertexCapacity = 1u << 20;
 
     /**
-     * Creates the window presentation target for the current client size.
+     * 現在のclient領域の寸法に合わせて画面提示先を作成する。
      */
     bool CreateSwapChain(uint32_t width, uint32_t height, String& error);
     /**
-     * Creates shaders, pipelines, buffers, and dependent texture/post resources.
+     * shader、pipeline、bufferと、texture・後処理に必要な資源を作成する。
      */
     bool InitializeGraphicsResources(String& error);
     /**
-     * Releases dependent graphics objects before the renderer is shut down.
+     * renderer終了前に、依存する描画資源を解放する。
      */
     void DestroyGraphicsResources();
     Renderer* renderer_ = nullptr;
@@ -128,6 +135,10 @@ private:
     CustomShaders customShaders_;
     PostProcessRenderer postProcess_;
     PostEffectRenderer postEffect_;
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    // GPU画像検査用の読み戻し資源を所有する。
+    test_support::FFrameCapture testFrameCapture_;
+#endif
     detail::ImageResource* whiteImage_ = nullptr;
     Array<Vertex> vertices_;
     Array<ModelRenderVertex> modelVertices_;

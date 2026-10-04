@@ -95,6 +95,8 @@ if(GKCORE_BUILD_TESTS)
 
     add_test(NAME gkcore.package_allowlist
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_allowlist.py)
+    add_test(NAME gkcore.package_consumer_plan
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_consumer_smoke_plan.py)
     add_test(NAME gkcore.forge_checkout
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_forge_checkout.py)
     add_test(NAME gkcore.forge_build_plan
@@ -467,6 +469,21 @@ if(GKCORE_BUILD_RUNTIME)
         CXX_VISIBILITY_PRESET hidden
         VISIBILITY_INLINES_HIDDEN YES)
 
+    if(GKCORE_BUILD_TESTS AND GKCORE_RUN_BACKEND_SMOKE)
+        # 配布DLLには画像取得コードを含めず、同じソースから検査用DLLを別に作る。
+        get_target_property(_gkcore_capture_sources gkcore SOURCES)
+        add_library(gkcore_capture_runtime SHARED ${_gkcore_capture_sources} tests/support/FrameCapture.cpp)
+        foreach(_capture_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES)
+            get_target_property(_capture_value gkcore ${_capture_property})
+            set_property(TARGET gkcore_capture_runtime PROPERTY ${_capture_property} "${_capture_value}")
+        endforeach()
+        target_compile_features(gkcore_capture_runtime PUBLIC cxx_std_17)
+        target_compile_definitions(gkcore_capture_runtime PRIVATE GKCORE_TEST_FRAME_CAPTURE=1)
+        target_compile_definitions(gkcore_capture_runtime INTERFACE GKCORE_SHARED=1)
+        target_include_directories(gkcore_capture_runtime INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_options(gkcore_capture_runtime INTERFACE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
+    endif()
+
     add_executable(gkcore_mixed_scene examples/mixed_scene.cpp)
     target_compile_features(gkcore_mixed_scene PRIVATE cxx_std_17)
     target_link_libraries(gkcore_mixed_scene PRIVATE gkcore::gkcore)
@@ -538,8 +555,18 @@ if(GKCORE_BUILD_RUNTIME)
             GKCORE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
         target_link_libraries(gkcore_backend_smoke PRIVATE gkcore::gkcore)
         if(GKCORE_RUN_BACKEND_SMOKE)
+            add_executable(gkcore_render_capture_tests tests/render_capture_tests.cpp)
+            target_compile_features(gkcore_render_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_render_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_render_capture_tests)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
-            set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60)
+            set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.render_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/render_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_render_capture_tests>
+                    --source-dir ${CMAKE_CURRENT_SOURCE_DIR}
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/render-captures/$<CONFIG>)
+            set_tests_properties(gkcore.render_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -569,6 +596,10 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     if(TARGET gkcore_backend_smoke)
         add_dependencies(gkcore_backend_smoke gkcore_stage_runtime_payload)
+    endif()
+
+    if(TARGET gkcore_render_capture_tests)
+        add_dependencies(gkcore_render_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets
@@ -620,13 +651,18 @@ if(GKCORE_BUILD_RUNTIME)
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/gkcore COMPONENT Runtime)
 
     if(GKCORE_BUILD_TESTS)
+        set(_gkcore_package_gpu_args)
+        if(GKCORE_RUN_BACKEND_SMOKE)
+            list(APPEND _gkcore_package_gpu_args --gpu-smoke)
+        endif()
         add_test(NAME gkcore.package
             COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/verify_runtime_package.py
                 --config $<CONFIG>
                 --generator "${CMAKE_GENERATOR}"
                 --install-script "${CMAKE_COMMAND}"
                 --build-dir "${CMAKE_CURRENT_BINARY_DIR}"
-                --source-dir "${CMAKE_CURRENT_SOURCE_DIR}")
+                --source-dir "${CMAKE_CURRENT_SOURCE_DIR}" ${_gkcore_package_gpu_args})
+        set_tests_properties(gkcore.package PROPERTIES TIMEOUT 120)
     endif()
 else()
     install(CODE "message(FATAL_ERROR \"gkcore Runtime is unavailable: no real The Forge-backed runtime was built.\")" COMPONENT Runtime)

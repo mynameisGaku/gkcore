@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
@@ -9,61 +9,71 @@
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
 
 /**
- * Bounded Direct3D 12 texture cache for retained decoded framework images.
+ * 読み込んだ画像を保持し、Direct3D 12用textureを上限付きで管理する。
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
- * Retains source pixels while their uploaded Forge texture remains cached.
+ * GPUへ転送したtextureがcacheにある間、元画像のpixelを保持する。
  */
-class TextureCache {
-public:
+class TextureCache
+{
+  public:
     /**
-     * Creates the shared sampler used by uploaded framework images.
+     * 画像textureで共用するsamplerを作成する。
      */
     bool Initialize(Renderer* renderer, Queue* queue, String& error);
     /**
-     * Waits for GPU use and releases every cached image and descriptor.
+     * GPUの使用完了を待ち、cache画像とdescriptorを解放する。
      */
     void Shutdown();
     /**
-     * Starts a frame so descriptor entries used by it cannot be evicted.
+     * frameを開始し、そのframeで使うdescriptorを追い出し対象から外す。
      */
     void BeginFrame();
     /**
-     * Ensures a retained image has a ready texture and descriptor set.
+     * 保持中の画像に対応するtextureとdescriptor setを用意する。
      */
     bool Prepare(detail::ImageResource* image, String& error);
     /**
-     * Records staged image transfers with The Forge resource loader.
+     * The Forgeのresource loaderへ画像転送を記録する。
      */
     bool UploadPending(String& error);
     /**
-     * Reports whether recorded texture copies need a graphics-queue wait.
+     * 記録済みtexture転送をgraphics queueで待つ必要があるか返す。
      */
-    bool HasPendingSubmission() const { return uploadSubmissionPending_; }
+    bool HasPendingSubmission() const
+    {
+        return uploadSubmissionPending_;
+    }
     /**
-     * Flushes staged transfers and retains their fence until graphics submission or drain.
+     * 転送を提出し、graphics queueへの提出または完了待ちまでfenceを保持する。
      */
     bool FlushPendingUploads(FlushResourceUpdateDesc& flush, String& error);
     /**
-     * Waits for an unsubmitted resource-loader copy batch before releasing its textures.
+     * 未提出の転送batchを待ってからtextureを解放する。
      */
     bool DrainPendingUploads(String& error);
     /**
-     * Clears upload state after its synchronization semaphore is submitted.
+     * 同期semaphoreの提出後に転送状態を消去する。
      */
-    void MarkSubmitted() { uploadSubmissionPending_ = false; uploadFence_ = nullptr; }
+    void MarkSubmitted()
+    {
+        uploadSubmissionPending_ = false;
+        uploadFence_ = nullptr;
+    }
     /**
-     * Binds the cached descriptor set for an image snapshot.
+     * frame用に準備済みの画像descriptor setをbindする。
      */
     bool Bind(Cmd* command, detail::ImageResource* image, String& error) const;
 
-private:
+  private:
     /**
-     * Tracks one image's upload state, GPU objects, and retained byte cost.
+     * 画像ごとの転送状態、GPU資源、保持byte数を記録する。
      */
-    struct Entry {
+    struct Entry
+    {
         TextureCacheSlotState state;
         detail::ImageResource* image;
         Texture* texture;
@@ -75,19 +85,19 @@ private:
     static constexpr uint32_t kCapacity = 128;
     static constexpr uint64_t kByteCapacity = 256u * 1024u * 1024u;
     /**
-     * Finds the cache record for an image pointer, if one exists.
+     * 指定画像のcache記録があれば返す。
      */
     Entry* Find(detail::ImageResource* image);
     /**
-     * Reserves a slot within entry and byte limits, evicting only safe entries.
+     * entry数とbyte上限を守ってslotを確保し、安全な記録だけを追い出す。
      */
     Entry* AcquireSlot(uint64_t imageBytes, String& error);
     /**
-     * Creates an uninitialized GPU texture for a validated retained image.
+     * 検証済み画像に対応するGPU textureとdescriptorを作る。
      */
     bool CreateTexture(Entry& entry, detail::ImageResource* image, String& error);
     /**
-     * Releases one record's descriptor and texture and resets its cache state.
+     * 1件分のdescriptorとtextureを解放してcache記録を初期化する。
      */
     void DestroyEntry(Entry& entry);
 
