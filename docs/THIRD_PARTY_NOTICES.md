@@ -40,6 +40,12 @@ Agility、NVAPI、DXC の条項では配布先に課す契約条件が定めら�
 - Windows package の `README.md` は `LICENSE-LLVM.txt` を DXC package 内のその他のファイル、`LICENSE-MS.txt` を `dxil.dll`、`LICENSE-MIT.txt` を `d3d12shader.h` に適用すると記す。Runtime allowlist には `dxcompiler.dll` と `dxil.dll` を含め、compiler `dxc.exe` と header は含めない。
 - Microsoft の `LICENSE-MS.txt` は Agility と同様に、主要機能を加えること、配布先/利用者に保護条項への同意を求めること、一定の請求に対する補償を配布条件とする。`dxil.dll` の再配布についてもこの条件を考慮する必要がある。
 
+## ufbx
+
+- 固定版: ufbx `0.23.1`、commit [`26a482ae66871d7de36eb722aa060bce95bce274`](https://github.com/ufbx/ufbx/commit/26a482ae66871d7de36eb722aa060bce95bce274)。開発用の `third_party/ufbx/` に upstream の `ufbx.h` と `ufbx.c` を保存し、`third_party/ufbx/README.md` に SHA-256 を記録しています。
+- 上流の [`LICENSE`](https://github.com/ufbx/ufbx/blob/26a482ae66871d7de36eb722aa060bce95bce274/LICENSE) は MIT License または Unlicense のいずれかを選べる二重ライセンスです。gkcore は MIT alternative の下で ufbx を使用します。Runtime SDK には `ufbx-LICENSE.txt` として原文を含め、parser source/header は含めません。
+- ufbx は gkcore の FBX import 実装へ静的に組み込まれます。MIT 条項に従い、著作権表示と許諾文を Runtime package に含めます。
+
 ## Forge の Renderer / OS 静的ライブラリ
 
 固定 The Forge の `Renderer.vcxproj` と `OS.vcxproj` は静的ライブラリを build し、gkcore はその両方をリンクします。`OS.vcxproj` には ImGui、Lua 5.3.5、cpu_features、hidapi、bstrlib、LZ4、Zstandard の source が含まれます。これらの一部は MIT、BSD、Apache-2.0 のライセンス文書を持ちますが、実際に gkcore.dll へ取り込まれた object は Windows/MSVC の link map を確認するまで特定できません。

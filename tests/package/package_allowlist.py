@@ -49,6 +49,7 @@ _FIXED = {
     "share/licenses/gkcore/LICENSE-MS.txt",
     "share/licenses/gkcore/stb-image-LICENSE.txt",
     "share/licenses/gkcore/cgltf-LICENSE.txt",
+    "share/licenses/gkcore/ufbx-LICENSE.txt",
 }
 
 

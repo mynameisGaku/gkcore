@@ -169,7 +169,7 @@ GKCORE_API int DrawImageRotated(ImageHandle image, float centerX, float centerY,
 GKCORE_API int DeleteImage(ImageHandle image);
 
 /**
- * Loads a model and returns an invalid handle on failure.
+ * Loads a static OBJ, GLB 2.0, or FBX model from a UTF-8 path. Returns an invalid handle on failure.
  */
 GKCORE_API ModelHandle LoadModel(const char* utf8Path);
 

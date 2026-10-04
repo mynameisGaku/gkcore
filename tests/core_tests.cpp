@@ -3,6 +3,7 @@
 #include "../src/internal/Backend.hpp"
 #include "../src/foundation/Memory.h"
 #include "../src/image/Image.h"
+#include "../src/model/ModelLoader.h"
 #include "../src/text/TextCache.h"
 #include "../src/effects/Effects.h"
 #include "../src/render/ModelDrawPlan.h"
@@ -73,6 +74,20 @@ struct CaptureState {
     int32_t baseColorGlbMaterialIndices[2]{};
     int32_t baseColorGlbTextureIndices[2]{};
     float baseColorGlbFactors[2][4]{};
+    bool baseColorFbxPlanValid = false;
+    uint32_t baseColorFbxModelReferences = 0;
+    uint32_t baseColorFbxVertexCount = 0;
+    uint32_t baseColorFbxIndexCount = 0;
+    uint32_t baseColorFbxPrimitiveCount = 0;
+    uint32_t baseColorFbxMaterialCount = 0;
+    uint32_t baseColorFbxTextureCount = 0;
+    uint32_t baseColorFbxTextureReferences = 0;
+    uint32_t baseColorFbxTextureWidth = 0;
+    uint32_t baseColorFbxTextureHeight = 0;
+    uint32_t baseColorFbxFirstIndices[2]{};
+    uint32_t baseColorFbxIndexCounts[2]{};
+    int32_t baseColorFbxMaterialIndices[2]{};
+    int32_t baseColorFbxTextureIndices[2]{};
     uint32_t textRasterizations = 0;
     uint32_t textImageWidth = 2;
     uint32_t textImageHeight = 2;
@@ -231,6 +246,29 @@ public:
                             state_.baseColorGlbFactors[part][component] = source.baseColorFactor[component];
                     }
                     state_.baseColorGlbPlanValid = true;
+
+                    if (draw.model->vertices.Count() >= 4 && draw.model->indices.Count() == 6) {
+                        state_.baseColorFbxModelReferences = draw.model->reference.references;
+                        state_.baseColorFbxVertexCount = draw.model->vertices.Count();
+                        state_.baseColorFbxIndexCount = draw.model->indices.Count();
+                        state_.baseColorFbxPrimitiveCount = draw.model->primitives.Count();
+                        state_.baseColorFbxMaterialCount = draw.model->materials.Count();
+                        state_.baseColorFbxTextureCount = draw.model->textures.Count();
+                        if (state_.baseColorFbxTextureCount && draw.model->textures.At(0)) {
+                            const gk::detail::ImageResource* texture = draw.model->textures.At(0);
+                            state_.baseColorFbxTextureReferences = texture->reference.references;
+                            state_.baseColorFbxTextureWidth = texture->width;
+                            state_.baseColorFbxTextureHeight = texture->height;
+                        }
+                        for (uint32_t part = 0; part < 2; ++part) {
+                            const gk::render::ModelPartPlan& source = plan.parts.At(part);
+                            state_.baseColorFbxFirstIndices[part] = source.firstIndex;
+                            state_.baseColorFbxIndexCounts[part] = source.indexCount;
+                            state_.baseColorFbxMaterialIndices[part] = source.materialIndex;
+                            state_.baseColorFbxTextureIndices[part] = source.textureIndex;
+                        }
+                        state_.baseColorFbxPlanValid = true;
+                    }
                 }
             }
         }
@@ -643,6 +681,68 @@ bool TestCheckedInBaseColorGlbSurvivesPublicDeletion() {
     return true;
 }
 
+/**
+ * Loads one checked-in FBX through the public API and checks its retained draw payload.
+ */
+bool TestCheckedInFbxSurvivesPublicDeletion(const char* filename) {
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::Init() == 0);
+    const std::filesystem::path assetPath =
+        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models" / filename;
+    const std::string utf8Path = assetPath.u8string();
+    const gk::ModelHandle model = gk::LoadModel(utf8Path.c_str());
+    CHECK(model.IsValid());
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::DrawModel(model) == 0);
+    CHECK(gk::DeleteModel(model) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.drawCount == 1);
+    CHECK(capture.baseColorFbxPlanValid);
+    CHECK(capture.baseColorFbxModelReferences == 1);
+    CHECK(capture.baseColorFbxVertexCount >= 4 && capture.baseColorFbxIndexCount == 6);
+    CHECK(capture.baseColorFbxPrimitiveCount == 2 && capture.baseColorFbxMaterialCount == 2);
+    CHECK(capture.baseColorFbxTextureCount == 1 && capture.baseColorFbxTextureReferences == 1);
+    CHECK(capture.baseColorFbxTextureWidth == 1 && capture.baseColorFbxTextureHeight == 1);
+    CHECK(capture.baseColorFbxFirstIndices[0] == 0 && capture.baseColorFbxIndexCounts[0] == 3);
+    CHECK(capture.baseColorFbxFirstIndices[1] == 3 && capture.baseColorFbxIndexCounts[1] == 3);
+    CHECK(capture.baseColorFbxMaterialIndices[0] == 0 && capture.baseColorFbxMaterialIndices[1] == 1);
+    CHECK(capture.baseColorFbxTextureIndices[0] == 0);
+    gk::Shutdown();
+    return true;
+}
+
+/**
+ * Exercises importer cleanup at successive allocator failure points and a clean retry.
+ */
+bool TestFbxImportAllocationFailuresRecover() {
+    const std::filesystem::path assetPath =
+        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_ascii.fbx";
+    const std::string utf8Path = assetPath.u8string();
+    uint32_t failedAttempts = 0;
+    bool reachedSuccess = false;
+    for (uint32_t allocation = 0; allocation < 256; ++allocation) {
+        gk::String error;
+        CHECK(error.Assign("preallocated FBX import diagnostic"));
+        gk::SetAllocationFailureAfterForTesting(allocation);
+        gk::detail::ModelResource* model = gk::detail::LoadModelPayload(utf8Path.c_str(), error);
+        gk::ResetAllocationFailureForTesting();
+        if (model) {
+            gk::Release(&model->reference);
+            reachedSuccess = true;
+            break;
+        }
+        ++failedAttempts;
+    }
+    CHECK(failedAttempts > 0 && reachedSuccess);
+    gk::String recoveryError;
+    gk::detail::ModelResource* recovered = gk::detail::LoadModelPayload(utf8Path.c_str(), recoveryError);
+    CHECK(recovered != nullptr);
+    CHECK(recovered->indices.Count() == 6 && recovered->textures.Count() == 1);
+    gk::Release(&recovered->reference);
+    return true;
+}
+
 bool TestShaderLifetimesAndSnapshots() {
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
@@ -765,6 +865,9 @@ int main() {
     if (!TestTextCacheEntryBound()) ++failures;
     if (!TestQueuedImageSurvivesDeletion()) ++failures;
     if (!TestCheckedInBaseColorGlbSurvivesPublicDeletion()) ++failures;
+    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_ascii.fbx")) ++failures;
+    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_binary.fbx")) ++failures;
+    if (!TestFbxImportAllocationFailuresRecover()) ++failures;
     if (!TestShaderLifetimesAndSnapshots()) ++failures;
     if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
     return failures == 0 ? 0 : 1;

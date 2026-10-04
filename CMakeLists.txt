@@ -37,6 +37,10 @@ set(GKCORE_CORE_SOURCES
     src/model/ObjLoader.cpp
     src/model/GlbLoader.cpp
     src/model/Cgltf.cpp
+    src/model/FbxLoader.cpp
+    src/model/FbxGeometry.cpp
+    src/model/FbxMaterial.cpp
+    src/model/Ufbx.cpp
     src/text/Text.cpp
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
@@ -153,6 +157,43 @@ if(GKCORE_BUILD_TESTS)
     endif()
     gkcore_enable_warnings(gkcore_tests)
     add_test(NAME gkcore.core COMMAND gkcore_tests)
+    add_executable(gkcore_fbx_tests
+        tests/fbx_tests.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp
+        src/foundation/RefCount.cpp
+        src/resources/Resources.cpp
+        src/resources/ResourceIO.cpp
+        src/image/Image.cpp
+        src/image/ImageLoader.cpp
+        src/model/Model.cpp
+        src/model/ModelLoader.cpp
+        src/model/ObjLoader.cpp
+        src/model/GlbLoader.cpp
+        src/model/Cgltf.cpp
+        src/model/FbxLoader.cpp
+        src/model/FbxGeometry.cpp
+        src/model/FbxMaterial.cpp
+        src/model/Ufbx.cpp)
+    target_compile_features(gkcore_fbx_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_fbx_tests PRIVATE include src third_party/ufbx)
+    target_compile_definitions(gkcore_fbx_tests PRIVATE
+        GKCORE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+    gkcore_enable_warnings(gkcore_fbx_tests)
+    add_test(NAME gkcore.fbx COMMAND gkcore_fbx_tests)
+    add_executable(gkcore_fbx_geometry_tests
+        tests/fbx_geometry_tests.cpp
+        src/model/FbxGeometry.cpp
+        src/model/Ufbx.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp
+        src/foundation/RefCount.cpp)
+    target_compile_features(gkcore_fbx_geometry_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_fbx_geometry_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_fbx_geometry_tests)
+    add_test(NAME gkcore.fbx_geometry COMMAND gkcore_fbx_geometry_tests)
     add_executable(gkcore_geometry_tests
         tests/geometry_tests.cpp
         src/render/Geometry.cpp
@@ -422,6 +463,9 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES
         third_party/cgltf/LICENSE
         DESTINATION ${_gkcore_licenses} RENAME cgltf-LICENSE.txt COMPONENT Runtime)
+    install(FILES
+        third_party/ufbx/LICENSE
+        DESTINATION ${_gkcore_licenses} RENAME ufbx-LICENSE.txt COMPONENT Runtime)
     install(EXPORT gkcoreTargets NAMESPACE gkcore:: FILE gkcoreTargets.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/gkcore COMPONENT Runtime)
     configure_package_config_file(cmake/gkcoreConfig.cmake.in

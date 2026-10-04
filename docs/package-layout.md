@@ -46,6 +46,7 @@ share/licenses/gkcore/LICENSE-MIT.txt
 share/licenses/gkcore/LICENSE-MS.txt
 share/licenses/gkcore/stb-image-LICENSE.txt
 share/licenses/gkcore/cgltf-LICENSE.txt
+share/licenses/gkcore/ufbx-LICENSE.txt
 ```
 
 Allowlist はこの一覧以外の Runtime file を拒否します。対象 DLL の由来と個別ライセンス文書は CMake install rules と The Forge source tree からコピーします。The Forge と DXC の固定版は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記録されています。gkcore 自身の配布ライセンスは未決定で、依存の配布条件を含む最終 audit も未完了です。したがって、この一覧は検査契約であり、再配布許可が確定したという意味ではありません。
@@ -64,7 +65,7 @@ docs/                      # API・運用・仕様
 build/forge/                # The Forge の Renderer.lib / OS.lib build output
 ```
 
-The Forge の source checkout は `GKCORE_FORGE_ROOT` で指定し、CMake が暗黙に取得することはありません。`tools/build_forge.py` は固定 source から `Renderer.vcxproj` と `OS.vcxproj` を Release|x64 で build します。OS project の FSL targets が依存側の shader を生成します。DXC 1.8.2405 package は checksum を検証して `.devtools/` に置き、shader compiler と FSL scripts は開発環境だけにします。`tools/build_gkcore_shaders.py` は gkcore の内蔵 color、sprite、post、Bloom、FXAA shaders をコンパイルし、Runtime package にはコンパイル済み shader と root signatures のみを入れます。DXC の runtime DLL と license file は現在の Runtime allowlist に明記されています。
+The Forge の source checkout は `GKCORE_FORGE_ROOT` で指定し、CMake が暗黙に取得することはありません。`tools/build_forge.py` は固定 source から `Renderer.vcxproj` と `OS.vcxproj` を Release|x64 で build します。OS project の FSL targets が依存側の shader を生成します。DXC 1.8.2405 package は checksum を検証して `.devtools/` に置き、shader compiler と FSL scripts は開発環境だけにします。FBX 読み込み用 ufbx v0.23.1 のソースも開発用 checkout に置き、Runtime package には配布条件に必要な `ufbx-LICENSE.txt` のみを含めます。`tools/build_gkcore_shaders.py` は gkcore の内蔵 color、sprite、post、Bloom、FXAA shaders をコンパイルし、Runtime package にはコンパイル済み shader と root signatures のみを入れます。DXC の runtime DLL と license file は現在の Runtime allowlist に明記されています。
 
 ## 配布検証
 

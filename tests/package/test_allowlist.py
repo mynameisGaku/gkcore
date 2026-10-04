@@ -26,7 +26,14 @@ class RuntimeAllowlistTests(unittest.TestCase):
         self.assertEqual(validate(BASE), BASE)
 
     def test_rejects_development_and_upstream_content(self):
-        for extra in ("tests/core_tests.cpp", "tools/pack.py", "src/ForgeBackend.cpp", "Common_3/Renderer.h"):
+        for extra in (
+            "tests/core_tests.cpp",
+            "tools/pack.py",
+            "src/ForgeBackend.cpp",
+            "Common_3/Renderer.h",
+            "third_party/ufbx/ufbx.h",
+            "third_party/ufbx/ufbx.c",
+        ):
             with self.subTest(extra=extra), self.assertRaises(PackageError):
                 validate(BASE | {extra})
 
@@ -37,6 +44,8 @@ class RuntimeAllowlistTests(unittest.TestCase):
     def test_rejects_missing_license_and_unknown_runtime_file(self):
         with self.assertRaises(PackageError):
             validate(BASE - {"share/licenses/gkcore/THIRD_PARTY_NOTICES.md"})
+        with self.assertRaises(PackageError):
+            validate(BASE - {"share/licenses/gkcore/ufbx-LICENSE.txt"})
         with self.assertRaises(PackageError):
             validate(BASE | {"share/gkcore/shaders/default.bin"})
 

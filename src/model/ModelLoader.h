@@ -6,7 +6,7 @@
 namespace gk::detail {
 
 /**
- * Loads static OBJ or GLB 2.0 geometry and material payloads.
+ * Loads bounded static OBJ, GLB 2.0, or FBX geometry and material payloads.
  */
 ModelResource* LoadModelPayload(const char* path, String& error);
 
