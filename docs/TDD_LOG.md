@@ -287,3 +287,47 @@ ASAN_OPTIONS=detect_leaks=0 /tmp/forgedx-review-tools/cmake/data/bin/ctest \
 テスト内の union 初期化は各成分の代入へ直し、MinGW の `-Werror` 構文検査と Release・ASan / UBSan の FBX テストを再実行しました。どちらも 1/1 件成功しています。
 
 MSVC のビルドとリンク、Windows の実 GPU 表示、Runtime SDK だけを使う別プロジェクトの起動は未検証です。`main` への反映は Windows 検証後とし、リモートへの push は行っていません。
+
+## 2026-10-04: カスタムポストエフェクト shader のフレーム設定
+
+- Effects 側の RED は、`ShaderBindings::SnapshotFor` を実装する前に対象を build し、同 method がないため失敗したものです。Effects 担当の報告では 6 箇所の呼び出しで compile error になりました。実装後は `gkcore.core` が通過し、handle ごとの sorted Float4 定数、無効 handle からの空 snapshot、古い handle、確保失敗時に出力を保つ契約を確認しました。実行コマンドは担当報告に記録されていません。
+- Core API の RED は、テスト追加直後、`gkcore.h` / `Backend` / `Context` / API 実装より前に実行しました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake \
+  --build /tmp/gkcore-core-model-build --target gkcore_tests -j2
+```
+
+build は終了コード 2 で、`FramePacket.postEffectShader`、`postEffectConstantCount`、`postEffectConstants` と `gk::SetPostEffectShader` がまだ定義されていない旨の compile error になりました。実装後、同 build tree の `gkcore.core` focused CTest は 1/1 成功しました。選択と定数を `BeginFrame` で snapshot すること、フレーム途中の変更は次フレームに反映されること、無効 handle は効果を切ること、描画 shader 選択と独立していること、フレームが shader を保持している間は描画命令がなくても削除を拒否すること、Shutdown で状態を初期化することを確認しています。
+- Post-effect plan の portable test と ASan / UBSan focused test も成功したとの報告があります。個別実行の完全なコマンドは保存されていません。これらは component test であり、Windows/MSVC link や実 GPU 描画を確認していません。
+- root が最新統合ソースを Release と Debug ASan / UBSan で再ビルドし、両方の CTest が 23/23 件成功したと確認しました。Release は `/tmp/gkcore-review-build` で 0.65 秒、Debug は `/tmp/gkcore-sanitize-build` で 1.50 秒です。Debug 実行には `ASAN_OPTIONS=detect_leaks=0` を指定したため、リーク検査は行っていません。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-review-build --parallel 6
+/tmp/forgedx-review-tools/cmake/data/bin/ctest --test-dir /tmp/gkcore-review-build --output-on-failure
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-sanitize-build --parallel 6
+ASAN_OPTIONS=detect_leaks=0 /tmp/forgedx-review-tools/cmake/data/bin/ctest \
+  --test-dir /tmp/gkcore-sanitize-build --output-on-failure
+```
+
+ポスト shader の選択・定数 snapshot、層の順序、削除時の寿命条件を含む CPU 契約は統合済みです。Windows/MSVC でのリンク、実 GPU 上の描画、Runtime SDK だけを使った別プロジェクトのビルドは未確認です。`main` への昇格も保留中です。
+
+root の追加レビュー後、MinGW で `ForgeRenderer.cpp`、`PostProcessRenderer.cpp`、`PostEffectRenderer.cpp`、`CustomShaders.cpp`、`PostEffectPlan.cpp`、`examples/custom_post_effect.cpp` の 6 translation unit を構文検査し、終了コード 0 を確認しました。構文検査では `EXTERNAL_CONFIG_FILEPATH` に一時的な `ForgeSyntaxConfig.h` を指定して MSVC compiler whitelist を回避しています。upstream header の警告が残るため、この結果は MSVC の build/link や Windows 実行を示しません。
+
+Linux DXC で `examples/shaders/post_effect_tint.hlsl` を `ps_6_0`, entry point `main` としてコンパイルしました。生成 DXIL は既存 FSL artifact helper で包み、`tests/assets/shaders/post_effect_tint.frag` と byte-for-byte 一致することを確認しました。DXIL は 4,376 bytes、FSL ファイルは 4,436 bytes、SHA-256 は `8b041c784a2cac219af7bd6a60fce74a6f82d1eafe0be042f310b0105257728a` です。DXIL reflection では `b0, space3` の 1,024-byte `float4[64]` 定数、`t0`、`s0`、`SV_Target0` を確認しました。これはシェーダーのコンパイルと ABI の確認であり、Windows GPU 上の実行確認ではありません。
+
+ポスト shader artifact のテスト先行 RED は build/packaging 担当が記録を確認しました。次のコマンドは fixture が存在しない状態で実行され、非ゼロ終了となり、`custom post-effect pixel shader fixture could not be loaded` を出しました。
+
+```sh
+c++ -std=c++17 -Wall -Wextra -Wpedantic -DGKCORE_TESTING=1 \
+  -DGKCORE_TEST_SOURCE_DIR=\"/workspace/gkcore\" -Iinclude -Isrc \
+  tests/shader_artifact_tests.cpp src/render/Shaders.cpp \
+  src/resources/ResourceIO.cpp src/foundation/Memory.cpp \
+  src/foundation/Array.cpp src/foundation/String.cpp \
+  /tmp/gkcore_shader_artifact_runner.cpp -o /tmp/gkcore_shader_artifact_red \
+  && /tmp/gkcore_shader_artifact_red
+```
+
+fixture 追加後は統合 CTest 23/23 件で成功しています。さらに core 側でフレーム途中に定数を変更するケースを追加し、`gkcore.core` と `gkcore.post_effect_plan` の Release / ASan・UBSan focused CTest が各 2/2 件成功しました。Runtime の 40 パスは不変で、no-STL 3/3、package 6/6 件成功との報告があります。これらは CPU 契約、開発側コンパイル、manifest 検査です。Windows/MSVC link、GPU 実行、MSVC reflection は未確認で、`main` への昇格も保留中です。
+
+Windows GPU smoke を実装後、root が `tests/backend_contract_tests.cpp` を MinGW で `-Wall -Wextra -Wpedantic -Werror` 付き構文検査し、成功を確認しました。コードレビューでは、ポスト shader の有効化、選択中のリサイズ、Scene/UI を含む描画、無効化・再有効化、無効化後の削除、終了・再初期化の経路を確認しています。これは既存機能をまとめた統合検査の準備で、実装前に失敗を観測した RED / GREEN の証拠ではありません。Windows 上で smoke を実行した記録はなく、画素読み戻しもないため、Windows/GPU の実行や見た目の確認とは扱いません。目視確認の手順は [開発ガイド](development.md) に記載しました。

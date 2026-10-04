@@ -76,7 +76,7 @@ int main() {
 - 初心者は少数の関数または設定オブジェクトで Bloom、色調整、ぼかしなどを有効化・調整できる。
 - 2D ゲーム内シーンと 3D シーンを含む描画結果にエフェクトを適用できる。HUD/文字などの UI はポスト処理後に描画でき、読みやすさを保つ。
 - 2D だけのゲームでも Bloom、色調整などを同じ簡単な API で利用できる。
-- 上級者は HLSL のカスタム pixel shader を 2D スプライト/図形へ適用できる。配布 SDK では別途定義した ABI を介して 3D 材質とポストエフェクトにもカスタム shader を適用できる。頂点入力、定数/texture、出力、色空間、alpha の ABI を公開仕様として固定する。shader は開発用 tool で compile し、compiler を Runtime SDK に含めない。
+- 上級者は HLSL のカスタム pixel shader を 2D スプライト/図形へ適用できる。3D 材質用と Scene の合成 HDR 画像を読むポスト用 shader には、それぞれ明確な ABI を用意する。ポスト用 shader は `gk::SetPostEffectShader` で選び、定数は `gk::SetShaderFloat4` で設定する。内蔵 Bloom / 露出 / 色調整 / FXAA の前に適用し、UI には適用しない。shader handle、Float4 定数、画像入力の ABI とフレームへの設定取り込み時点を公開仕様として固定する。shader は開発用ツールでコンパイルし、コンパイラーは Runtime SDK に含めない。
 - シェーダーコンパイル/ロードの失敗ではファイル名、エラー箇所、診断内容を取得できる。サンプルシェーダーと変更手順を同梱する。
 - 色空間、alpha 合成、ポスト処理の適用範囲を文書化し、既定 UI 色が露出/Bloom で意図せず変わらない。
 

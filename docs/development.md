@@ -23,6 +23,18 @@ Runtime の公開 API、実装、利用者向けサンプルでは C++ 標準ラ
 
 CMake による開発用 build 設定と、The Forge を使う Windows 描画部があります。Windows 実機での Runtime build と GPU 描画はまだ確認していません。Linux の CPU テストは API の約束を検査しますが、GPU の表示結果は保証しません。
 
+## Windows GPU smoke と画面の目視確認
+
+DX12 対応 GPU を搭載した Windows PC で次を実行すると、通常の build/test に加えて、Windows 描画 smoke を CTest で実行します。
+
+```bat
+PRE_SETUP.bat --gpu-check
+```
+
+この smoke は初期化、カスタムポスト shader の有効化、960×540 へのサイズ変更、Scene と UI を含む描画命令の `Present`、ポスト shader の無効化・再有効化、無効化後の削除、終了と再初期化を確認します。API の戻り値とウィンドウの client size を検査しますが、画素の読み戻しは行わないため、色や UI が期待どおりに見えることまでは判定しません。
+
+色の変化を目で確かめるには、同じ build が作る `build\runtime-windows\Release\gkcore_custom_post_effect.exe` を起動します。ウィンドウを 960×540 以上に保ち、Space キーでポスト効果を切り替えてください。有効時には Scene の三角形と矩形の色が変わり、無効時には元の色に戻ります。緑の UI 矩形と画面下部の ON/OFF 表示は Scene の効果に影響されず、ウィンドウをリサイズしても表示されることを目で確認します。Escape キーで終了します。
+
 ## 開発テストの実行
 
 リポジトリの開発用テストは次のコマンドで構成・ビルド・実行する設計です。

@@ -27,6 +27,8 @@ int main() {
 
 HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する経路も実装しました。[色を変えるサンプルと使い方](docs/custom-shader.md)を用意しています。こちらも Windows 上の描画は未確認です。
 
+Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガイド](docs/post-effect-shader.md)にまとめています。API と CPU 側の契約テストは確認済みです。Windows/MSVC でのリンクと実 GPU 上の動作は未確認です。
+
 ## 2D・3D とエフェクト
 
 Scene の 2D と 3D を同じ描画先へ重ね、Bloom、露出・トーンマッピング、色調整、必要に応じた FXAA を適用してから UI を合成します。処理順と、Windows/GPU 上では未確認であることを図に示します。
@@ -56,5 +58,6 @@ flowchart LR
 - [ポストエフェクトの使い方](docs/effects.md)
 - [完成仕様](docs/PRODUCT_SPEC.md)
 - [カスタムシェーダー開発](docs/custom-shader.md)
+- [ポストエフェクト用シェーダー](docs/post-effect-shader.md)
 - [配布物と開発物](docs/package-layout.md)
 - [TDD 検証ログ](docs/TDD_LOG.md)
