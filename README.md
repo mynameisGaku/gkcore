@@ -31,6 +31,8 @@ Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガ�
 
 ## 2D・3D とエフェクト
 
+矩形は塗りつぶしと輪郭を選べます。線幅は `gk::DrawRectOutline` で指定します。[使い方とサンプル](docs/rectangles.md)を参照してください。
+
 Scene の 2D と 3D を同じ描画先へ重ね、Bloom、露出・トーンマッピング、色調整、必要に応じた FXAA を適用してから UI を合成します。処理順と、Windows/GPU 上では未確認であることを図に示します。
 
 ![gkcore の描画処理順](docs/images/render-pipeline.svg)
@@ -55,6 +57,7 @@ flowchart LR
 
 - [クイックスタート](docs/quickstart.md)
 - [モデルの読み込み](docs/models.md)
+- [輪郭矩形](docs/rectangles.md)
 - [ポストエフェクトの使い方](docs/effects.md)
 - [完成仕様](docs/PRODUCT_SPEC.md)
 - [カスタムシェーダー開発](docs/custom-shader.md)

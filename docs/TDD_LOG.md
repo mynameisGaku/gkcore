@@ -331,3 +331,51 @@ c++ -std=c++17 -Wall -Wextra -Wpedantic -DGKCORE_TESTING=1 \
 fixture 追加後は統合 CTest 23/23 件で成功しています。さらに core 側でフレーム途中に定数を変更するケースを追加し、`gkcore.core` と `gkcore.post_effect_plan` の Release / ASan・UBSan focused CTest が各 2/2 件成功しました。Runtime の 40 パスは不変で、no-STL 3/3、package 6/6 件成功との報告があります。これらは CPU 契約、開発側コンパイル、manifest 検査です。Windows/MSVC link、GPU 実行、MSVC reflection は未確認で、`main` への昇格も保留中です。
 
 Windows GPU smoke を実装後、root が `tests/backend_contract_tests.cpp` を MinGW で `-Wall -Wextra -Wpedantic -Werror` 付き構文検査し、成功を確認しました。コードレビューでは、ポスト shader の有効化、選択中のリサイズ、Scene/UI を含む描画、無効化・再有効化、無効化後の削除、終了・再初期化の経路を確認しています。これは既存機能をまとめた統合検査の準備で、実装前に失敗を観測した RED / GREEN の証拠ではありません。Windows 上で smoke を実行した記録はなく、画素読み戻しもないため、Windows/GPU の実行や見た目の確認とは扱いません。目視確認の手順は [開発ガイド](development.md) に記載しました。
+
+## 2026-10-04: 輪郭矩形 API
+
+- core の API 契約テストを実装前に追加し、Release の test target を build しました。初回 build は終了コード 2 となり、公開 API と描画 packet の outline 用 field が未定義という compile error で失敗しました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake -S . -B /tmp/gkcore-outline-core-build \
+  -G 'Unix Makefiles' -DGKCORE_BUILD_RUNTIME=OFF -DGKCORE_BUILD_TESTS=ON \
+  -DCMAKE_BUILD_TYPE=Release
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-outline-core-build \
+  --target gkcore_tests --parallel 4
+```
+
+- API 実装後、core 担当の報告では `gkcore.core` focused CTest が 1/1 成功しました。公開 API の入力検査と packet 契約の結果です。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/ctest \
+  --test-dir /tmp/gkcore-outline-core-build --output-on-failure \
+  -R '^gkcore\.core$'
+```
+
+- 図形展開側の RED は、geometry test target は build 成功したものの、既存 geometry 実装が輪郭矩形を受け付けず失敗しました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build \
+  /tmp/gkcore-outline-geometry-build --target gkcore_geometry_tests -j4
+/tmp/gkcore-outline-geometry-build/gkcore_geometry_tests
+```
+
+実行結果は終了コード 1、`FAIL: outlined rectangle geometry is accepted` でした。これは実装前に描画 geometry が輪郭矩形を受け付けないことを示す RED です。
+
+geometry 実装後、同じ target の再 build と `gkcore.geometry` focused CTest は 1/1 成功し、`RectangleGeometry.cpp` / `Geometry.cpp` の strict C++17 構文検査も成功したと担当から報告されました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build \
+  /tmp/gkcore-outline-geometry-build --target gkcore_geometry_tests -j4
+/tmp/forgedx-review-tools/cmake/data/bin/ctest \
+  --test-dir /tmp/gkcore-outline-geometry-build --output-on-failure \
+  -R '^gkcore\.geometry$'
+g++ -std=c++17 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc \
+  -fsyntax-only src/render/RectangleGeometry.cpp src/render/Geometry.cpp
+```
+
+テストは外枠の範囲、空の内側、4辺を重ねずに覆う三角形、全体に正規化した UV、色、短辺の半分以上の太さ、幅 0.5 の狭い矩形、正確な頂点容量と容量不足時の既存データ保持を検査します。カラー期待値を最初に誤って設定したテスト実行は、sRGB の 80/255 を線形値 `0.08021982` とすべきところ `0.07805664` としていたため失敗しました。これはテスト期待値の修正で、runtime の色処理不具合を示す RED ではありません。
+
+root が統合後の Release と Debug ASan / UBSan の全 CTest を再実行し、どちらも 23/23 件成功したと報告しました。Release は `/tmp/gkcore-review-build` で 1.20 秒、Debug は `/tmp/gkcore-sanitize-build` で 1.96 秒です。Debug 実行は `ASAN_OPTIONS=detect_leaks=0` のため、リーク検査はしていません。Runtime manifest の 40 path、no-STL 3/3、package 6/6 も再確認しました。
+
+同じソースの MinGW `-Wall -Wextra -Wpedantic -Werror` 構文検査では `Draw2D.cpp`、`RectangleGeometry.cpp`、`Geometry.cpp`、`examples/rectangle_outline.cpp`、`tests/backend_contract_tests.cpp` の 5 translation unit が成功しました。固定 The Forge の一時 `ForgeSyntaxConfig` を使った構文検査では `ForgeRenderer.cpp` と Direct3D 12 Runtime の 3 translation unit も成功しました。upstream の macro 警告が 4 件あります。この確認は MSVC の link や Windows 実行を代替しません。Windows/MSVC link と実 GPU 表示は未確認です。
