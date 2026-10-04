@@ -60,6 +60,10 @@ void ClearFrameDraws() {
         packet.model = nullptr;
     }
     context.frame.draws.Clear();
+    for (uint32_t i = 0; i < 64; ++i)
+        context.frame.postEffectConstants[i] = {};
+    context.frame.postEffectConstantCount = 0;
+    context.frame.postEffectShader = {};
 }
 
 } // namespace gk::detail

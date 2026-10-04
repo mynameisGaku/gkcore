@@ -1,6 +1,7 @@
 #include "../include/gkcore.h"
 #include "../src/effects/Effects.h"
 #include "../src/effects/Shaders.h"
+#include "../src/foundation/Memory.h"
 #include "../src/foundation/String.h"
 
 #include <math.h>
@@ -81,6 +82,43 @@ bool EffectsContract(String& failure) {
     if (!independent.SetActiveShader(a) || !independent.DeleteShader(a) ||
         !independent.SetActiveShader(b) || !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1)
         return Fail(failure, "deleting one shader cleared another shader constants");
+
+    ShaderBindings snapshots;
+    const ShaderHandle snapshotA(31), snapshotB(32);
+    if (!snapshots.RegisterShader(snapshotA) || !snapshots.RegisterShader(snapshotB) ||
+        !snapshots.SetConstant(snapshotB, 7, Float4{7, 0, 0, 0}) ||
+        !snapshots.SetConstant(snapshotB, 1, Float4{1, 0, 0, 0}) ||
+        !snapshots.SetActiveShader(snapshotA))
+        return Fail(failure, "could not prepare independent shader snapshots");
+    ShaderSnapshot selected;
+    if (!snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB ||
+        selected.constants.Count() != 2 || selected.constants.At(0).registerIndex != 1 ||
+        selected.constants.At(1).registerIndex != 7 || snapshots.ActiveHandle() != snapshotA)
+        return Fail(failure, "snapshot by handle did not sort constants or changed active shader");
+    if (!snapshots.SnapshotFor(ShaderHandle(), selected) || selected.shaderHandle.IsValid() ||
+        selected.constants.Count() != 0 || snapshots.ActiveHandle() != snapshotA)
+        return Fail(failure, "invalid snapshot handle did not select an empty built-in snapshot");
+    if (!snapshots.SnapshotFor(snapshotB, selected) ||
+        !snapshots.DeleteShader(snapshotB))
+        return Fail(failure, "could not prepare stale-handle snapshot check");
+    const ShaderConstant* preservedConstants = selected.constants.Data();
+    uint32_t preservedCount = selected.constants.Count();
+    if (snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB ||
+        selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount ||
+        snapshots.ActiveHandle() != snapshotA)
+        return Fail(failure, "stale snapshot handle changed output or active selection");
+    if (!snapshots.SetConstant(snapshotA, 3, Float4{3, 0, 0, 0}) ||
+        !snapshots.SnapshotFor(snapshotA, selected))
+        return Fail(failure, "could not prepare snapshot allocation failure check");
+    preservedConstants = selected.constants.Data();
+    preservedCount = selected.constants.Count();
+    SetAllocationFailureAfterForTesting(0);
+    const bool snapshotAllocated = snapshots.SnapshotFor(snapshotA, selected);
+    ResetAllocationFailureForTesting();
+    if (snapshotAllocated || selected.shaderHandle != snapshotA ||
+        selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount ||
+        snapshots.ActiveHandle() != snapshotA)
+        return Fail(failure, "snapshot allocation failure changed output or active selection");
     gk::effects::Reset();
     value = gk::effects::Current();
     if (value.saturation != 1.0f || value.contrast != 1.0f || !value.fxaaEnabled)

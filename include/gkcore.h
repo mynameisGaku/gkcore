@@ -280,7 +280,13 @@ GKCORE_API ShaderHandle LoadPixelShader(const char* compiledPath);
 GKCORE_API int SetPixelShader(ShaderHandle shader);
 
 /**
- * Releases a shader handle after commands in the open frame are presented.
+ * Selects a loaded pixel shader for the post-process pass; an invalid handle disables it.
+ * Requires Init. The selection is copied at BeginFrame, and a stale handle leaves it unchanged.
+ */
+GKCORE_API int SetPostEffectShader(ShaderHandle shader);
+
+/**
+ * Releases a shader handle; fails while an open frame uses it, so call after Present.
  */
 GKCORE_API int DeleteShader(ShaderHandle shader);
 

@@ -47,6 +47,7 @@ struct Context {
     Vec3 cameraTarget{0.0f, 0.0f, 0.0f};
     Array<ModelTransform> modelTransforms;
     ShaderBindings shaders;
+    ShaderHandle postEffectShader{};
     Array<ShaderNativeRecord> nativeShaders;
     uint32_t nextShaderHandle = 1;
 };

@@ -70,6 +70,7 @@ void Shutdown() {
     detail::ClearResources();
     detail::ClearModelTransforms();
     context.shaders.Reset();
+    context.postEffectShader = {};
     context.nativeShaders.Clear();
     context.initialized = false;
     context.frameOpen = false;
@@ -111,6 +112,17 @@ int BeginFrame() {
     if (!context.initialized || !context.backend) return detail::SetError("framework is not initialized");
     if (context.frameOpen) return detail::SetError("the previous frame has not been presented");
     detail::ClearFrameDraws();
+    ShaderSnapshot postEffect;
+    if (!context.shaders.SnapshotFor(context.postEffectShader, postEffect))
+        return detail::SetError("post-effect shader is stale or its constants could not be copied");
+    ShaderHandle backendPostEffect;
+    if (postEffect.shaderHandle.IsValid()) {
+        backendPostEffect = detail::FindBackendShader(postEffect.shaderHandle);
+        if (!backendPostEffect.IsValid())
+            return detail::SetError("post-effect shader backend handle is unavailable");
+    }
+    if (postEffect.constants.Count() > 64)
+        return detail::SetError("post-effect shader constant count exceeds the packet limit");
     context.frame.width = context.width;
     context.frame.height = context.height;
     context.frame.cameraPosition = context.cameraPosition;
@@ -123,6 +135,10 @@ int BeginFrame() {
     context.frame.saturation = settings.saturation;
     context.frame.contrast = settings.contrast;
     context.frame.fxaaEnabled = settings.fxaaEnabled;
+    context.frame.postEffectShader = backendPostEffect;
+    context.frame.postEffectConstantCount = postEffect.constants.Count();
+    for (uint32_t i = 0; i < postEffect.constants.Count(); ++i)
+        context.frame.postEffectConstants[i] = postEffect.constants.At(i);
     context.frameOpen = true;
     detail::ClearError();
     return 0;
@@ -159,6 +175,7 @@ void SetBackendForTesting(Backend* backend) {
     ClearResources();
     ClearModelTransforms();
     context.shaders.Reset();
+    context.postEffectShader = {};
     context.nativeShaders.Clear();
     context.backend = backend;
     context.initialized = false;

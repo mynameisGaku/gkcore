@@ -70,6 +70,9 @@ struct FramePacket {
     float saturation = 1.0f;
     float contrast = 1.0f;
     bool fxaaEnabled = true;
+    ShaderHandle postEffectShader{};
+    uint32_t postEffectConstantCount = 0;
+    ShaderConstant postEffectConstants[64]{};
     Array<DrawPacket> draws;
 };
 

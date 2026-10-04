@@ -167,11 +167,34 @@ int SetPixelShader(ShaderHandle shader) {
     return 0;
 }
 
+/**
+ * Stores a validated post-effect selection that will be sampled by the next BeginFrame.
+ */
+int SetPostEffectShader(ShaderHandle shader) {
+    detail::Context& context = detail::GetContext();
+    if (!context.initialized || !context.backend)
+        return detail::SetError("framework is not initialized");
+    if (!shader.IsValid()) {
+        context.postEffectShader = {};
+        detail::ClearError();
+        return 0;
+    }
+    if (!context.shaders.HasShader(shader))
+        return detail::SetError("invalid or stale post-effect shader handle");
+    if (!detail::FindBackendShader(shader).IsValid())
+        return detail::SetError("post-effect shader backend handle is unavailable");
+    context.postEffectShader = shader;
+    detail::ClearError();
+    return 0;
+}
+
 int DeleteShader(ShaderHandle shader) {
     detail::Context& context = detail::GetContext();
     if (!context.initialized || !context.backend) return detail::SetError("framework is not initialized");
     if (!context.shaders.HasShader(shader)) return detail::SetError("invalid pixel shader handle");
     const ShaderHandle native = detail::FindBackendShader(shader);
+    if (context.frameOpen && context.frame.postEffectShader == native && native.IsValid())
+        return detail::SetError("cannot delete a shader used by the open frame post-effect pass");
     for (uint32_t i = 0; i < context.frame.draws.Count(); ++i) {
         if (context.frame.draws.At(i).shader == native && native.IsValid())
             return detail::SetError("cannot delete a shader used by the open frame");
@@ -180,6 +203,7 @@ int DeleteShader(ShaderHandle shader) {
     if (!context.backend->ReleasePixelShader(native, error))
         return ResourceFailure(error, "pixel shader deletion failed");
     context.shaders.DeleteShader(shader);
+    if (context.postEffectShader == shader) context.postEffectShader = {};
     for (uint32_t i = 0; i < context.nativeShaders.Count(); ++i) {
         if (context.nativeShaders.At(i).publicHandle == shader) {
             context.nativeShaders.RemoveAt(i);

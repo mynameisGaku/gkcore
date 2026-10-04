@@ -47,6 +47,8 @@ struct CaptureState {
     int32_t mouseY = 34;
     uint32_t shaderLoads = 0;
     uint32_t shaderReleases = 0;
+    bool uniqueNativeShaderHandles = false;
+    uint32_t nextNativeShaderHandle = 1;
     bool failShaderRelease = false;
     uint32_t clientWidth = 0;
     uint32_t clientHeight = 0;
@@ -88,6 +90,12 @@ struct CaptureState {
     uint32_t baseColorFbxIndexCounts[2]{};
     int32_t baseColorFbxMaterialIndices[2]{};
     int32_t baseColorFbxTextureIndices[2]{};
+    uint32_t postFrameCount = 0;
+    gk::ShaderHandle postShaders[8]{};
+    uint32_t postConstantCounts[8]{};
+    uint32_t postSlots[8][4]{};
+    float postValues[8][4]{};
+    uint32_t pixelShaderForPostFrame[8]{};
     uint32_t textRasterizations = 0;
     uint32_t textImageWidth = 2;
     uint32_t textImageHeight = 2;
@@ -188,6 +196,17 @@ public:
         state_.saturation = frame.saturation;
         state_.contrast = frame.contrast;
         state_.fxaaEnabled = frame.fxaaEnabled;
+        const uint32_t postFrame = state_.postFrameCount++;
+        if (postFrame < 8) {
+            state_.postShaders[postFrame] = frame.postEffectShader;
+            state_.postConstantCounts[postFrame] = frame.postEffectConstantCount;
+            for (uint32_t i = 0; i < frame.postEffectConstantCount && i < 4; ++i) {
+                state_.postSlots[postFrame][i] = frame.postEffectConstants[i].registerIndex;
+                state_.postValues[postFrame][i] = frame.postEffectConstants[i].value.x;
+            }
+            if (frame.draws.Count())
+                state_.pixelShaderForPostFrame[postFrame] = frame.draws.At(0).shader.value;
+        }
         for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i) {
             state_.cameraX[i] = frame.draws.At(i).cameraPosition.x;
             state_.shaderIds[i] = frame.draws.At(i).shader.value;
@@ -276,6 +295,8 @@ public:
     }
     gk::ShaderHandle LoadPixelShader(const char*, gk::String&) override {
         ++state_.shaderLoads;
+        if (state_.uniqueNativeShaderHandles)
+            return gk::ShaderHandle(state_.nextNativeShaderHandle++);
         return gk::ShaderHandle(1);
     }
     bool ReleasePixelShader(gk::ShaderHandle, gk::String& error) override {
@@ -827,6 +848,95 @@ bool TestShaderSnapshotsAcrossDrawKinds() {
     gk::Shutdown();
     return true;
 }
+
+/**
+ * Verifies independent draw/post selections, frame timing, and shader deletion lifetime.
+ */
+bool TestPostEffectShaderSnapshotsAndLifecycle() {
+    CaptureState capture;
+    capture.uniqueNativeShaderHandles = true;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::SetPostEffectShader({}) == -1);
+    CHECK(gk::Init() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(!capture.postShaders[0].IsValid() && capture.postConstantCounts[0] == 0);
+
+    const gk::ShaderHandle pixelShader = gk::LoadPixelShader("pixel-stage.bin");
+    const gk::ShaderHandle postShader = gk::LoadPixelShader("post-effect.bin");
+    CHECK(pixelShader.IsValid() && postShader.IsValid());
+    CHECK(gk::SetPixelShader(pixelShader) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 3, {31, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 7, {7, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 1, {1, 0, 0, 1}) == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == 0);
+
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 7, {70, 0, 0, 1}) == 0);
+    CHECK(gk::SetPostEffectShader({}) == 0);
+    CHECK(gk::DeleteShader(postShader) == -1);
+    CHECK(gk::DrawRect(0, 0, 8, 8, 0xffffff) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.postShaders[1].value == 2);
+    CHECK(capture.postConstantCounts[1] == 2);
+    CHECK(capture.postSlots[1][0] == 1 && capture.postSlots[1][1] == 7);
+    CHECK(capture.postValues[1][0] == 1.0f && capture.postValues[1][1] == 7.0f);
+    CHECK(capture.pixelShaderForPostFrame[1] == 1);
+    CHECK(capture.firstShaderConstantX[0] == 31.0f);
+
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(!capture.postShaders[2].IsValid() && capture.postConstantCounts[2] == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.postShaders[3].value == 2 && capture.postConstantCounts[3] == 2);
+    CHECK(capture.postValues[3][1] == 70.0f);
+    CHECK(gk::DeleteShader(postShader) == 0);
+    CHECK(gk::SetPostEffectShader(pixelShader) == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == -1);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.postShaders[4].value == 1 && capture.postConstantCounts[4] == 1);
+    gk::Shutdown();
+
+    CaptureState nextCapture;
+    nextCapture.uniqueNativeShaderHandles = true;
+    gk::detail::SetBackendForTesting(new CaptureBackend(nextCapture));
+    CHECK(gk::Init() == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == -1);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(!nextCapture.postShaders[0].IsValid());
+    gk::Shutdown();
+    return true;
+}
+
+/**
+ * Verifies that a failed post-constant snapshot leaves BeginFrame retryable.
+ */
+bool TestPostEffectBeginFrameSnapshotIsTransactional() {
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::Init() == 0);
+    const gk::ShaderHandle postShader = gk::LoadPixelShader("post-effect-oom.bin");
+    CHECK(postShader.IsValid());
+    CHECK(gk::SetShaderFloat4(postShader, 5, {5, 0, 0, 1}) == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == 0);
+
+    gk::SetAllocationFailureAfterForTesting(0);
+    const int failedBegin = gk::BeginFrame();
+    gk::ResetAllocationFailureForTesting();
+    CHECK(failedBegin == -1);
+    CHECK(gk::Present() == -1);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.postFrameCount == 1);
+    CHECK(capture.postShaders[0].value == 1);
+    CHECK(capture.postConstantCounts[0] == 1 && capture.postSlots[0][0] == 5);
+    gk::Shutdown();
+    return true;
+}
 }
 
 int main() {
@@ -870,5 +980,7 @@ int main() {
     if (!TestFbxImportAllocationFailuresRecover()) ++failures;
     if (!TestShaderLifetimesAndSnapshots()) ++failures;
     if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
+    if (!TestPostEffectShaderSnapshotsAndLifecycle()) ++failures;
+    if (!TestPostEffectBeginFrameSnapshotIsTransactional()) ++failures;
     return failures == 0 ? 0 : 1;
 }

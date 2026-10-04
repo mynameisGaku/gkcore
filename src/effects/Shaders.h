@@ -70,6 +70,11 @@ public:
      * Replaces output with a sorted snapshot of the selected shader and constants.
      */
     bool Snapshot(ShaderSnapshot& output) const;
+    /**
+     * Replaces output with one loaded shader's constants without changing selection.
+     * An invalid handle returns an empty built-in snapshot; stale handles fail.
+     */
+    bool SnapshotFor(ShaderHandle handle, ShaderSnapshot& output) const;
 
 private:
     struct ShaderRecord { uint32_t handle; };

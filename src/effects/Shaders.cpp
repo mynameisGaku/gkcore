@@ -83,18 +83,29 @@ bool ShaderBindings::SetConstant(ShaderHandle handle, uint32_t registerIndex, Fl
 ShaderHandle ShaderBindings::ActiveHandle() const { return active_; }
 
 bool ShaderBindings::Snapshot(ShaderSnapshot& output) const {
+    return SnapshotFor(active_, output);
+}
+
+bool ShaderBindings::SnapshotFor(ShaderHandle handle, ShaderSnapshot& output) const {
+    if (handle.IsValid() && !HasShader(handle)) return false;
     ShaderSnapshot replacement;
-    replacement.shaderHandle = active_;
-    if (active_.IsValid()) {
-        for (uint32_t slot = 0; slot < 64; ++slot) {
-            for (uint32_t i = 0; i < constants_.Count(); ++i) {
-                const ConstantRecord& record = constants_.At(i);
-                if (record.handle == active_.value && record.slot == slot) {
-                    const ShaderConstant copy = {slot, record.value};
-                    if (!replacement.constants.Append(copy)) return false;
-                    break;
-                }
+    replacement.shaderHandle = handle;
+    if (handle.IsValid()) {
+        for (uint32_t i = 0; i < constants_.Count(); ++i) {
+            const ConstantRecord& record = constants_.At(i);
+            if (record.handle != handle.value) continue;
+            const ShaderConstant copy = {record.slot, record.value};
+            if (!replacement.constants.Append(copy)) return false;
+        }
+        for (uint32_t i = 1; i < replacement.constants.Count(); ++i) {
+            const ShaderConstant value = replacement.constants.At(i);
+            uint32_t position = i;
+            while (position > 0 &&
+                   replacement.constants.At(position - 1).registerIndex > value.registerIndex) {
+                replacement.constants.At(position) = replacement.constants.At(position - 1);
+                --position;
             }
+            replacement.constants.At(position) = value;
         }
     }
     output.MoveFrom(replacement);
