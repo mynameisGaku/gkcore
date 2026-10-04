@@ -59,6 +59,10 @@ struct CaptureState {
     uint32_t shaderConstantCounts[4]{};
     float firstShaderConstantX[4]{};
     uint8_t layers[4]{};
+    gk::detail::DrawKind kinds[4]{};
+    uint8_t drawFlags[4]{};
+    float rectOutlineThickness[4]{};
+    uint32_t drawColors[4]{};
     bool queuedImageValid = false;
     uint8_t queuedImageRed = 0;
     bool queuedImageCentered = false;
@@ -208,12 +212,17 @@ public:
                 state_.pixelShaderForPostFrame[postFrame] = frame.draws.At(0).shader.value;
         }
         for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i) {
-            state_.cameraX[i] = frame.draws.At(i).cameraPosition.x;
-            state_.shaderIds[i] = frame.draws.At(i).shader.value;
-            state_.shaderConstantCounts[i] = frame.draws.At(i).shaderConstantCount;
-            state_.layers[i] = frame.draws.At(i).layer;
+            const gk::detail::DrawPacket& packet = frame.draws.At(i);
+            state_.cameraX[i] = packet.cameraPosition.x;
+            state_.shaderIds[i] = packet.shader.value;
+            state_.shaderConstantCounts[i] = packet.shaderConstantCount;
+            state_.layers[i] = packet.layer;
+            state_.kinds[i] = packet.kind;
+            state_.drawFlags[i] = packet.flags;
+            state_.rectOutlineThickness[i] = packet.rectOutlineThickness;
+            state_.drawColors[i] = packet.color;
             if (state_.shaderConstantCounts[i])
-                state_.firstShaderConstantX[i] = frame.draws.At(i).shaderConstants[0].value.x;
+                state_.firstShaderConstantX[i] = packet.shaderConstants[0].value.x;
         }
         if (frame.draws.Count() && frame.draws.At(0).image) {
             const gk::detail::ImageResource& image = *frame.draws.At(0).image;
@@ -381,6 +390,81 @@ bool TestDefaultWindowDimensions() {
     CHECK(gk::Init() == 0);
     CHECK(capture.initializedWidth == 1280);
     CHECK(capture.initializedHeight == 720);
+    gk::Shutdown();
+    return true;
+}
+
+/**
+ * Verifies rectangle outline validation and captures its frame-local state.
+ */
+bool TestRectangleOutlineContracts() {
+    CaptureState capture;
+    capture.uniqueNativeShaderHandles = true;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::DrawRectOutline(0, 0, 10, 10, 0xffffff) == -1);
+    CHECK(gk::Init() == 0);
+    CHECK(gk::DrawRectOutline(0, 0, 10, 10, 0xffffff) == -1);
+
+    const gk::ShaderHandle pixelShader = gk::LoadPixelShader("outline-pixel.frag");
+    const gk::ShaderHandle postShader = gk::LoadPixelShader("outline-post.frag");
+    CHECK(pixelShader.IsValid() && postShader.IsValid());
+    CHECK(gk::SetPixelShader(pixelShader) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 4, {44, 0, 0, 1}) == 0);
+    CHECK(gk::SetPostEffectShader(postShader) == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::SetDrawLayer(gk::DrawLayer::Scene) == 0);
+    CHECK(gk::DrawRect(0, 0, 5, 5, 0x010203, true) == 0);
+    CHECK(gk::DrawRectOutline(10, 20, 30, 40, 0x123456, 2.5f) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 4, {55, 0, 0, 1}) == 0);
+    CHECK(gk::DrawRect(50, 60, 70, 80, 0x654321, false) == 0);
+    CHECK(gk::SetDrawLayer(gk::DrawLayer::UI) == 0);
+    CHECK(gk::DrawRectOutline(1, 2, 3, 4, 0xffffff, 1000000.0f) == 0);
+
+    CHECK(gk::DrawRectOutline(NAN, 0, 1, 1, 0xffffff) == -1);
+    CHECK(gk::DrawRectOutline(0, INFINITY, 1, 1, 0xffffff) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 0, 1, 0xffffff) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 1, -1, 0xffffff) == -1);
+    CHECK(gk::DrawRectOutline(3.4028234e38f, 0, 3.4028234e38f, 1, 0xffffff) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 1, 1, 0xffffff, 0.0f) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 1, 1, 0xffffff, -1.0f) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 1, 1, 0xffffff, NAN) == -1);
+    CHECK(gk::DrawRectOutline(0, 0, 1, 1, 0xffffff, INFINITY) == -1);
+
+    CHECK(gk::Present() == 0);
+    CHECK(capture.drawCount == 4);
+    CHECK(capture.kinds[0] == gk::detail::DrawKind::Rect &&
+          capture.kinds[1] == gk::detail::DrawKind::Rect &&
+          capture.kinds[2] == gk::detail::DrawKind::Rect &&
+          capture.kinds[3] == gk::detail::DrawKind::Rect);
+    CHECK(capture.drawFlags[0] == gk::detail::DrawFilled && capture.drawFlags[1] == 0 &&
+          capture.drawFlags[2] == 0 && capture.drawFlags[3] == 0);
+    CHECK(capture.rectOutlineThickness[0] == 1.0f &&
+          capture.rectOutlineThickness[1] == 2.5f &&
+          capture.rectOutlineThickness[2] == 1.0f &&
+          capture.rectOutlineThickness[3] == 1000000.0f);
+    CHECK(capture.drawColors[0] == 0x010203 && capture.drawColors[1] == 0x123456 &&
+          capture.drawColors[2] == 0x654321 && capture.drawColors[3] == 0xffffff);
+    CHECK(capture.layers[0] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
+          capture.layers[1] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
+          capture.layers[2] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
+          capture.layers[3] == static_cast<uint8_t>(gk::DrawLayer::UI));
+    CHECK(capture.shaderIds[0] == 1 && capture.shaderIds[1] == 1 &&
+          capture.shaderIds[2] == 1 && capture.shaderIds[3] == 1);
+    CHECK(capture.shaderConstantCounts[0] == 1 && capture.shaderConstantCounts[1] == 1 &&
+          capture.shaderConstantCounts[2] == 1 && capture.shaderConstantCounts[3] == 1);
+    CHECK(capture.firstShaderConstantX[0] == 44.0f &&
+          capture.firstShaderConstantX[1] == 44.0f &&
+          capture.firstShaderConstantX[2] == 55.0f &&
+          capture.firstShaderConstantX[3] == 55.0f);
+    CHECK(capture.postShaders[0].value == 2);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::DrawRectOutline(5, 6, 7, 8, 0xabcdef) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.drawCount == 1 && capture.rectOutlineThickness[0] == 1.0f);
+    CHECK(capture.drawFlags[0] == 0 && capture.postShaders[1].value == 2);
+    CHECK(gk::SetPostEffectShader({}) == 0);
+    CHECK(gk::DeleteShader(pixelShader) == 0);
+    CHECK(gk::DeleteShader(postShader) == 0);
     gk::Shutdown();
     return true;
 }
@@ -982,5 +1066,6 @@ int main() {
     if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
     if (!TestPostEffectShaderSnapshotsAndLifecycle()) ++failures;
     if (!TestPostEffectBeginFrameSnapshotIsTransactional()) ++failures;
+    if (!TestRectangleOutlineContracts()) ++failures;
     return failures == 0 ? 0 : 1;
 }

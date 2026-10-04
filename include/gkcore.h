@@ -204,10 +204,18 @@ GKCORE_API int DeleteModel(ModelHandle model);
 GKCORE_API int SetCamera(Vec3 position, Vec3 target);
 
 /**
- * Queues a screen-space rectangle in the selected draw layer.
+ * Queues a screen-space rectangle in the selected draw layer. With filled=false,
+ * queues a one-pixel stroke just inside the rectangle bounds.
  */
 GKCORE_API int DrawRect(float x, float y, float width, float height,
                         uint32_t color, bool filled = true);
+
+/**
+ * Queues an inward screen-space stroke. Thickness must be finite and positive;
+ * a thickness at least half the smaller dimension covers the whole rectangle.
+ */
+GKCORE_API int DrawRectOutline(float x, float y, float width, float height,
+                               uint32_t color, float thickness = 1.0f);
 
 /**
  * Queues UTF-8 text using the platform's default system font. The default

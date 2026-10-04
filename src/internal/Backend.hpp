@@ -51,6 +51,8 @@ struct DrawPacket {
     float scaleX;
     float scaleY;
     float rect[4];
+    // Used by unfilled screen-space rectangles; filled draws keep the default.
+    float rectOutlineThickness = 1.0f;
     uint32_t color;
     gk::ShaderConstant shaderConstants[64];
 };

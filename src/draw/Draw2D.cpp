@@ -12,12 +12,24 @@ namespace {
  * Rejects non-finite values before they are stored in a draw packet.
  */
 bool IsFinite(float value) { return isfinite(value) != 0; }
+
+/**
+ * Checks that the rectangle extent can be represented by finite coordinates.
+ */
+bool IsValidRectangle(float x, float y, float width, float height) {
+    return IsFinite(x) && IsFinite(y) && IsFinite(width) && IsFinite(height) &&
+           width > 0.0f && height > 0.0f && IsFinite(x + width) && IsFinite(y + height);
 }
 
-int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled) {
-    if (!IsFinite(x) || !IsFinite(y) || !IsFinite(width) || !IsFinite(height) ||
-        width <= 0.0f || height <= 0.0f || !IsFinite(x + width) || !IsFinite(y + height))
+/**
+ * Validates and queues both filled rectangles and their inward-stroke variant.
+ */
+int QueueRectangle(float x, float y, float width, float height, uint32_t color,
+                   bool filled, float outlineThickness) {
+    if (!IsValidRectangle(x, y, width, height))
         return detail::SetError("rectangle values must be finite with positive dimensions");
+    if (!IsFinite(outlineThickness) || outlineThickness <= 0.0f)
+        return detail::SetError("rectangle outline thickness must be finite and positive");
     detail::DrawPacket packet{};
     packet.kind = detail::DrawKind::Rect;
     packet.flags = filled ? static_cast<uint8_t>(detail::DrawFilled) : 0u;
@@ -25,8 +37,19 @@ int DrawRect(float x, float y, float width, float height, uint32_t color, bool f
     packet.rect[1] = y;
     packet.rect[2] = width;
     packet.rect[3] = height;
+    packet.rectOutlineThickness = outlineThickness;
     packet.color = color;
     return detail::QueueDraw(packet);
+}
+}
+
+int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled) {
+    return QueueRectangle(x, y, width, height, color, filled, 1.0f);
+}
+
+int DrawRectOutline(float x, float y, float width, float height, uint32_t color,
+                    float thickness) {
+    return QueueRectangle(x, y, width, height, color, false, thickness);
 }
 
 int DrawImage(ImageHandle image, float x, float y, bool alphaBlend) {
