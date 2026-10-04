@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate The Forge FSL artifact and the planned gkcore shader ABI.
+"""Validate The Forge FSL artifact and the built-in color shader contract.
 
 A D3D12 FSL build uses FSL's @FSL derivative container; each selected stage
 payload is a DXIL/DXBC container. Run this script without arguments for fast
@@ -127,7 +127,7 @@ def parse_fsl_artifact(data: bytes, source: str = "<artifact>") -> FslArtifact:
 
 
 def validate_pixel_shader_reflection(dump: str, source: str = "<DXC reflection>") -> None:
-    """Check the planned primitive pixel-shader signature (clip position + color)."""
+    """Check the built-in color pixel shader signature (position and color)."""
     missing: list[str] = []
     input_section = _section(dump, "Input signature:", "Output signature:")
     output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
@@ -138,10 +138,10 @@ def validate_pixel_shader_reflection(dump: str, source: str = "<DXC reflection>"
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     if not re.search(r"\bSV_Target\s+0\b", output_section, re.IGNORECASE):
         missing.append("SV_Target0")
-    # Current primitive shader ABI deliberately has no resource descriptors.
-    # Constants/textures are a later ABI and must not be inferred from helpers.
+    # The built-in color shader has no resource descriptors. Custom shader ABI
+    # validation is performed by the native DXC reflection path.
     if re.search(r"\b(?:t\d+|s\d+|u\d+|cb\d+)\b", resource_section, re.IGNORECASE):
-        missing.append("resource-free primitive pixel shader")
+        missing.append("resource-free built-in color pixel shader")
     if missing:
         raise ShaderContractError(f"{source}: shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
@@ -158,7 +158,7 @@ def _section(dump: str, begin: str, *ends: str) -> str:
 
 def validate_runtime_manifest(paths: Iterable[str]) -> None:
     """Keep FSL, DXC, and shader-build tools out of the Runtime SDK."""
-    compiler_markers = ("/fsl.py", "/compilers.py", "/forgeshadinglanguage/", "/dxc.exe", "/dxcompiler.dll")
+    compiler_markers = ("/fsl.py", "/compilers.py", "/forgeshadinglanguage/", "/dxc.exe")
     included = sorted(
         path for path in paths
         if any(marker in "/" + path.replace("\\", "/").lower() for marker in compiler_markers)
@@ -220,7 +220,7 @@ class FslArtifactTests(unittest.TestCase):
 
 
 class ShaderReflectionTests(unittest.TestCase):
-    def test_accepts_required_2d_pixel_shader_reflection(self):
+    def test_accepts_builtin_color_pixel_shader_reflection(self):
         validate_pixel_shader_reflection(REFLECTION_GOOD, "sprite.dxil")
 
     def test_lists_missing_abi_entries(self):
@@ -234,6 +234,14 @@ class ShaderReflectionTests(unittest.TestCase):
                 "bin/dxc.exe",
                 "Common_3/Tools/ForgeShadingLanguage/fsl.py",
             ])
+
+    def test_runtime_manifest_accepts_required_dxil_runtime_dependencies(self):
+        validate_runtime_manifest([
+            "bin/gkcore.dll",
+            "bin/D3D12Core.dll",
+            "bin/dxcompiler.dll",
+            "bin/dxil.dll",
+        ])
 
 
 def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bool) -> None:
@@ -253,7 +261,7 @@ def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bo
         if result.returncode:
             raise ShaderContractError(f"{path}: DXC reflection failed (exit {result.returncode}):\n{result.stdout}")
         validate_pixel_shader_reflection(result.stdout, str(path))
-        print(f"PASS: {path}: DXC reflection satisfies the gkcore 2D pixel-shader ABI")
+        print(f"PASS: {path}: DXC reflection satisfies the built-in color pixel shader contract")
 
 
 def main() -> int:
