@@ -47,6 +47,7 @@ set(GKCORE_CORE_SOURCES
     src/effects/Effects.cpp
     src/effects/Shaders.cpp
     src/render/Geometry.cpp
+    src/render/RectangleGeometry.cpp
     src/render/Shaders.cpp
     src/render/ShaderAbi.cpp
     src/render/PostProcess.cpp
@@ -208,11 +209,13 @@ if(GKCORE_BUILD_TESTS)
     add_executable(gkcore_geometry_tests
         tests/geometry_tests.cpp
         src/render/Geometry.cpp
+        src/render/RectangleGeometry.cpp
         src/foundation/Memory.cpp
         src/foundation/Array.cpp
         src/foundation/String.cpp)
     target_compile_features(gkcore_geometry_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_geometry_tests PRIVATE include src)
+    target_compile_definitions(gkcore_geometry_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_geometry_tests)
     add_test(NAME gkcore.geometry COMMAND gkcore_geometry_tests)
     target_sources(gkcore_geometry_tests PRIVATE
@@ -404,6 +407,11 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_mixed_scene examples/mixed_scene.cpp)
     target_compile_features(gkcore_mixed_scene PRIVATE cxx_std_17)
     target_link_libraries(gkcore_mixed_scene PRIVATE gkcore::gkcore)
+
+    add_executable(gkcore_rectangle_outline examples/rectangle_outline.cpp)
+    target_compile_features(gkcore_rectangle_outline PRIVATE cxx_std_17)
+    target_link_libraries(gkcore_rectangle_outline PRIVATE gkcore::gkcore)
+    gkcore_enable_warnings(gkcore_rectangle_outline)
 
     add_executable(gkcore_custom_post_effect examples/custom_post_effect.cpp)
     target_compile_features(gkcore_custom_post_effect PRIVATE cxx_std_17)

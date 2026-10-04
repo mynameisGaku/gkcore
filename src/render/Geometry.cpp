@@ -1,4 +1,5 @@
 #include "Geometry.h"
+#include "RectangleGeometry.h"
 #include "../resources/Resources.h"
 #include "PostProcess.h"
 
@@ -253,41 +254,7 @@ bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPac
 bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                 Array<Vertex>& vertices, uint32_t vertexLimit, String& error) {
     if (draw.kind == detail::DrawKind::Rect) {
-        if ((draw.flags & 1u) == 0) {
-            error.Assign("Unfilled rectangles are unavailable in the current renderer");
-            return false;
-        }
-        if (frame.width == 0 || frame.height == 0) {
-            error.Assign("The frame size must be positive");
-            return false;
-        }
-        if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < 6) {
-            error.Assign("The frame exceeds the dynamic vertex capacity");
-            return false;
-        }
-        float left = 0.0f, right = 0.0f, top = 0.0f, bottom = 0.0f;
-        if (!StoreFloat(static_cast<double>(draw.rect[0]) * 2.0 / frame.width - 1.0, left, error) ||
-            !StoreFloat((static_cast<double>(draw.rect[0]) + draw.rect[2]) * 2.0 / frame.width - 1.0, right, error) ||
-            !StoreFloat(1.0 - static_cast<double>(draw.rect[1]) * 2.0 / frame.height, top, error) ||
-            !StoreFloat(1.0 - (static_cast<double>(draw.rect[1]) + draw.rect[3]) * 2.0 / frame.height, bottom, error))
-            return false;
-        Vertex rectangle[6]{};
-        const float points[6][2] = {{left,top},{right,top},{right,bottom},{left,top},{right,bottom},{left,bottom}};
-        const float uvs[6][2] = {{0,0},{1,0},{1,1},{0,0},{1,1},{0,1}};
-        for (uint32_t i = 0; i < 6; ++i) {
-            rectangle[i].position[0] = points[i][0];
-            rectangle[i].position[1] = points[i][1];
-            rectangle[i].position[2] = 0.0f;
-            rectangle[i].position[3] = 1.0f;
-            StoreColor(draw.color, rectangle[i].color);
-            rectangle[i].uv[0] = uvs[i][0];
-            rectangle[i].uv[1] = uvs[i][1];
-            if (!vertices.Append(rectangle[i])) {
-                error.Assign("The frame vertex allocation failed");
-                return false;
-            }
-        }
-        return true;
+        return AppendRectangle(frame, draw, vertices, vertexLimit, error);
     }
     if (draw.kind == detail::DrawKind::Image) {
         return AppendSprite(frame, draw, vertices, vertexLimit, error);

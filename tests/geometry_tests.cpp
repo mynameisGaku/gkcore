@@ -1,7 +1,9 @@
 #include "../src/render/Geometry.h"
 #include "../src/render/ModelDrawPlan.h"
+#include "../src/foundation/Memory.h"
 
 #include <cmath>
+#include <cfloat>
 #include <cstdlib>
 #include <cstdio>
 
@@ -16,6 +18,286 @@ void Require(bool condition, const char* message) {
 void FillImagePixels(gk::detail::ImageResource& image) {
     const uint32_t count = image.width * image.height * 4u;
     for (uint32_t i = 0; i < count; ++i) image.rgba.Append(static_cast<uint8_t>(255));
+}
+
+/**
+ * Confirms that an unfilled rectangle is accepted by the geometry conversion path.
+ */
+void TestOutlinedRectGeometryIsAccepted() {
+    gk::detail::FramePacket frame{};
+    frame.width = 200;
+    frame.height = 100;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Rect;
+    draw.flags = 0;
+    draw.rect[0] = 20.0f;
+    draw.rect[1] = 10.0f;
+    draw.rect[2] = 40.0f;
+    draw.rect[3] = 30.0f;
+    draw.color = 0xE65028;
+
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 32, error),
+            "outlined rectangle geometry is accepted");
+    Require(vertices.Count() != 0, "outlined rectangle emits geometry");
+}
+
+/**
+ * Converts a homogeneous clip-space vertex back to frame pixel coordinates.
+ */
+float PixelX(const gk::render::Vertex& vertex, uint32_t width) {
+    return (vertex.position[0] / vertex.position[3] + 1.0f) * static_cast<float>(width) * 0.5f;
+}
+
+/**
+ * Converts a homogeneous clip-space vertex back to top-left-origin pixel coordinates.
+ */
+float PixelY(const gk::render::Vertex& vertex, uint32_t height) {
+    return (1.0f - vertex.position[1] / vertex.position[3]) * static_cast<float>(height) * 0.5f;
+}
+
+/**
+ * Computes the absolute area of one output triangle in pixel units.
+ */
+float TriangleAreaPixels(const gk::render::Vertex& a, const gk::render::Vertex& b,
+                         const gk::render::Vertex& c, uint32_t width, uint32_t height) {
+    const float ax = PixelX(a, width), ay = PixelY(a, height);
+    const float bx = PixelX(b, width), by = PixelY(b, height);
+    const float cx = PixelX(c, width), cy = PixelY(c, height);
+    return std::fabs((bx - ax) * (cy - ay) - (by - ay) * (cx - ax)) * 0.5f;
+}
+
+/**
+ * Tests whether a pixel sample is covered by any triangle in the generated outline.
+ */
+bool IsPointCovered(const gk::Array<gk::render::Vertex>& vertices, float x, float y,
+                    uint32_t width, uint32_t height) {
+    for (uint32_t i = 0; i + 2 < vertices.Count(); i += 3) {
+        const auto& a = vertices.At(i);
+        const auto& b = vertices.At(i + 1);
+        const auto& c = vertices.At(i + 2);
+        const float ax = PixelX(a, width), ay = PixelY(a, height);
+        const float bx = PixelX(b, width), by = PixelY(b, height);
+        const float cx = PixelX(c, width), cy = PixelY(c, height);
+        const float ab = (bx - ax) * (y - ay) - (by - ay) * (x - ax);
+        const float bc = (cx - bx) * (y - by) - (cy - by) * (x - bx);
+        const float ca = (ax - cx) * (y - cy) - (ay - cy) * (x - cx);
+        if ((ab >= -0.0001f && bc >= -0.0001f && ca >= -0.0001f) ||
+            (ab <= 0.0001f && bc <= 0.0001f && ca <= 0.0001f)) return true;
+    }
+    return false;
+}
+
+/**
+ * Validates area, empty center, edge coverage, bounds, UVs, and linear tint for a ring.
+ */
+void CheckOutlineRing(float x, float y, float width, float height, float thickness) {
+    gk::detail::FramePacket frame{};
+    frame.width = 160;
+    frame.height = 120;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Rect;
+    draw.flags = 0;
+    draw.rect[0] = x;
+    draw.rect[1] = y;
+    draw.rect[2] = width;
+    draw.rect[3] = height;
+    draw.rectOutlineThickness = thickness;
+    draw.color = 0xE65028;
+    gk::Array<gk::render::Vertex> vertices;
+    gk::String error;
+    Require(gk::render::AppendDraw(frame, draw, vertices, 128, error),
+            "valid outlined rectangle converts to geometry");
+    Require(vertices.Count() >= 6 && vertices.Count() % 3 == 0,
+            "outline consists of complete nonempty triangles");
+
+    float minimumX = PixelX(vertices.At(0), frame.width);
+    float maximumX = minimumX;
+    float minimumY = PixelY(vertices.At(0), frame.height);
+    float maximumY = minimumY;
+    float area = 0.0f;
+    for (uint32_t i = 0; i < vertices.Count(); ++i) {
+        const auto& vertex = vertices.At(i);
+        const float px = PixelX(vertex, frame.width);
+        const float py = PixelY(vertex, frame.height);
+        if (px < minimumX) minimumX = px;
+        if (px > maximumX) maximumX = px;
+        if (py < minimumY) minimumY = py;
+        if (py > maximumY) maximumY = py;
+        Require(std::fabs(vertex.uv[0] - (px - x) / width) < 0.0002f &&
+                std::fabs(vertex.uv[1] - (py - y) / height) < 0.0002f,
+                "outline UVs stay normalized to the original rectangle bounds");
+        Require(std::fabs(vertex.color[0] - 0.79129794f) < 0.0001f &&
+                std::fabs(vertex.color[1] - 0.08021982f) < 0.0001f &&
+                std::fabs(vertex.color[2] - 0.02121901f) < 0.0001f,
+                "outline retains the packed color converted to linear light");
+    }
+    for (uint32_t i = 0; i < vertices.Count(); i += 3)
+        area += TriangleAreaPixels(vertices.At(i), vertices.At(i + 1), vertices.At(i + 2),
+                                   frame.width, frame.height);
+
+    Require(std::fabs(minimumX - x) < 0.0002f && std::fabs(maximumX - (x + width)) < 0.0002f &&
+            std::fabs(minimumY - y) < 0.0002f && std::fabs(maximumY - (y + height)) < 0.0002f,
+            "outline outer bounds match the requested rectangle");
+    const float innerWidth = width - 2.0f * thickness;
+    const float innerHeight = height - 2.0f * thickness;
+    const float expectedArea = width * height -
+        ((innerWidth > 0.0f && innerHeight > 0.0f) ? innerWidth * innerHeight : 0.0f);
+    Require(std::fabs(area - expectedArea) < 0.02f,
+            "outline triangle areas cover the border once without overlapping corners");
+
+    for (uint32_t row = 0; row < 24; ++row) {
+        for (uint32_t column = 0; column < 24; ++column) {
+            const float px = x + (static_cast<float>(column) + 0.5f) * width / 24.0f;
+            const float py = y + (static_cast<float>(row) + 0.5f) * height / 24.0f;
+            const bool withinOuter = px > x && px < x + width && py > y && py < y + height;
+            const bool withinInner = innerWidth > 0.0f && innerHeight > 0.0f &&
+                px > x + thickness && px < x + width - thickness &&
+                py > y + thickness && py < y + height - thickness;
+            Require(IsPointCovered(vertices, px, py, frame.width, frame.height) ==
+                    (withinOuter && !withinInner),
+                    "outline samples cover the border and leave the interior empty");
+        }
+    }
+}
+
+/**
+ * Checks thin, thick, and subpixel non-square rectangles using geometric invariants.
+ */
+void TestOutlineThicknessAndCoverage() {
+    CheckOutlineRing(20.0f, 10.0f, 40.0f, 30.0f, 1.0f);
+    CheckOutlineRing(20.0f, 10.0f, 40.0f, 30.0f, 2.5f);
+    CheckOutlineRing(12.25f, 8.5f, 31.5f, 17.25f, 2.5f);
+    CheckOutlineRing(20.0f, 10.0f, 0.5f, 30.0f, 1.0f);
+    CheckOutlineRing(20.0f, 10.0f, 40.0f, 30.0f, 15.0f);
+    CheckOutlineRing(20.0f, 10.0f, 40.0f, 30.0f, 1000000.0f);
+}
+
+/**
+ * Checks exact vertex-limit boundaries for border rings and collapsed thin outlines.
+ */
+void TestOutlineVertexLimitBoundaries() {
+    gk::detail::FramePacket frame{};
+    frame.width = 160;
+    frame.height = 120;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Rect;
+    draw.flags = 0;
+    draw.rect[0] = 20.0f;
+    draw.rect[1] = 10.0f;
+    draw.rect[2] = 40.0f;
+    draw.rect[3] = 30.0f;
+    draw.rectOutlineThickness = 1.0f;
+    draw.color = 0xE65028;
+    gk::String error;
+
+    gk::Array<gk::render::Vertex> emptyAccepted;
+    Require(gk::render::AppendDraw(frame, draw, emptyAccepted, 24, error) &&
+            emptyAccepted.Count() == 24,
+            "empty outline accepts its exact 24-vertex limit");
+    gk::Array<gk::render::Vertex> emptyRejected;
+    Require(!gk::render::AppendDraw(frame, draw, emptyRejected, 23, error) &&
+            emptyRejected.Count() == 0,
+            "empty outline rejects a 23-vertex limit without partial output");
+
+    gk::render::Vertex seed{};
+    seed.position[0] = 0.375f;
+    gk::Array<gk::render::Vertex> seededAccepted;
+    Require(seededAccepted.Append(seed), "seeded outline capacity setup");
+    Require(gk::render::AppendDraw(frame, draw, seededAccepted, 25, error) &&
+            seededAccepted.Count() == 25 &&
+            seededAccepted.At(0).position[0] == seed.position[0],
+            "seeded outline accepts exactly enough room for all 24 vertices");
+    gk::Array<gk::render::Vertex> seededRejected;
+    Require(seededRejected.Append(seed), "seeded outline rejection setup");
+    Require(!gk::render::AppendDraw(frame, draw, seededRejected, 24, error) &&
+            seededRejected.Count() == 1 &&
+            seededRejected.At(0).position[0] == seed.position[0],
+            "seeded outline rejects one vertex short and preserves existing data");
+
+    draw.rect[2] = 0.5f;
+    draw.rect[3] = 30.0f;
+    draw.rectOutlineThickness = 1.0f;
+    gk::Array<gk::render::Vertex> collapsedAccepted;
+    Require(gk::render::AppendDraw(frame, draw, collapsedAccepted, 6, error) &&
+            collapsedAccepted.Count() == 6,
+            "collapsed narrow outline accepts its exact six-vertex full-quad limit");
+    gk::Array<gk::render::Vertex> collapsedRejected;
+    Require(!gk::render::AppendDraw(frame, draw, collapsedRejected, 5, error) &&
+            collapsedRejected.Count() == 0,
+            "collapsed narrow outline rejects a five-vertex limit transactionally");
+}
+
+/**
+ * Verifies vertex-limit, injected-allocation, and invalid-value failures preserve old data.
+ */
+void TestOutlineFailuresPreserveVertices() {
+    gk::detail::FramePacket frame{};
+    frame.width = 160;
+    frame.height = 120;
+    gk::detail::DrawPacket draw{};
+    draw.kind = gk::detail::DrawKind::Rect;
+    draw.flags = 0;
+    draw.rect[0] = 20.0f;
+    draw.rect[1] = 10.0f;
+    draw.rect[2] = 40.0f;
+    draw.rect[3] = 30.0f;
+    draw.rectOutlineThickness = 2.5f;
+    draw.color = 0xE65028;
+
+    gk::Array<gk::render::Vertex> limited;
+    gk::render::Vertex seed{};
+    seed.position[0] = 0.375f;
+    Require(limited.Append(seed), "outline vertex-limit seed allocation");
+    gk::String error;
+    Require(!gk::render::AppendDraw(frame, draw, limited, 2, error),
+            "outlined rectangle exceeding the vertex limit is rejected");
+    Require(limited.Count() == 1 && limited.At(0).position[0] == seed.position[0],
+            "vertex-limit rejection preserves preexisting vertices");
+
+    gk::Array<gk::render::Vertex> allocationFailure;
+    Require(allocationFailure.Reserve(1) && allocationFailure.Append(seed),
+            "outline allocation-failure seed setup");
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool appended = gk::render::AppendDraw(frame, draw, allocationFailure, 128, error);
+    gk::ResetAllocationFailureForTesting();
+    Require(!appended, "outline allocation failure is reported");
+    Require(allocationFailure.Count() == 1 && allocationFailure.At(0).position[0] == seed.position[0],
+            "allocation failure preserves preexisting vertices");
+
+    const float invalidThickness[] = {-1.0f, 0.0f, NAN, INFINITY};
+    for (float thickness : invalidThickness) {
+        draw.rectOutlineThickness = thickness;
+        Require(!gk::render::AppendDraw(frame, draw, allocationFailure, 128, error),
+                "negative or non-finite outline thickness is rejected");
+        Require(allocationFailure.Count() == 1 &&
+                allocationFailure.At(0).position[0] == seed.position[0],
+                "invalid outline thickness preserves preexisting vertices");
+    }
+    draw.rectOutlineThickness = 1.0f;
+    draw.rect[0] = INFINITY;
+    Require(!gk::render::AppendDraw(frame, draw, allocationFailure, 128, error),
+            "non-finite outline bounds are rejected");
+    Require(allocationFailure.Count() == 1 &&
+            allocationFailure.At(0).position[0] == seed.position[0],
+            "invalid outline bounds preserve preexisting vertices");
+
+    draw.rect[0] = 20.0f;
+    draw.rect[2] = 0.0f;
+    Require(!gk::render::AppendDraw(frame, draw, allocationFailure, 128, error),
+            "zero-width outline bounds are rejected");
+    draw.rect[2] = -40.0f;
+    Require(!gk::render::AppendDraw(frame, draw, allocationFailure, 128, error),
+            "negative-width outline bounds are rejected");
+    frame.width = 1;
+    draw.rect[0] = FLT_MAX;
+    draw.rect[2] = FLT_MAX;
+    Require(!gk::render::AppendDraw(frame, draw, allocationFailure, 128, error),
+            "finite outline coordinates outside the clip vertex range are rejected");
+    Require(allocationFailure.Count() == 1 &&
+            allocationFailure.At(0).position[0] == seed.position[0],
+            "invalid dimensions and out-of-range coordinates preserve preexisting vertices");
 }
 
 gk::detail::ModelVertex MakeModelVertex(float x, float y, float z, float u, float v) {
@@ -487,6 +769,10 @@ void TestSpriteRejectsInvalidResourceAndBounds() {
 }
 
 int main() {
+    TestOutlinedRectGeometryIsAccepted();
+    TestOutlineThicknessAndCoverage();
+    TestOutlineVertexLimitBoundaries();
+    TestOutlineFailuresPreserveVertices();
     TestModelUvsSurviveProjectionAndTransform();
     TestModelUvsStayWithProjectedCorners();
     TestModelPartRangeAndLinearBaseColor();
