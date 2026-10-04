@@ -1,4 +1,4 @@
-"""Reject standard-library dependencies in shipped gkcore code."""
+﻿"""Reject standard-library dependencies in shipped gkcore code."""
 from pathlib import Path
 import re
 import sys
@@ -13,6 +13,8 @@ BANNED_HEADER = re.compile(
 
 
 def scan_text(name: str, text: str) -> list[str]:
+    if text.startswith("\ufeff"):
+        text = text[1:]
     found = []
     for number, line in enumerate(text.splitlines(), 1):
         if "std::" in line:
@@ -37,6 +39,11 @@ class ScannerUnitTests(unittest.TestCase):
     def test_rejects_cpp_namespace_and_wrapper_headers(self):
         found = scan_text("sample.cpp", "#include <cstdio>\nstd::vector<int> items;\n")
         self.assertEqual(len(found), 2)
+
+    def test_rejects_banned_header_after_utf8_bom(self):
+        found = scan_text("sample.cpp", "\ufeff#include <vector>\n")
+        self.assertEqual(len(found), 1)
+        self.assertIn("standard-library header", found[0])
 
     def test_allows_c_runtime_headers_and_global_c_apis(self):
         self.assertEqual(scan_text("sample.c", "#include <stdio.h>\n#include <stdint.h>\nprintf(\"ok\");\n"), [])
