@@ -92,6 +92,22 @@ uint32_t MakeEmptyDxilPartArtifact(uint8_t* bytes) {
 }
 
 bool ShaderArtifactContract(String& failure) {
+    char customPostShaderPath[1024];
+    const int customPostShaderPathLength = snprintf(
+        customPostShaderPath, sizeof(customPostShaderPath),
+        "%s/tests/assets/shaders/post_effect_tint.frag", GKCORE_TEST_SOURCE_DIR);
+    if (customPostShaderPathLength <= 0 ||
+        static_cast<size_t>(customPostShaderPathLength) >= sizeof(customPostShaderPath)) {
+        failure.Assign("custom post-effect shader fixture path is too long");
+        return false;
+    }
+    render::CompiledShader customPostShader;
+    if (!render::LoadCompiledPixelShader(customPostShaderPath, customPostShader, failure) ||
+        customPostShader.bytecode.Count() == 0) {
+        failure.Assign("custom post-effect pixel shader fixture could not be loaded");
+        return false;
+    }
+
     uint8_t artifact[256];
     const uint32_t size = MakeArtifact(artifact);
     render::CompiledShader parsed;
@@ -273,7 +289,8 @@ bool ShaderArtifactContract(String& failure) {
         "gkcore_bloom_blur.frag",
         "gkcore_post_composite.frag",
         "gkcore_fxaa.frag",
-        "gkcore_user_tint.frag"
+        "gkcore_user_tint.frag",
+        "post_effect_tint.frag"
     };
     for (uint32_t i = 0; i < sizeof(compiledPixelShaderNames) / sizeof(compiledPixelShaderNames[0]); ++i) {
         char postShaderPath[1024];
