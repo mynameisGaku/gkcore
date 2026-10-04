@@ -22,6 +22,14 @@
 #include "gkcore_sprite.frag.fsl"
 #end
 
+#vert gkcore_model.vert
+#include "gkcore_model.vert.fsl"
+#end
+
+#frag gkcore_model.frag
+#include "gkcore_model.frag.fsl"
+#end
+
 #vert gkcore_post.vert
 #include "gkcore_post.vert.fsl"
 #end

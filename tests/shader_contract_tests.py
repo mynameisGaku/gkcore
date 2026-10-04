@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate The Forge FSL artifact and the built-in color shader contract.
+"""Validate The Forge FSL artifact and built-in shader contracts.
 
 A D3D12 FSL build uses FSL's @FSL derivative container; each selected stage
 payload is a DXIL/DXBC container. Run this script without arguments for fast
@@ -146,6 +146,48 @@ def validate_pixel_shader_reflection(dump: str, source: str = "<DXC reflection>"
         raise ShaderContractError(f"{source}: shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
 
+def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflection>") -> None:
+    """Check the model lighting pixel shader's interpolants, texture and lighting ABI."""
+    input_section = _section(dump, "Input signature:", "Output signature:")
+    output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
+    resource_section = _section(dump, "Resource Bindings:", "ViewId state:", "Buffer Definitions:")
+    missing: list[str] = []
+    for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
+        if not re.search(semantic, input_section, re.IGNORECASE):
+            missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
+    if not re.search(r"\bSV_Target\s+0\b", output_section, re.IGNORECASE):
+        missing.append("SV_Target0")
+    if not re.search(r"\bgImageTexture\s+texture\b[^\n]*\bt0\b", resource_section, re.IGNORECASE):
+        missing.append("gImageTexture at t0")
+    if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs1\b", resource_section, re.IGNORECASE):
+        missing.append("gImageSampler in the SpriteResources persistent set")
+    if not re.search(r"\bgModelLighting\s+cbuffer\b[^\n]*\bcb0,space1\b", resource_section, re.IGNORECASE):
+        missing.append("LightingConstants at b0, space1")
+    buffer_section = _section(dump, "Buffer Definitions:", "Resource Bindings:")
+    if not re.search(r"Size:\s*32\b", buffer_section):
+        missing.append("32-byte LightingConstants block")
+    if missing:
+        raise ShaderContractError(f"{source}: model pixel shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
+
+
+def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC reflection>") -> None:
+    """Check the model lighting vertex shader's mesh input and varyings."""
+    input_section = _section(dump, "Input signature:", "Output signature:")
+    output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
+    missing: list[str] = []
+    for semantic in (r"\bPOSITION\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
+                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b"):
+        if not re.search(semantic, input_section, re.IGNORECASE):
+            missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
+    for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
+        if not re.search(semantic, output_section, re.IGNORECASE):
+            missing.append("output " + semantic.replace(r"\b", "").replace(r"\s+", " "))
+    if missing:
+        raise ShaderContractError(f"{source}: model vertex shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
+
+
 def _section(dump: str, begin: str, *ends: str) -> str:
     start = dump.find(begin)
     if start < 0:
@@ -227,6 +269,36 @@ class ShaderReflectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ShaderContractError, r"SV_Position 0.*COLOR 0.*SV_Target0"):
             validate_pixel_shader_reflection("; Input signature:\n; TEXCOORD 0\n; Output signature:\n")
 
+    def test_requires_compiled_model_shader_artifacts(self):
+        root = pathlib.Path(__file__).resolve().parent / "assets" / "shaders"
+        for suffix in ("vert", "frag"):
+            with self.subTest(suffix=suffix):
+                self.assertTrue((root / f"gkcore_model.{suffix}").is_file())
+
+    def test_accepts_model_lighting_pixel_shader_reflection(self):
+        good = """\
+; Input signature:
+; SV_Position 0 xyzw 0 POS float xyzw
+; COLOR 0 xyzw 1 NONE float xyzw
+; TEXCOORD 0 xyzw 2 NONE float xyzw
+; TEXCOORD 1 xyzw 3 NONE float xyzw
+; TEXCOORD 2 xyzw 4 NONE float xyzw
+; TEXCOORD 3 xyzw 5 NONE float xyzw
+; Output signature:
+; SV_Target 0 xyzw 0 TARGET float xyzw
+; Buffer Definitions:
+; gModelLighting Size: 32
+; Resource Bindings:
+; gImageTexture texture f32 2d 0 T0 t0 1
+; gImageSampler sampler NA NA 0 S0 s1 1
+; gModelLighting cbuffer NA NA NA CB0 cb0,space1 1
+"""
+        validate_model_pixel_shader_reflection(good, "gkcore_model.frag")
+
+    def test_rejects_model_reflection_without_lighting_abi(self):
+        with self.assertRaisesRegex(ShaderContractError, "LightingConstants at b0, space1"):
+            validate_model_pixel_shader_reflection(REFLECTION_GOOD, "gkcore_model.frag")
+
     def test_runtime_manifest_rejects_compilers(self):
         validate_runtime_manifest(["include/gkcore.h", "bin/gkcore.dll", "lib/gkcore.lib"])
         with self.assertRaisesRegex(ShaderContractError, r"Runtime SDK contains development shader tools:"):
@@ -244,7 +316,8 @@ class ShaderReflectionTests(unittest.TestCase):
         ])
 
 
-def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bool) -> None:
+def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bool,
+                     model_pixel: bool = False, model_vertex: bool = False) -> None:
     parsed = parse_fsl_artifact(path.read_bytes(), str(path))
     print(f"PASS: {path}: valid @FSL artifact, {len(parsed.derivatives)} DXIL derivative(s)")
     if not dxc:
@@ -258,10 +331,20 @@ def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bo
         inner.write_bytes(parsed.derivatives[0].bytecode)
         result = subprocess.run([dxc, "-dumpbin", "-all", str(inner)], text=True,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
+        if result.returncode and "Unknown argument: '-all'" in result.stdout:
+            result = subprocess.run([dxc, "-dumpbin", str(inner)], text=True,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
         if result.returncode:
             raise ShaderContractError(f"{path}: DXC reflection failed (exit {result.returncode}):\n{result.stdout}")
-        validate_pixel_shader_reflection(result.stdout, str(path))
-        print(f"PASS: {path}: DXC reflection satisfies the built-in color pixel shader contract")
+        if model_pixel:
+            validate_model_pixel_shader_reflection(result.stdout, str(path))
+            print(f"PASS: {path}: DXC reflection satisfies the model lighting pixel shader contract")
+        elif model_vertex:
+            validate_model_vertex_shader_reflection(result.stdout, str(path))
+            print(f"PASS: {path}: DXC reflection satisfies the model lighting vertex shader contract")
+        else:
+            validate_pixel_shader_reflection(result.stdout, str(path))
+            print(f"PASS: {path}: DXC reflection satisfies the built-in color pixel shader contract")
 
 
 def main() -> int:
@@ -269,6 +352,10 @@ def main() -> int:
     parser.add_argument("--artifact", type=pathlib.Path, help="compiled The Forge @FSL artifact")
     parser.add_argument("--dxc", help="DXC executable used to inspect the embedded DXIL")
     parser.add_argument("--require-reflection", action="store_true", help="fail if --dxc is omitted")
+    parser.add_argument("--model-pixel", action="store_true",
+                        help="check the model lighting pixel shader reflection ABI")
+    parser.add_argument("--model-vertex", action="store_true",
+                        help="check the model lighting vertex shader reflection ABI")
     parser.add_argument("--runtime-manifest", type=pathlib.Path,
                         help="newline-separated install manifest to check for shader build tools")
     args = parser.parse_args()
@@ -283,7 +370,8 @@ def main() -> int:
             print(f"PASS: {args.runtime_manifest}: no FSL/DXC compiler tools in Runtime manifest")
         if args.artifact:
             dxc = args.dxc or shutil.which("dxc")
-            inspect_artifact(args.artifact, dxc, args.require_reflection)
+            inspect_artifact(args.artifact, dxc, args.require_reflection,
+                             args.model_pixel, args.model_vertex)
         elif args.require_reflection:
             raise ShaderContractError("--require-reflection needs --artifact <compiled shader>")
     except (OSError, ShaderContractError) as error:

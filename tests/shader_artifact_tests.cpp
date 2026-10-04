@@ -92,6 +92,37 @@ uint32_t MakeEmptyDxilPartArtifact(uint8_t* bytes) {
 }
 
 bool ShaderArtifactContract(String& failure) {
+    char modelVertexPath[1024];
+    const int modelVertexPathLength = snprintf(
+        modelVertexPath, sizeof(modelVertexPath),
+        "%s/tests/assets/shaders/gkcore_model.vert", GKCORE_TEST_SOURCE_DIR);
+    if (modelVertexPathLength <= 0 ||
+        static_cast<size_t>(modelVertexPathLength) >= sizeof(modelVertexPath)) {
+        failure.Assign("model lighting vertex shader fixture path is too long");
+        return false;
+    }
+    render::CompiledShader modelVertex;
+    if (!render::LoadCompiledVertexShader(modelVertexPath, modelVertex, failure) ||
+        modelVertex.bytecode.Count() == 0) {
+        failure.Assign("compiled model lighting vertex shader fixture could not be loaded");
+        return false;
+    }
+    char modelShaderPath[1024];
+    const int modelShaderPathLength = snprintf(
+        modelShaderPath, sizeof(modelShaderPath),
+        "%s/tests/assets/shaders/gkcore_model.frag", GKCORE_TEST_SOURCE_DIR);
+    if (modelShaderPathLength <= 0 ||
+        static_cast<size_t>(modelShaderPathLength) >= sizeof(modelShaderPath)) {
+        failure.Assign("model lighting shader fixture path is too long");
+        return false;
+    }
+    render::CompiledShader modelShader;
+    if (!render::LoadCompiledPixelShader(modelShaderPath, modelShader, failure) ||
+        modelShader.bytecode.Count() == 0) {
+        failure.Assign("compiled model lighting pixel shader fixture could not be loaded");
+        return false;
+    }
+
     char customPostShaderPath[1024];
     const int customPostShaderPathLength = snprintf(
         customPostShaderPath, sizeof(customPostShaderPath),

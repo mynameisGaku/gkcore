@@ -91,6 +91,8 @@ bool TestMaterialFactorsAndTextureIndex() {
     if (!Check(part.baseColorFactor[0] == 0.25f && part.baseColorFactor[1] == 0.5f &&
                part.baseColorFactor[2] == 0.75f && part.baseColorFactor[3] == 0.4f,
                "linear base-color factor is copied without sRGB conversion")) return false;
+    if (!Check(part.metallicFactor == 0.2f && part.roughnessFactor == 0.8f,
+               "metallic and roughness factors are copied into the draw plan")) return false;
     return true;
 }
 
@@ -99,7 +101,7 @@ bool TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() {
     AddTriangle(model, 0);
     model.primitives.Append({1, 3, -1});
     ModelDrawPlan plan;
-    plan.parts.Append({17, 18, -1, -1, {0.1f, 0.2f, 0.3f, 0.4f}});
+    plan.parts.Append({17, 18, -1, -1, {0.1f, 0.2f, 0.3f, 0.4f}, 0.0f, 1.0f});
     String error;
     if (!ExpectPreservedFailure(model, plan, error, "out-of-range index range is rejected")) return false;
 
@@ -130,12 +132,37 @@ bool TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() {
     model.materials.At(0).metallicFactor = 1.0f;
     model.materials.At(0).baseColorFactor[2] = 0.0f / 0.0f;
     if (!ExpectPreservedFailure(model, plan, error, "non-finite base-color factor is rejected")) return false;
+    model.materials.At(0).baseColorFactor[2] = 1.0f;
+    model.materials.At(0).metallicFactor = 1.01f;
+    if (!ExpectPreservedFailure(model, plan, error, "out-of-range metallic factor is rejected")) return false;
+    model.materials.At(0).metallicFactor = 0.5f;
+    model.materials.At(0).roughnessFactor = -0.01f;
+    if (!ExpectPreservedFailure(model, plan, error, "negative roughness factor is rejected")) return false;
+    model.materials.At(0).roughnessFactor = 0.5f;
+    model.materials.At(0).metallicFactor = 0.0f / 0.0f;
+    if (!ExpectPreservedFailure(model, plan, error, "non-finite metallic factor is rejected")) return false;
+    model.materials.At(0).metallicFactor = 0.5f;
+    model.materials.At(0).roughnessFactor = 1.0f / 0.0f;
+    if (!ExpectPreservedFailure(model, plan, error, "infinite roughness factor is rejected")) return false;
     return true;
+}
+
+bool TestDefaultMetallicRoughness() {
+    detail::ModelResource model{};
+    AddTriangle(model, 0);
+    model.primitives.Append({0, 3, -1});
+    ModelDrawPlan plan;
+    String error;
+    if (!Check(BuildModelDrawPlan(model, plan, error), "default material plan builds")) return false;
+    return Check(plan.parts.At(0).metallicFactor == 0.0f &&
+                 plan.parts.At(0).roughnessFactor == 1.0f,
+                 "missing material defaults to dielectric and fully rough");
 }
 
 } // namespace
 
 int main() {
     return TestPrimitiveRangesAndDefaultMaterial() && TestMaterialFactorsAndTextureIndex() &&
-           TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() ? 0 : 1;
+           TestInvalidRangesMaterialsTexturesAndFactorsPreserveOutput() &&
+           TestDefaultMetallicRoughness() ? 0 : 1;
 }

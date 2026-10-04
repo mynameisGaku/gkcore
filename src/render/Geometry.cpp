@@ -1,4 +1,5 @@
 #include "Geometry.h"
+#include "WorldGeometry.h"
 #include "RectangleGeometry.h"
 #include "../resources/Resources.h"
 #include "PostProcess.h"
@@ -13,27 +14,6 @@ namespace gk::render {
 namespace {
 
 /**
- * Carries camera-space position and UVs until the polygon has passed depth clipping.
- */
-struct ViewPoint {
-    double x;
-    double y;
-    double z;
-    double u;
-    double v;
-};
-
-/**
- * Converts packed sRGB channels for the linear-light vertex pipeline.
- */
-void StoreColor(uint32_t packed, float* color) {
-    color[0] = SrgbToLinear(static_cast<float>((packed >> 16) & 255u) / 255.0f);
-    color[1] = SrgbToLinear(static_cast<float>((packed >> 8) & 255u) / 255.0f);
-    color[2] = SrgbToLinear(static_cast<float>(packed & 255u) / 255.0f);
-    color[3] = 1.0f;
-}
-
-/**
  * Stores a finite double value when it is representable by the GPU vertex format.
  */
 bool StoreFloat(double value, float& output, String& error) {
@@ -46,203 +26,36 @@ bool StoreFloat(double value, float& output, String& error) {
 }
 
 /**
- * Applies an optional model transform and camera transform without changing source UVs.
- */
-bool TransformToView(Vec3 source, const float sourceUv[2], const detail::DrawPacket& draw,
-                     bool applyModelTransform, ViewPoint& output, String& error) {
-    double px = source.x;
-    double py = source.y;
-    double pz = source.z;
-    if (applyModelTransform) {
-        const double sx = sin(static_cast<double>(draw.modelRotation.x));
-        const double cx = cos(static_cast<double>(draw.modelRotation.x));
-        const double sy = sin(static_cast<double>(draw.modelRotation.y));
-        const double cy = cos(static_cast<double>(draw.modelRotation.y));
-        const double sz = sin(static_cast<double>(draw.modelRotation.z));
-        const double cz = cos(static_cast<double>(draw.modelRotation.z));
-        const double x = px * draw.modelScale.x;
-        const double y = py * draw.modelScale.y;
-        const double z = pz * draw.modelScale.z;
-        const double x1 = x * cz - y * sz;
-        const double y1 = x * sz + y * cz;
-        const double x2 = x1 * cy + z * sy;
-        const double z2 = -x1 * sy + z * cy;
-        px = x2 * 1.0 + draw.modelPosition.x;
-        py = (y1 * cx - z2 * sx) + draw.modelPosition.y;
-        pz = (y1 * sx + z2 * cx) + draw.modelPosition.z;
-    }
-
-    const double fx = static_cast<double>(draw.cameraTarget.x) - draw.cameraPosition.x;
-    const double fy = static_cast<double>(draw.cameraTarget.y) - draw.cameraPosition.y;
-    const double fz = static_cast<double>(draw.cameraTarget.z) - draw.cameraPosition.z;
-    const double forwardLength = sqrt(fx * fx + fy * fy + fz * fz);
-    if (!(forwardLength > 1e-12) || !isfinite(forwardLength)) {
-        error.Assign("The camera direction is outside the renderer's numeric range");
-        return false;
-    }
-    const double forwardX = fx / forwardLength;
-    const double forwardY = fy / forwardLength;
-    const double forwardZ = fz / forwardLength;
-    double rightX = forwardZ;
-    double rightY = 0.0;
-    double rightZ = -forwardX;
-    const double rightLength = sqrt(rightX * rightX + rightZ * rightZ);
-    if (!(rightLength > 1e-12)) {
-        rightX = 1.0;
-        rightZ = 0.0;
-    } else {
-        rightX /= rightLength;
-        rightZ /= rightLength;
-    }
-    const double upX = forwardY * rightZ - forwardZ * rightY;
-    const double upY = forwardZ * rightX - forwardX * rightZ;
-    const double upZ = forwardX * rightY - forwardY * rightX;
-    const double dx = px - draw.cameraPosition.x;
-    const double dy = py - draw.cameraPosition.y;
-    const double dz = pz - draw.cameraPosition.z;
-    output.x = dx * rightX + dy * rightY + dz * rightZ;
-    output.y = dx * upX + dy * upY + dz * upZ;
-    output.z = dx * forwardX + dy * forwardY + dz * forwardZ;
-    output.u = sourceUv[0];
-    output.v = sourceUv[1];
-    if (!isfinite(output.x) || !isfinite(output.y) || !isfinite(output.z)) {
-        error.Assign("The draw coordinates exceed the renderer's numeric range");
-        return false;
-    }
-    return true;
-}
-
-/**
- * Appends a clip vertex without exceeding the fixed polygon scratch capacity.
- */
-bool AppendClipPoint(ViewPoint* output, uint32_t& outputCount, const ViewPoint& point) {
-    if (outputCount >= 8) return false;
-    output[outputCount++] = point;
-    return true;
-}
-
-/**
- * Clips positions and linear per-vertex attributes against one view-space depth plane.
- */
-bool ClipPlane(const ViewPoint* input, uint32_t inputCount, double planeZ, bool keepGreater,
-               ViewPoint* output, uint32_t& outputCount) {
-    outputCount = 0;
-    if (inputCount > 8) return false;
-    if (inputCount == 0) return true;
-    for (uint32_t i = 0; i < inputCount; ++i) {
-        const ViewPoint& a = input[i];
-        const ViewPoint& b = input[(i + 1) % inputCount];
-        const bool insideA = keepGreater ? a.z >= planeZ : a.z <= planeZ;
-        const bool insideB = keepGreater ? b.z >= planeZ : b.z <= planeZ;
-        if (insideA && insideB) {
-            if (!AppendClipPoint(output, outputCount, b)) return false;
-        } else if (insideA && !insideB) {
-            const double t = (planeZ - a.z) / (b.z - a.z);
-            const ViewPoint intersection = {a.x + (b.x - a.x) * t,
-                                            a.y + (b.y - a.y) * t,
-                                            planeZ,
-                                            a.u + (b.u - a.u) * t,
-                                            a.v + (b.v - a.v) * t};
-            if (!AppendClipPoint(output, outputCount, intersection)) return false;
-        } else if (!insideA && insideB) {
-            const double t = (planeZ - a.z) / (b.z - a.z);
-            const ViewPoint intersection = {a.x + (b.x - a.x) * t,
-                                            a.y + (b.y - a.y) * t,
-                                            planeZ,
-                                            a.u + (b.u - a.u) * t,
-                                            a.v + (b.v - a.v) * t};
-            if (!AppendClipPoint(output, outputCount, intersection) ||
-                !AppendClipPoint(output, outputCount, b)) return false;
-        }
-    }
-    return outputCount <= 8;
-}
-
-/**
- * Projects view-space position and its UV attributes into the renderer vertex format.
- */
-bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height,
-                 uint32_t packedColor, const float* linearColor,
-                 Vertex& output, String& error) {
-    const double aspect = static_cast<double>(width) / static_cast<double>(height);
-    const double focal = 1.7320508075688772;
-    constexpr double nearPlane = 0.1;
-    constexpr double farPlane = 1000.0;
-    const double clipX = point.x * focal / aspect;
-    const double clipY = point.y * focal;
-    const double clipZ = (farPlane / (farPlane - nearPlane)) * point.z -
-                         (farPlane * nearPlane / (farPlane - nearPlane));
-    if (!StoreFloat(clipX, output.position[0], error) ||
-        !StoreFloat(clipY, output.position[1], error) ||
-        !StoreFloat(clipZ, output.position[2], error) ||
-        !StoreFloat(point.z, output.position[3], error) ||
-        !StoreFloat(point.u, output.uv[0], error) ||
-        !StoreFloat(point.v, output.uv[1], error)) return false;
-    if (linearColor) {
-        for (uint32_t component = 0; component < 4; ++component)
-            output.color[component] = linearColor[component];
-    } else {
-        StoreColor(packedColor, output.color);
-    }
-    return true;
-}
-
-/**
- * Appends one projected triangle after checking remaining output capacity.
- */
-bool AppendTriangle(Array<Vertex>& vertices, const Vertex* triangle,
-                    uint32_t vertexLimit, String& error) {
-    if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < 3) {
-        error.Assign("The frame exceeds the dynamic vertex capacity");
-        return false;
-    }
-    if (!vertices.Append(triangle[0]) || !vertices.Append(triangle[1]) || !vertices.Append(triangle[2])) {
-        error.Assign("The frame vertex allocation failed");
-        return false;
-    }
-    return true;
-}
-
-/**
  * Clips, projects, and appends a world-space triangle with perspective-correct UV payloads.
  */
 bool AppendWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw,
                          const Vec3* points, const float sourceUvs[3][2], bool applyModelTransform,
                          Array<Vertex>& vertices, uint32_t vertexLimit, String& error,
                          const float* linearColor = nullptr) {
-    ViewPoint first[8]{};
-    ViewPoint second[8]{};
+    WorldVertex source[3]{};
     for (uint32_t i = 0; i < 3; ++i) {
-        if (!isfinite(sourceUvs[i][0]) || !isfinite(sourceUvs[i][1])) {
-            error.Assign("The model contains non-finite texture coordinates");
-            return false;
-        }
-        if (!TransformToView(points[i], sourceUvs[i], draw, applyModelTransform, first[i], error)) return false;
+        source[i].position = points[i];
+        source[i].uv[0] = sourceUvs[i][0];
+        source[i].uv[1] = sourceUvs[i][1];
     }
-    uint32_t count = 0;
-    if (!ClipPlane(first, 3, 0.1, true, second, count) ||
-        !ClipPlane(second, count, 1000.0, false, first, count)) {
-        error.Assign("The clipped triangle exceeds the polygon scratch capacity");
-        return false;
-    }
-    if (count < 3) return true;
-    const uint32_t requiredVertices = (count - 2) * 3;
-    if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < requiredVertices) {
+    ProjectedWorldVertex projected[18]{};
+    uint32_t projectedCount = 0;
+    if (!ProjectWorldTriangle(frame, draw, source, applyModelTransform, false, linearColor,
+                              projected, projectedCount, error)) return false;
+    if (vertices.Count() > vertexLimit || vertexLimit - vertices.Count() < projectedCount) {
         error.Assign("The frame exceeds the dynamic vertex capacity");
         return false;
     }
-    if (!vertices.Reserve(vertices.Count() + requiredVertices)) {
+    if (projectedCount > UINT32_MAX - vertices.Count() ||
+        !vertices.Reserve(vertices.Count() + projectedCount)) {
         error.Assign("The frame vertex allocation failed");
         return false;
     }
-    Vertex projected[8]{};
-    for (uint32_t i = 0; i < count; ++i) {
-        if (!ProjectView(first[i], frame.width, frame.height, draw.color, linearColor,
-                         projected[i], error)) return false;
-    }
-    for (uint32_t i = 1; i + 1 < count; ++i) {
-        const Vertex triangle[3] = {projected[0], projected[i], projected[i + 1]};
-        if (!AppendTriangle(vertices, triangle, vertexLimit, error)) return false;
+    for (uint32_t i = 0; i < projectedCount; ++i) {
+        if (!vertices.Append(projected[i].surface)) {
+            error.Assign("The frame vertex allocation failed");
+            return false;
+        }
     }
     return true;
 }
@@ -294,6 +107,7 @@ bool AppendDraw(const detail::FramePacket& frame, const detail::DrawPacket& draw
     error.Assign("The requested draw kind is unavailable in the current renderer");
     return false;
 }
+
 
 /**
  * Expands one validated image into a clip-space quad with normalized source UVs.

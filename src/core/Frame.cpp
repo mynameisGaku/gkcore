@@ -2,6 +2,7 @@
 #include "Context.h"
 #include "../resources/Resources.h"
 #include "../effects/Effects.h"
+#include "../effects/Lighting.h"
 #include "../text/TextCache.h"
 
 namespace gk {
@@ -75,6 +76,7 @@ void Shutdown() {
     context.initialized = false;
     context.frameOpen = false;
     effects::Reset();
+    effects::ResetLighting();
     context.cameraPosition = {0.0f, 0.0f, -5.0f};
     context.cameraTarget = {0.0f, 0.0f, 0.0f};
     detail::ClearError();
@@ -135,6 +137,7 @@ int BeginFrame() {
     context.frame.saturation = settings.saturation;
     context.frame.contrast = settings.contrast;
     context.frame.fxaaEnabled = settings.fxaaEnabled;
+    context.frame.lighting = effects::CurrentLighting();
     context.frame.postEffectShader = backendPostEffect;
     context.frame.postEffectConstantCount = postEffect.constants.Count();
     for (uint32_t i = 0; i < postEffect.constants.Count(); ++i)
@@ -181,6 +184,7 @@ void SetBackendForTesting(Backend* backend) {
     context.initialized = false;
     context.frameOpen = false;
     effects::Reset();
+    effects::ResetLighting();
     ClearError();
 }
 #endif

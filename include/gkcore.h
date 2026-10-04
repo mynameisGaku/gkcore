@@ -278,6 +278,19 @@ GKCORE_API int SetToneMappingEnabled(bool enabled);
 GKCORE_API int SetDrawLayer(DrawLayer layer);
 
 /**
+ * Sets built-in model ambient light to a finite value in [0, 4]. Defaults to 0.2.
+ * The value is sampled by BeginFrame and restored to its default by Shutdown.
+ */
+GKCORE_API int SetAmbientLight(float intensity);
+
+/**
+ * Sets built-in model directional light using a finite nonzero world-space travel direction,
+ * normalized when stored, and intensity in [0, 16]. Intensity defaults to 3. BeginFrame
+ * samples the values and Shutdown restores their defaults.
+ */
+GKCORE_API int SetDirectionalLight(Vec3 direction, float intensity = 3.0f);
+
+/**
  * Loads a compiled pixel shader and returns an invalid handle on failure.
  */
 GKCORE_API ShaderHandle LoadPixelShader(const char* compiledPath);

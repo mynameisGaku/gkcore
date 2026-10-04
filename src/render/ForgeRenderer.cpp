@@ -82,6 +82,7 @@ void ForgeRenderer::Shutdown() {
     }
     width_ = height_ = 0;
     vertices_.Clear();
+    modelVertices_.Clear();
     runs_.Clear();
     customDraws_.Clear();
 }
@@ -248,8 +249,6 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
                    &noDepth, nullptr, &uiPipeline_);
     createPipeline("gkcore HDR Image Pipeline", spriteShader_, &spriteLayout, sceneFormat, depthTarget_->mFormat,
                    &noDepth, nullptr, &spritePipeline_);
-    createPipeline("gkcore HDR Model Texture Pipeline", spriteShader_, &spriteLayout, sceneFormat,
-                   depthTarget_->mFormat, &depth, nullptr, &spriteDepthPipeline_);
     createPipeline("gkcore HDR Alpha Image Pipeline", spriteShader_, &spriteLayout, sceneFormat, depthTarget_->mFormat,
                    &noDepth, &alphaBlend, &spriteAlphaPipeline_);
     createPipeline("gkcore UI Image Pipeline", spriteShader_, &spriteLayout, displayFormat, TinyImageFormat_UNDEFINED,
@@ -257,7 +256,7 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
     createPipeline("gkcore UI Alpha Image Pipeline", spriteShader_, &spriteLayout, displayFormat, TinyImageFormat_UNDEFINED,
                    &noDepth, &alphaBlend, &spriteAlphaUiPipeline_);
     if (!scenePipeline_ || !depthPipeline_ || !uiPipeline_ || !spritePipeline_ ||
-        !spriteAlphaPipeline_ || !spriteDepthPipeline_ || !spriteUiPipeline_ || !spriteAlphaUiPipeline_)
+        !spriteAlphaPipeline_ || !spriteUiPipeline_ || !spriteAlphaUiPipeline_)
         return SetError(error, "The Forge renderer could not create the built-in draw pipelines");
 
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
@@ -274,6 +273,9 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
         if (!vertexBuffers_[i]) return SetError(error, "The Forge renderer could not allocate a dynamic vertex buffer");
     }
     waitForAllResourceLoads();
+    if (!modelLighting_.Initialize(renderer_, sceneFormat, displayFormat, depthTarget_->mFormat,
+                                   sampleCount, sampleQuality, kVertexCapacity, error)) return false;
+    waitForAllResourceLoads();
     error.Clear();
     return true;
 }
@@ -282,6 +284,7 @@ void ForgeRenderer::DestroyGraphicsResources() {
     if (!renderer_) return;
     postEffect_.DiscardPendingFrame();
     postEffect_.Shutdown();
+    modelLighting_.Shutdown();
     customShaders_.Shutdown();
     textureCache_.Shutdown();
     if (whiteImage_) {
@@ -296,7 +299,6 @@ void ForgeRenderer::DestroyGraphicsResources() {
     if (spriteAlphaUiPipeline_) { removePipeline(renderer_, spriteAlphaUiPipeline_); spriteAlphaUiPipeline_ = nullptr; }
     if (spriteUiPipeline_) { removePipeline(renderer_, spriteUiPipeline_); spriteUiPipeline_ = nullptr; }
     if (spritePipeline_) { removePipeline(renderer_, spritePipeline_); spritePipeline_ = nullptr; }
-    if (spriteDepthPipeline_) { removePipeline(renderer_, spriteDepthPipeline_); spriteDepthPipeline_ = nullptr; }
     if (uiPipeline_) { removePipeline(renderer_, uiPipeline_); uiPipeline_ = nullptr; }
     if (depthPipeline_) { removePipeline(renderer_, depthPipeline_); depthPipeline_ = nullptr; }
     if (scenePipeline_) { removePipeline(renderer_, scenePipeline_); scenePipeline_ = nullptr; }
@@ -321,13 +323,14 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     textureCache_.BeginFrame();
     if (!textureCache_.DrainPendingUploads(error)) return false;
     vertices_.Clear();
+    modelVertices_.Clear();
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
     auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured,
                          bool alphaBlend, detail::ImageResource* image,
                          const detail::DrawPacket& draw, bool customShader,
-                         uint32_t customDrawIndex) -> bool {
+                         bool litModel, uint32_t customDrawIndex) -> bool {
         if (count == 0) return true;
         const bool canBatch = !customShader && runs_.Count() &&
             !runs_.At(runs_.Count() - 1).customShader &&
@@ -335,6 +338,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             runs_.At(runs_.Count() - 1).depthTest == depthTest &&
             runs_.At(runs_.Count() - 1).textured == textured &&
             runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend &&
+            runs_.At(runs_.Count() - 1).litModel == litModel &&
             runs_.At(runs_.Count() - 1).layer == draw.layer &&
             runs_.At(runs_.Count() - 1).image == image;
         if (canBatch) {
@@ -342,7 +346,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             return true;
         }
         const RenderRun run{first, count, depthTest, textured, alphaBlend, draw.layer,
-                            image, draw.shader, customDrawIndex, customShader};
+                            image, draw.shader, customDrawIndex, customShader, litModel};
         return runs_.Append(run);
     };
     for (uint32_t layer = 0; layer < 2; ++layer) {
@@ -378,13 +382,20 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
                 }
                 for (uint32_t partIndex = 0; partIndex < plan.parts.Count(); ++partIndex) {
                     const ModelPartPlan& part = plan.parts.At(partIndex);
-                    const uint32_t first = vertices_.Count();
-                    if (!AppendModelPart(frame, draw, part, vertices_, kVertexCapacity, error)) return false;
-                    const uint32_t count = vertices_.Count() - first;
+                    const bool litModel = !customShader;
+                    const uint32_t first = litModel ? modelVertices_.Count() : vertices_.Count();
+                    if (litModel) {
+                        const uint32_t available = kVertexCapacity - vertices_.Count();
+                        if (!AppendLitModelPart(frame, draw, part, modelVertices_, available, error)) return false;
+                    } else {
+                        const uint32_t available = kVertexCapacity - modelVertices_.Count();
+                        if (!AppendModelPart(frame, draw, part, vertices_, available, error)) return false;
+                    }
+                    const uint32_t count = (litModel ? modelVertices_.Count() : vertices_.Count()) - first;
                     if (count == 0) continue;
                     detail::ImageResource* materialImage = part.textureIndex >= 0 ?
                         draw.model->textures.At(static_cast<uint32_t>(part.textureIndex)) : nullptr;
-                    const bool needsTexture = customNeedsTexture || (!customShader && materialImage);
+                    const bool needsTexture = customNeedsTexture || !customShader;
                     detail::ImageResource* image = needsTexture ?
                         (materialImage ? materialImage : whiteImage_) : nullptr;
                     if (needsTexture) {
@@ -395,7 +406,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
                         (draw.flags & detail::DrawAlphaBlend) != 0;
                     const bool depthTest = layer == 0;
                     if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image,
-                                   draw, customShader, customDrawIndex))
+                                   draw, customShader, litModel, customDrawIndex))
                         return SetError(error, "The frame draw-run allocation failed");
                 }
                 if (customShader) ++customDrawCount;
@@ -409,7 +420,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             }
 
             const uint32_t first = vertices_.Count();
-            if (!AppendDraw(frame, draw, vertices_, kVertexCapacity, error)) return false;
+            if (!AppendDraw(frame, draw, vertices_, kVertexCapacity - modelVertices_.Count(), error)) return false;
             detail::ImageResource* image = nullptr;
             if (needsTexture) {
                 image = draw.kind == detail::DrawKind::Image ? draw.image : whiteImage_;
@@ -436,7 +447,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             }
 
             if (!appendRun(first, count, depthTest, textured, alphaBlend, image, draw,
-                           customShader, customDrawIndex))
+                           customShader, false, customDrawIndex))
                 return SetError(error, "The frame draw-run allocation failed");
             if (customShader) ++customDrawCount;
         }
@@ -454,7 +465,9 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     }
     if (customDraws_.Count() != postEffectPlan.preparedDrawCount)
         return SetError(error, "The custom shader draw snapshot count does not match the frame plan");
-    if (vertices_.Count() > kVertexCapacity) return SetError(error, "The frame exceeds the dynamic vertex capacity");
+    if (vertices_.Count() > kVertexCapacity ||
+        modelVertices_.Count() > kVertexCapacity - vertices_.Count())
+        return SetError(error, "The frame exceeds the dynamic vertex capacity");
 
     GpuCmdRingElement element = getNextGpuCmdRingElement(&commandRing_, true, 1);
     if (!element.pCmdPool || !element.pFence || !element.pSemaphore) return SetError(error, "The Forge command ring is not ready");
@@ -465,6 +478,9 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
 
     const uint32_t frameIndex = commandRing_.mPoolIndex;
     if (!customShaders_.PrepareFrame(frameIndex, customDraws_.Data(), customDraws_.Count(), error)) return false;
+    if (modelVertices_.Count() &&
+        !modelLighting_.PrepareFrame(frameIndex, modelVertices_.Data(), modelVertices_.Count(),
+                                     frame.lighting, error)) return false;
     if (!textureCache_.UploadPending(error)) return false;
 
     uint32_t imageIndex = 0;
@@ -500,15 +516,21 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     RenderTarget* sceneTarget = postProcess_.SceneTarget();
     cmdSetViewport(command, 0.0f, 0.0f, static_cast<float>(sceneTarget->mWidth), static_cast<float>(sceneTarget->mHeight), 0.0f, 1.0f);
     cmdSetScissor(command, 0, 0, sceneTarget->mWidth, sceneTarget->mHeight);
-    if (vertices_.Count()) {
-        Buffer* vertexBuffer = vertexBuffers_[frameIndex];
-        const uint32_t stride = sizeof(Vertex);
-        const uint64_t offset = 0;
-        cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
+    if (vertices_.Count() || modelVertices_.Count()) {
         for (uint32_t i = 0; i < runs_.Count(); ++i) {
             const RenderRun& run = runs_.At(i);
             if (run.layer != 0) continue;
-            if (run.customShader) {
+            Buffer* vertexBuffer = run.litModel ? modelLighting_.VertexBuffer(frameIndex) :
+                                                  vertexBuffers_[frameIndex];
+            const uint32_t stride = run.litModel ? sizeof(ModelRenderVertex) : sizeof(Vertex);
+            const uint64_t offset = 0;
+            cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
+            if (run.litModel) {
+                if (!modelLighting_.Bind(command, frameIndex, false, error)) {
+                    endCmd(command);
+                    return false;
+                }
+            } else if (run.customShader) {
                 if (!customShaders_.Bind(command, run.shader, frameIndex, run.customDrawIndex,
                                          run.layer, run.depthTest, run.alphaBlend, error)) {
                     endCmd(command);
@@ -516,8 +538,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
                 }
             } else {
                 Pipeline* pipeline = run.textured ?
-                    (run.depthTest ? spriteDepthPipeline_ :
-                     (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_)) :
+                    (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_) :
                     (run.depthTest ? depthPipeline_ : scenePipeline_);
                 cmdBindPipeline(command, pipeline);
             }
@@ -557,14 +578,20 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
         cmdSetViewport(command, 0.0f, 0.0f, static_cast<float>(renderTarget->mWidth),
                        static_cast<float>(renderTarget->mHeight), 0.0f, 1.0f);
         cmdSetScissor(command, 0, 0, renderTarget->mWidth, renderTarget->mHeight);
-        Buffer* vertexBuffer = vertexBuffers_[frameIndex];
-        const uint32_t stride = sizeof(Vertex);
-        const uint64_t offset = 0;
-        cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
         for (uint32_t i = 0; i < runs_.Count(); ++i) {
             const RenderRun& run = runs_.At(i);
             if (run.layer != 1) continue;
-            if (run.customShader) {
+            Buffer* vertexBuffer = run.litModel ? modelLighting_.VertexBuffer(frameIndex) :
+                                                  vertexBuffers_[frameIndex];
+            const uint32_t stride = run.litModel ? sizeof(ModelRenderVertex) : sizeof(Vertex);
+            const uint64_t offset = 0;
+            cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
+            if (run.litModel) {
+                if (!modelLighting_.Bind(command, frameIndex, true, error)) {
+                    endCmd(command);
+                    return false;
+                }
+            } else if (run.customShader) {
                 if (!customShaders_.Bind(command, run.shader, frameIndex, run.customDrawIndex,
                                          run.layer, run.depthTest, run.alphaBlend, error)) {
                     endCmd(command);

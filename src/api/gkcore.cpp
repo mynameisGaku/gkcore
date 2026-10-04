@@ -2,6 +2,7 @@
 
 #include "../core/Context.h"
 #include "../effects/Effects.h"
+#include "../effects/Lighting.h"
 #include "../resources/Resources.h"
 
 namespace gk {
@@ -116,6 +117,20 @@ int SetToneMappingEnabled(bool enabled) {
 
 int SetDrawLayer(DrawLayer layer) {
     if (!effects::SetLayer(layer)) return detail::SetError("invalid draw layer");
+    detail::ClearError();
+    return 0;
+}
+
+int SetAmbientLight(float intensity) {
+    if (!effects::SetAmbientLight(intensity))
+        return detail::SetError("ambient light intensity must be finite and in [0, 4]");
+    detail::ClearError();
+    return 0;
+}
+
+int SetDirectionalLight(Vec3 direction, float intensity) {
+    if (!effects::SetDirectionalLight(direction, intensity))
+        return detail::SetError("directional light requires a finite nonzero direction and intensity in [0, 16]");
     detail::ClearError();
     return 0;
 }

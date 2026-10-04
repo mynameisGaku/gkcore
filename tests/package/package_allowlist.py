@@ -22,6 +22,8 @@ RUNTIME_SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/compute.rootsig",
     "bin/CompiledShaders/DIRECT3D12/gkcore_sprite.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_sprite.frag",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_model.vert",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_model.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_post.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag",

@@ -5,6 +5,7 @@
 #include "../foundation/RefCount.h"
 #include "../resources/Resources.h"
 #include "../effects/Shaders.h"
+#include "../effects/Lighting.h"
 #include <gkcore.h>
 
 /**
@@ -72,6 +73,7 @@ struct FramePacket {
     float saturation = 1.0f;
     float contrast = 1.0f;
     bool fxaaEnabled = true;
+    effects::LightingSettings lighting{};
     ShaderHandle postEffectShader{};
     uint32_t postEffectConstantCount = 0;
     ShaderConstant postEffectConstants[64]{};

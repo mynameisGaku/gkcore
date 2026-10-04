@@ -16,6 +16,8 @@ struct ModelPartPlan {
     int32_t materialIndex;
     int32_t textureIndex;
     float baseColorFactor[4];
+    float metallicFactor = 0.0f;
+    float roughnessFactor = 1.0f;
 };
 
 /**

@@ -5,6 +5,8 @@
 #include "../internal/Backend.hpp"
 #include "../platform/WindowsWindow.h"
 #include "Geometry.h"
+#include "ModelGeometry.h"
+#include "ModelLightingRenderer.h"
 #include "CustomShaders.h"
 #include "PostProcessRenderer.h"
 #include "PostEffectRenderer.h"
@@ -41,6 +43,7 @@ struct RenderRun {
     ShaderHandle shader;
     uint32_t customDrawIndex;
     bool customShader;
+    bool litModel;
 };
 
 /**
@@ -111,7 +114,6 @@ private:
     Shader* spriteShader_ = nullptr;
     Pipeline* scenePipeline_ = nullptr;
     Pipeline* depthPipeline_ = nullptr;
-    Pipeline* spriteDepthPipeline_ = nullptr;
     Pipeline* uiPipeline_ = nullptr;
     Pipeline* spritePipeline_ = nullptr;
     Pipeline* spriteAlphaPipeline_ = nullptr;
@@ -122,11 +124,13 @@ private:
     GpuCmdRing commandRing_{};
     WindowHandle windowHandle_{};
     TextureCache textureCache_;
+    ModelLightingRenderer modelLighting_;
     CustomShaders customShaders_;
     PostProcessRenderer postProcess_;
     PostEffectRenderer postEffect_;
     detail::ImageResource* whiteImage_ = nullptr;
     Array<Vertex> vertices_;
+    Array<ModelRenderVertex> modelVertices_;
     Array<RenderRun> runs_;
     Array<CustomShaderDraw> customDraws_;
     uint32_t width_ = 0;

@@ -1,0 +1,42 @@
+/**
+ * Vertex inputs supplied by the dedicated PBR model layout.
+ */
+STRUCT(VSInput)
+{
+    DATA(float4, Position, POSITION);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+    DATA(float3, WorldNormal, NORMAL);
+    DATA(float3, ViewDirection, TEXCOORD1);
+    DATA(float2, MetallicRoughness, TEXCOORD2);
+};
+
+/**
+ * Model surface attributes passed to the per-pixel lighting shader.
+ */
+STRUCT(VSOutput)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+    DATA(float3, WorldNormal, TEXCOORD1);
+    DATA(float3, ViewDirection, TEXCOORD2);
+    DATA(float2, MetallicRoughness, TEXCOORD3);
+};
+
+/**
+ * Forwards projected surface, lighting, and material attributes.
+ */
+ROOT_SIGNATURE(DefaultRootSignature)
+VSOutput VS_MAIN(VSInput input)
+{
+    INIT_MAIN;
+    VSOutput output;
+    output.Position = input.Position;
+    output.Color = input.Color;
+    output.UV = input.UV;
+    output.WorldNormal = input.WorldNormal;
+    output.ViewDirection = input.ViewDirection;
+    output.MetallicRoughness = input.MetallicRoughness;
+    RETURN(output);
+}

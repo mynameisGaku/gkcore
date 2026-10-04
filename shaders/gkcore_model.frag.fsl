@@ -1,0 +1,67 @@
+#include "gkcore_model.fsl.h"
+
+/**
+ * Pixel shader inputs interpolated from model surface attributes.
+ */
+STRUCT(VSOutput)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float4, Color, COLOR);
+    DATA(float2, UV, TEXCOORD0);
+    DATA(float3, WorldNormal, TEXCOORD1);
+    DATA(float3, ViewDirection, TEXCOORD2);
+    DATA(float2, MetallicRoughness, TEXCOORD3);
+};
+
+
+/**
+ * Normalizes interpolated vectors without overflowing on large camera-relative payloads.
+ */
+float3 SafeNormalize(float3 value, float3 fallbackValue)
+{
+    if (!all(isfinite(value))) return fallbackValue;
+    const float scale = max(abs(value.x), max(abs(value.y), abs(value.z)));
+    if (!(scale > 0.0000000001)) return fallbackValue;
+    const float3 scaled = value / scale;
+    return scaled * rsqrt(max(dot(scaled, scaled), 0.00000001));
+}
+
+/**
+ * Evaluates a linear base-color metallic-roughness model with one directional light.
+ */
+ROOT_SIGNATURE(DefaultRootSignature)
+float4 PS_MAIN(VSOutput input) : SV_Target0
+{
+    INIT_MAIN;
+    const float4 baseSample = SampleTex2D(gImageTexture, gImageSampler, input.UV);
+    const float3 baseColor = baseSample.rgb * input.Color.rgb;
+    const float3 N = SafeNormalize(input.WorldNormal, float3(0.0, 1.0, 0.0));
+    const float3 V = SafeNormalize(input.ViewDirection, N);
+    const float3 L = SafeNormalize(-gModelLighting.DirectionIntensity.xyz, N);
+    const float3 H = SafeNormalize(V + L, N);
+    const float metallic = saturate(input.MetallicRoughness.x);
+    const float roughness = clamp(input.MetallicRoughness.y, 0.045, 1.0);
+    const float alpha = roughness * roughness;
+    const float alpha2 = alpha * alpha;
+    const float nDotL = saturate(dot(N, L));
+    const float nDotV = max(saturate(dot(N, V)), 0.0001);
+    const float nDotH = saturate(dot(N, H));
+    const float vDotH = saturate(dot(V, H));
+    const float3 f0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
+    const float3 F = f0 + (1.0 - f0) * pow(1.0 - vDotH, 5.0);
+    const float distributionBase = max(nDotH * nDotH * (alpha2 - 1.0) + 1.0, 0.00000001);
+    const float D = alpha2 / (3.14159265 * distributionBase * distributionBase);
+    const float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    const float Gv = nDotV / max(nDotV * (1.0 - k) + k, 0.0001);
+    const float Gl = nDotL / max(nDotL * (1.0 - k) + k, 0.0001);
+    const float G = Gv * Gl;
+    const float3 specular = (D * G / max(4.0 * nDotV * nDotL, 0.00001)) * F;
+    const float3 diffuseWeight = (1.0 - F) * (1.0 - metallic);
+    const float3 diffuse = diffuseWeight * baseColor * (1.0 / 3.14159265);
+    const float3 direct = (diffuse + specular) *
+        max(gModelLighting.DirectionIntensity.w, 0.0) * nDotL;
+    const float3 ambient = baseColor * max(gModelLighting.Ambient.x, 0.0);
+    const float3 radiance = clamp(direct + ambient, 0.0, 65504.0);
+    const float alphaOut = baseSample.a * input.Color.a;
+    RETURN(float4(radiance, alphaOut));
+}

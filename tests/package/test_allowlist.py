@@ -12,6 +12,8 @@ SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/compute.rootsig",
     "bin/CompiledShaders/DIRECT3D12/gkcore_sprite.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_sprite.frag",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_model.vert",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_model.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_post.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag",
@@ -54,6 +56,10 @@ class RuntimeAllowlistTests(unittest.TestCase):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_color.frag"})
         with self.assertRaisesRegex(PackageError, "gkcore_fxaa.frag"):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag"})
+        with self.assertRaisesRegex(PackageError, "gkcore_model.vert"):
+            validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.vert"})
+        with self.assertRaisesRegex(PackageError, "gkcore_model.frag"):
+            validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.frag"})
 
     def test_rejects_prefix_escape(self):
         with self.assertRaises(PackageError):

@@ -45,6 +45,7 @@ set(GKCORE_CORE_SOURCES
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
     src/effects/Effects.cpp
+    src/effects/Lighting.cpp
     src/effects/Shaders.cpp
     src/render/Geometry.cpp
     src/render/RectangleGeometry.cpp
@@ -54,6 +55,9 @@ set(GKCORE_CORE_SOURCES
     src/render/PostProcessPlan.cpp
     src/render/PostEffectPlan.cpp
     src/render/ModelDrawPlan.cpp
+    src/render/LightingAbi.cpp
+    src/render/WorldGeometry.cpp
+    src/render/ModelGeometry.cpp
     src/render/CustomShaderPolicy.cpp
     src/render/TextureCachePolicy.cpp)
 
@@ -135,6 +139,30 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_draw_plan_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_draw_plan_tests)
     add_test(NAME gkcore.model_draw_plan COMMAND gkcore_model_draw_plan_tests)
+    add_executable(gkcore_lighting_tests
+        tests/lighting_tests.cpp
+        src/effects/Lighting.cpp
+        src/render/LightingAbi.cpp
+        src/foundation/Memory.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_lighting_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_lighting_tests PRIVATE include src)
+    target_compile_definitions(gkcore_lighting_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_lighting_tests)
+    add_test(NAME gkcore.lighting COMMAND gkcore_lighting_tests)
+    add_executable(gkcore_model_geometry_tests
+        tests/model_geometry_tests.cpp
+        src/render/ModelGeometry.cpp
+        src/render/WorldGeometry.cpp
+        src/render/PostProcess.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_model_geometry_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_geometry_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_geometry_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_geometry_tests)
+    add_test(NAME gkcore.model_geometry COMMAND gkcore_model_geometry_tests)
     add_test(NAME gkcore.setup_plan
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_setup_plan.py)
     add_test(NAME gkcore.dxc_lock
@@ -220,6 +248,7 @@ if(GKCORE_BUILD_TESTS)
     add_test(NAME gkcore.geometry COMMAND gkcore_geometry_tests)
     target_sources(gkcore_geometry_tests PRIVATE
         src/render/PostProcess.cpp
+        src/render/WorldGeometry.cpp
         src/render/ModelDrawPlan.cpp)
     add_executable(gkcore_texture_cache_policy_tests
         tests/texture_cache_policy_tests.cpp
@@ -304,6 +333,8 @@ if(GKCORE_BUILD_RUNTIME)
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_color.frag"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_sprite.vert"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_sprite.frag"
+        "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_model.vert"
+        "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_model.frag"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_post.vert"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag"
@@ -374,6 +405,7 @@ if(GKCORE_BUILD_RUNTIME)
         src/render/PostProcessRenderer.cpp
         src/render/PostEffectRenderer.cpp
         src/render/CustomShaders.cpp
+        src/render/ModelLightingRenderer.cpp
         src/render/ShaderReflection.cpp
         src/render/ShaderInterface.cpp
         src/backends/ForgeBackend.cpp)
@@ -422,6 +454,15 @@ if(GKCORE_BUILD_RUNTIME)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/post_effect_tint.frag"
             "$<TARGET_FILE_DIR:gkcore_custom_post_effect>/post_effect_tint.frag")
 
+    add_executable(gkcore_model_lighting examples/model_lighting.cpp)
+    target_compile_features(gkcore_model_lighting PRIVATE cxx_std_17)
+    target_link_libraries(gkcore_model_lighting PRIVATE gkcore::gkcore)
+    gkcore_enable_warnings(gkcore_model_lighting)
+    add_custom_command(TARGET gkcore_model_lighting POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/examples/assets/model_lighting.glb"
+            "$<TARGET_FILE_DIR:gkcore_model_lighting>/model_lighting.glb")
+
     if(GKCORE_BUILD_TESTS)
         add_executable(gkcore_shader_reflection_tests
             tests/shader_reflection_tests.cpp
@@ -449,6 +490,16 @@ if(GKCORE_BUILD_RUNTIME)
                 "${GKCORE_DXC_ROOT}/bin/x64/dxil.dll"
                 "$<TARGET_FILE_DIR:gkcore_shader_reflection_tests>")
         add_test(NAME gkcore.shader_reflection COMMAND gkcore_shader_reflection_tests)
+        add_test(NAME gkcore.model_shader_vertex_reflection
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_contract_tests.py
+                --artifact ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/gkcore_model.vert
+                --dxc ${GKCORE_DXC_ROOT}/bin/x64/dxc.exe
+                --require-reflection --model-vertex)
+        add_test(NAME gkcore.model_shader_pixel_reflection
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_contract_tests.py
+                --artifact ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/gkcore_model.frag
+                --dxc ${GKCORE_DXC_ROOT}/bin/x64/dxc.exe
+                --require-reflection --model-pixel)
 
         add_executable(gkcore_backend_smoke tests/backend_contract_tests.cpp)
         target_compile_features(gkcore_backend_smoke PRIVATE cxx_std_17)

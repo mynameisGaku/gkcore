@@ -72,6 +72,8 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
         part.baseColorFactor[1] = 1.0f;
         part.baseColorFactor[2] = 1.0f;
         part.baseColorFactor[3] = 1.0f;
+        part.metallicFactor = 0.0f;
+        part.roughnessFactor = 1.0f;
 
         if (primitive.materialIndex != -1) {
             if (primitive.materialIndex < 0 ||
@@ -83,6 +85,8 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
                 return Fail(error, "The model material contains an invalid factor");
             for (uint32_t component = 0; component < 4; ++component)
                 part.baseColorFactor[component] = material.baseColorFactor[component];
+            part.metallicFactor = material.metallicFactor;
+            part.roughnessFactor = material.roughnessFactor;
             if (material.baseColorTextureIndex != -1) {
                 if (material.baseColorTextureIndex < 0 ||
                     static_cast<uint32_t>(material.baseColorTextureIndex) >= model.textures.Count() ||

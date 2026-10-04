@@ -118,6 +118,10 @@ struct CaptureState {
     float saturation = 1.0f;
     float contrast = 1.0f;
     bool fxaaEnabled = true;
+    uint32_t lightingFrameCount = 0;
+    float ambientLight[8]{};
+    float directionalDirection[8][3]{};
+    float directionalIntensity[8]{};
 };
 
 class CaptureBackend final : public gk::detail::Backend {
@@ -200,6 +204,14 @@ public:
         state_.saturation = frame.saturation;
         state_.contrast = frame.contrast;
         state_.fxaaEnabled = frame.fxaaEnabled;
+        if (state_.lightingFrameCount < 8) {
+            const uint32_t index = state_.lightingFrameCount++;
+            state_.ambientLight[index] = frame.lighting.ambientIntensity;
+            state_.directionalDirection[index][0] = frame.lighting.direction.x;
+            state_.directionalDirection[index][1] = frame.lighting.direction.y;
+            state_.directionalDirection[index][2] = frame.lighting.direction.z;
+            state_.directionalIntensity[index] = frame.lighting.directionalIntensity;
+        }
         const uint32_t postFrame = state_.postFrameCount++;
         if (postFrame < 8) {
             state_.postShaders[postFrame] = frame.postEffectShader;
@@ -1021,6 +1033,48 @@ bool TestPostEffectBeginFrameSnapshotIsTransactional() {
     gk::Shutdown();
     return true;
 }
+
+/**
+ * Verifies that lighting settings are sampled once at BeginFrame.
+ */
+bool TestLightingBeginFrameSnapshot() {
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::SetAmbientLight(-0.1f) == -1);
+    CHECK(gk::GetLastErrorMessage() && gk::GetLastErrorMessage()[0] != '\0');
+    CHECK(gk::SetAmbientLight(0.35f) == 0);
+    CHECK(gk::GetLastErrorMessage() && gk::GetLastErrorMessage()[0] == '\0');
+    CHECK(gk::SetDirectionalLight({3.0f, -4.0f, 0.0f}, 6.0f) == 0);
+    CHECK(gk::Init() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::SetAmbientLight(0.75f) == 0);
+    CHECK(gk::SetDirectionalLight({0.0f, 0.0f, -2.0f}, 9.0f) == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.lightingFrameCount == 1);
+    CHECK(capture.ambientLight[0] == 0.35f);
+    CHECK(fabsf(capture.directionalDirection[0][0] - 0.6f) < 1e-6f);
+    CHECK(fabsf(capture.directionalDirection[0][1] + 0.8f) < 1e-6f);
+    CHECK(capture.directionalDirection[0][2] == 0.0f && capture.directionalIntensity[0] == 6.0f);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(capture.lightingFrameCount == 2 && capture.ambientLight[1] == 0.75f);
+    CHECK(capture.directionalDirection[1][0] == 0.0f && capture.directionalDirection[1][1] == 0.0f);
+    CHECK(capture.directionalDirection[1][2] == -1.0f && capture.directionalIntensity[1] == 9.0f);
+    gk::Shutdown();
+
+    CaptureState resetCapture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(resetCapture));
+    CHECK(gk::Init() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::Present() == 0);
+    CHECK(resetCapture.lightingFrameCount == 1 && resetCapture.ambientLight[0] == 0.2f);
+    CHECK(fabsf(resetCapture.directionalDirection[0][0] + 0.4082483f) < 1e-6f);
+    CHECK(fabsf(resetCapture.directionalDirection[0][1] + 0.8164966f) < 1e-6f);
+    CHECK(fabsf(resetCapture.directionalDirection[0][2] - 0.4082483f) < 1e-6f);
+    CHECK(resetCapture.directionalIntensity[0] == 3.0f);
+    gk::Shutdown();
+    return true;
+}
 }
 
 int main() {
@@ -1066,6 +1120,7 @@ int main() {
     if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
     if (!TestPostEffectShaderSnapshotsAndLifecycle()) ++failures;
     if (!TestPostEffectBeginFrameSnapshotIsTransactional()) ++failures;
+    if (!TestLightingBeginFrameSnapshot()) ++failures;
     if (!TestRectangleOutlineContracts()) ++failures;
     return failures == 0 ? 0 : 1;
 }
