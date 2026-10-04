@@ -55,6 +55,7 @@ int main() {
     gk::ModelHandle model{};
     gk::ShaderHandle shader{};
     gk::ShaderHandle modelShader{};
+    gk::ShaderHandle postShader{};
     do {
         if (!Check(gk::SetWindowSize(800, 600), "gk::SetWindowSize") ||
             !Check(gk::Init(), "gk::Init")) break;
@@ -113,11 +114,38 @@ int main() {
             break;
         }
 
+        char postShaderPath[MAX_PATH * 4 + 96]{};
+        const int postShaderPathLength = std::snprintf(postShaderPath, sizeof(postShaderPath),
+            "%s/tests/assets/shaders/post_effect_tint.frag", GKCORE_TEST_SOURCE_DIR);
+        if (postShaderPathLength <= 0 || static_cast<size_t>(postShaderPathLength) >= sizeof(postShaderPath)) {
+            std::fprintf(stderr, "Could not construct the custom post-effect shader fixture path\n");
+            break;
+        }
+        postShader = gk::LoadPixelShader(postShaderPath);
+        if (!postShader.IsValid()) {
+            Fail("gk::LoadPixelShader tests/assets/shaders/post_effect_tint.frag");
+            break;
+        }
+
         HWND window = FindRuntimeWindow();
         if (!window) {
             Fail("FindRuntimeWindow: no visible gkcore window owned by this thread");
             break;
         }
+
+        if (!Check(gk::SetBloomEnabled(false), "gk::SetBloomEnabled(false)") ||
+            !Check(gk::SetFxaaEnabled(false), "gk::SetFxaaEnabled(false)") ||
+            !Check(gk::SetPostEffectShader(postShader), "gk::SetPostEffectShader(enabled before resize)") ||
+            !Check(gk::SetShaderFloat4(postShader, 0, gk::Float4{0.0f, 1.0f, 1.0f, 1.0f}),
+                   "gk::SetShaderFloat4(post-effect tint before resize)") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame custom post before resize") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer(Scene post before resize)") ||
+            !Check(gk::DrawRect(80.0f, 80.0f, 320.0f, 240.0f,
+                               gk::ColorRGB(220, 30, 20), true), "gk::DrawRect post scene sentinel") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "gk::SetDrawLayer(UI post before resize)") ||
+            !Check(gk::DrawRect(400.0f, 80.0f, 320.0f, 240.0f,
+                               gk::ColorRGB(20, 220, 40), true), "gk::DrawRect post UI sentinel") ||
+            !Check(gk::Present(), "gk::Present custom post at 800x600")) break;
 
         RECT outer{};
         if (!GetWindowRect(window, &outer)) {
@@ -160,8 +188,7 @@ int main() {
             break;
         }
 
-        if (!Check(gk::SetBloomEnabled(false), "gk::SetBloomEnabled(false)") ||
-            !Check(gk::SetFxaaEnabled(false), "gk::SetFxaaEnabled(false)") ||
+        if (!Check(gk::SetPostEffectShader(postShader), "gk::SetPostEffectShader(enabled after resize)") ||
             !Check(gk::SetSaturation(0.9f), "gk::SetSaturation") ||
             !Check(gk::SetContrast(1.1f), "gk::SetContrast") ||
             !Check(gk::BeginFrame(), "gk::BeginFrame") ||
@@ -207,6 +234,7 @@ int main() {
             !Check(gk::SetFxaaEnabled(true), "gk::SetFxaaEnabled(true)") ||
             !Check(gk::SetSaturation(1.0f), "gk::SetSaturation(default)") ||
             !Check(gk::SetContrast(1.0f), "gk::SetContrast(default)") ||
+            !Check(gk::SetPostEffectShader({}), "gk::SetPostEffectShader(disabled before next frame)") ||
             !Check(gk::BeginFrame(), "gk::BeginFrame for custom constant arena reuse") ||
             !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer(Scene custom reuse)") ||
             !Check(gk::SetPixelShader(shader), "gk::SetPixelShader(scene custom reuse)") ||
@@ -223,13 +251,28 @@ int main() {
             !Check(gk::SetPixelShader({}), "gk::SetPixelShader(built-in after reuse)") ||
             !Check(gk::Present(), "gk::Present with reused custom constant arena")) break;
 
+        if (!Check(gk::SetPostEffectShader(postShader), "gk::SetPostEffectShader(re-enabled)") ||
+            !Check(gk::SetShaderFloat4(postShader, 0, gk::Float4{0.0f, 1.0f, 1.0f, 1.0f}),
+                   "gk::SetShaderFloat4(post-effect tint re-enabled)") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame custom post re-enabled") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer(Scene post re-enabled)") ||
+            !Check(gk::DrawRect(80.0f, 80.0f, 320.0f, 240.0f,
+                               gk::ColorRGB(220, 30, 20), true), "gk::DrawRect re-enabled post scene sentinel") ||
+            !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "gk::SetDrawLayer(UI post re-enabled)") ||
+            !Check(gk::DrawRect(400.0f, 80.0f, 320.0f, 240.0f,
+                               gk::ColorRGB(20, 220, 40), true), "gk::DrawRect re-enabled post UI sentinel") ||
+            !Check(gk::Present(), "gk::Present custom post re-enabled after disabled frame")) break;
+
         if (!Check(gk::DeleteShader(shader), "gk::DeleteShader after scene and UI draws")) break;
         shader = {};
 
-        if (!Check(gk::BeginFrame(), "gk::BeginFrame after custom shader deletion") ||
+        if (!Check(gk::SetPostEffectShader({}), "gk::SetPostEffectShader(disabled before cleanup frame)") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame after custom shader deletion") ||
             !Check(gk::DrawRect(24.0f, 24.0f, 156.0f, 116.0f,
                                 gk::ColorRGB(40, 180, 80), true), "gk::DrawRect after custom shader deletion") ||
             !Check(gk::Present(), "gk::Present built-in-only after custom shader deletion")) break;
+        if (!Check(gk::DeleteShader(postShader), "gk::DeleteShader after post effect is disabled and presented")) break;
+        postShader = {};
 
         if (!PostMessageW(window, WM_CLOSE, 0, 0)) {
             Win32Fail("PostMessageW(WM_CLOSE)");
