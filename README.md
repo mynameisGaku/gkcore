@@ -23,7 +23,7 @@ int main() {
 }
 ```
 
-描画部は Scene 層の 2D・3D を HDR 描画先へまとめ、Bloom、露出・トーンマッピング、彩度・コントラスト、FXAA を適用してから UI 層を合成します。PNG / BMP 画像のスプライト描画、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。Windows/MSVC でのリンクと実 GPU 上の表示はまだ確認していません。
+描画部は Scene 層の 2D・3D を HDR 描画先へまとめ、Bloom、露出・トーンマッピング、彩度・コントラスト、FXAA を適用してから UI 層を合成します。PNG / BMP 画像のスプライト描画、OBJ / GLB 2.0 / FBX の静的モデル読み込み、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。Windows/MSVC でのリンクと実 GPU 上の表示はまだ確認していません。
 
 HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する経路も実装しました。[色を変えるサンプルと使い方](docs/custom-shader.md)を用意しています。こちらも Windows 上の描画は未確認です。
 
@@ -52,6 +52,7 @@ flowchart LR
 ## 詳細
 
 - [クイックスタート](docs/quickstart.md)
+- [モデルの読み込み](docs/models.md)
 - [ポストエフェクトの使い方](docs/effects.md)
 - [完成仕様](docs/PRODUCT_SPEC.md)
 - [カスタムシェーダー開発](docs/custom-shader.md)

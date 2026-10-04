@@ -263,3 +263,27 @@ root が Linux、GCC 14.2、Python 3.12、CMake / CTest で最新ソースを再
 MinGW による描画部、形状展開、材質計画、ポスト処理、Windows GPU smoke、混在描画サンプルの構文検査も成功しました。Windows GPU smoke には、標準と独自シェーダーでの GLB 描画、予約後のモデル削除、Bloom / FXAA の切り替えを追加しました。MSVC のリンク、Windows の実行、実 GPU での見た目、配布 SDK だけを使ったアプリの起動は未確認です。PBR 照明・影・環境マップ・alpha mode は今回の変更に含みません。
 
 変更はローカルの `dev` へ保存します。Windows の動作確認が残るため、今回の描画変更は `main` へ反映せず、リモートへの push も保留します。
+
+## 2026-10-04: FBX 静的モデル読み込み
+
+- **基準挙動の比較（テスト先行ではない）:** 有効な FBX を旧 OBJ / GLB 専用ローダーで処理する比較を行いました。FBX importer 作成後に実行した `/tmp/gkcore-fbx-red` は終了コード 1 となり、`valid FBX was rejected: OBJ contains no faces` を出しました。この実行は旧ローダーと比較した証拠であり、FBX importer 全体の tests-first RED ではありません。完全な compile command は保存されていません。
+- **テスト先行 RED:** importer 実装後、`legacy_uv_transform` fixture の非恒等 UV 変換を拒否するテストを追加し、検証コードを入れる前に実行しました。`/tmp/gkcore-fbx-validation/gkcore_fbx_tests` は終了コード 1 となり、`invalid or unsupported FBX fixture was accepted: gkcore_legacy_uv_transform.fbx` と出しました。UV 変換の拒否を実装後、root の統合テストが成功しています。
+- FBX importer 全体を最初から tests-first で進めたとは確認できません。FBX の初期テストは実装時系列の後に追加されたものがあり、geometry test は実装前に書かれたものの、最初に失敗した実行記録はありません。strict C++17 の単独 suite が実装後に終了コード 0 になったとの報告がありますが、完全な compile command は保存されていません。
+- 実装は FBX ファイルを 64 MiB、解析時の一時領域を 64 MiB、結果領域を 128 MiB、階層深度を 64 に制限します。静的メッシュを読み込み、アニメーションの再生は行いません。スキニング、モーフ、ジオメトリ cache は拒否します。モデルの単位と軸を右手系 Y-up / meter に変換し、階層・幾何変換を反映します。UV は先頭の UV セットを使い V を反転します。外部画像は FBX からの相対パスで読み、絶対パスは拒否します。FBX で確認した画像は外部・埋め込み PNG です。RGB 材質係数は線形値を保ち、透明度係数はアルファへ反映します。
+- テスト入力・assertion の修正は実装修正の RED と分けます。UV set 名の fixture は ufbx の `Properties70` に正しく記述するよう修正しました。POSITION index を不正にしたケースは当初必要な NORMAL が欠けていたため、index 検査へ到達していませんでした。正常な NORMAL を fixture に加え、期待する POSITION index 診断を確認する assertion に直しました。geometry の頂点数 assertion も実データに合わせて修正しました。
+- `DrawModel` を予約した後 `DeleteModel` して `Present` する公開 API 寿命テストと、アロケーション失敗の注入テストは importer 実装後に追加した回帰検査です。確保失敗は最大 256 回順に注入し、最初に読み込みが成功した時点で止め、失敗後の再試行も確認します。これらを importer の初期実装に対する tests-first RED とは数えません。
+- package allowlist は ufbx の license file を欠いた候補 manifest を拒否し、追加後の package suite は 6/6 件成功しました。最終 Runtime の 40 パスも許可リストと一致しました。MinGW で FBX 関連の 8 translation unit を構文検査し成功しました。検査時にはテスト fixture の union 初期化で missing-braces 警告も報告され、これは runtime source の警告ではありません。vendored ufbx の SHA-256 は元の固定版と一致し、fixture generator の再実行後も全モデル asset の SHA-256 は変わりませんでした。これらの package / 構文検査は MSVC build / link ではありません。
+- legacy UV transform の拒否、公開 API の寿命検査、確保失敗処理の最新変更を含む Release CTest は **22/22 件成功**し、所要時間は 0.77 秒でした。Debug ASan / UBSan CTest も **22/22 件成功**し、所要時間は 2.45 秒でした。実行には `ASAN_OPTIONS=detect_leaks=0` を指定したためリーク検査は行っていません。root は同じソースからモデル asset generator を再実行し、生成 asset の SHA-256 が一致することを確認しました。
+
+```sh
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-review-build --parallel 6
+/tmp/forgedx-review-tools/cmake/data/bin/ctest --test-dir /tmp/gkcore-review-build --output-on-failure
+
+/tmp/forgedx-review-tools/cmake/data/bin/cmake --build /tmp/gkcore-sanitize-build --parallel 6
+ASAN_OPTIONS=detect_leaks=0 /tmp/forgedx-review-tools/cmake/data/bin/ctest \
+  --test-dir /tmp/gkcore-sanitize-build --output-on-failure
+```
+
+テスト内の union 初期化は各成分の代入へ直し、MinGW の `-Werror` 構文検査と Release・ASan / UBSan の FBX テストを再実行しました。どちらも 1/1 件成功しています。
+
+MSVC のビルドとリンク、Windows の実 GPU 表示、Runtime SDK だけを使う別プロジェクトの起動は未検証です。`main` への反映は Windows 検証後とし、リモートへの push は行っていません。
