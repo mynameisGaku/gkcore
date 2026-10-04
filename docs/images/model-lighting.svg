@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="390" viewBox="0 0 900 390" role="img" aria-labelledby="title desc">
+  <title id="title">モデル上の法線、方向光、環境光、材質の模式図</title>
+  <desc id="desc">方向光の平行な光線が二つの球へ当たり、球の面法線で明るさが変わる。下に非金属と金属の roughness 違いを示す概念図。</desc>
+  <defs>
+    <linearGradient id="dielectric" x1="20%" y1="15%" x2="85%" y2="85%">
+      <stop offset="0" stop-color="#fff1bf"/>
+      <stop offset="0.32" stop-color="#e8893f"/>
+      <stop offset="1" stop-color="#512e3f"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="12%" y1="10%" x2="90%" y2="90%">
+      <stop offset="0" stop-color="#ecffff"/>
+      <stop offset="0.22" stop-color="#6ad7ef"/>
+      <stop offset="0.52" stop-color="#1774a5"/>
+      <stop offset="1" stop-color="#102f5a"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#e1a742"/>
+    </marker>
+    <marker id="normalArrow" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L8,3 z" fill="#d8eef8"/>
+    </marker>
+  </defs>
+  <rect width="900" height="390" rx="18" fill="#172333"/>
+  <text x="36" y="38" fill="#f1f5fa" font-family="sans-serif" font-size="21" font-weight="700">モデル専用の直接照明（模式図）</text>
+  <text x="38" y="71" fill="#e1a742" font-family="sans-serif" font-size="15">方向光: 光が進む向き</text>
+  <g stroke="#e1a742" stroke-width="3" marker-end="url(#arrow)" opacity=".9">
+    <path d="M72 92 L226 142"/><path d="M90 132 L244 182"/><path d="M110 172 L263 222"/>
+    <path d="M408 92 L544 136"/><path d="M424 132 L557 176"/><path d="M440 172 L571 216"/>
+  </g>
+  <circle cx="296" cy="215" r="92" fill="url(#dielectric)" stroke="#ffe2b5" stroke-opacity=".4"/>
+  <circle cx="623" cy="215" r="92" fill="url(#metal)" stroke="#c2f3ff" stroke-opacity=".45"/>
+  <g stroke="#d8eef8" stroke-width="2.5" marker-end="url(#normalArrow)">
+    <path d="M360 157 L393 121"/><path d="M687 157 L720 121"/>
+  </g>
+  <g fill="#f1f5fa" font-family="sans-serif" font-size="14">
+    <text x="394" y="106">法線</text><text x="721" y="106">法線</text>
+    <text x="222" y="329" font-size="16" font-weight="700">非金属 · roughness 0.22</text>
+    <text x="553" y="329" font-size="16" font-weight="700">金属 · roughness 0.38</text>
+  </g>
+  <text x="38" y="365" fill="#b8c5d4" font-family="sans-serif" font-size="13">環境光は面全体を一様に持ち上げます。球の色や反射は説明用の概念図で、GPUのキャプチャではありません。</text>
+</svg>
