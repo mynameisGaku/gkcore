@@ -199,9 +199,15 @@ int main() {
                    "gk::SetShaderFloat4(scene)") ||
             !Check(gk::DrawRect(184.0f, 24.0f, 196.0f, 112.0f,
                                 gk::ColorRGB(240, 240, 240), true), "gk::DrawRect custom scene shader") ||
+            !Check(gk::DrawRectOutline(184.0f, 24.0f, 196.0f, 112.0f,
+                                       gk::ColorRGB(240, 240, 240), 3.0f),
+                   "gk::DrawRectOutline custom scene shader") ||
             !Check(gk::SetPixelShader({}), "gk::SetPixelShader(built-in scene)") ||
             !Check(gk::DrawRect(24.0f, 24.0f, 156.0f, 116.0f,
-                                gk::ColorRGB(230, 80, 40), true), "gk::DrawRect scene") ||
+                                gk::ColorRGB(230, 80, 40), false), "gk::DrawRect unfilled scene") ||
+            !Check(gk::DrawRectOutline(24.0f, 24.0f, 156.0f, 116.0f,
+                                       gk::ColorRGB(230, 80, 40), 4.0f),
+                   "gk::DrawRectOutline thick scene") ||
             !Check(gk::DrawTriangle3D(gk::Vec3{-1.0f, 0.0f, 2.0f},
                                       gk::Vec3{1.0f, 0.0f, 2.0f},
                                       gk::Vec3{0.0f, 1.5f, 2.0f},
@@ -218,7 +224,15 @@ int main() {
                    "gk::SetShaderFloat4(UI)") ||
             !Check(gk::DrawRect(184.0f, 132.0f, 196.0f, 160.0f,
                                 gk::ColorRGB(240, 240, 240), true), "gk::DrawRect custom UI shader") ||
+            !Check(gk::DrawRectOutline(184.0f, 132.0f, 196.0f, 160.0f,
+                                       gk::ColorRGB(240, 240, 240), 3.0f),
+                   "gk::DrawRectOutline custom UI shader") ||
             !Check(gk::SetPixelShader({}), "gk::SetPixelShader(built-in UI)") ||
+            !Check(gk::DrawRect(24.0f, 132.0f, 156.0f, 116.0f,
+                                gk::ColorRGB(70, 220, 140), false), "gk::DrawRect unfilled UI") ||
+            !Check(gk::DrawRectOutline(24.0f, 132.0f, 156.0f, 116.0f,
+                                       gk::ColorRGB(70, 220, 140), 2.0f),
+                   "gk::DrawRectOutline thick UI") ||
             !Check(gk::DrawString(24.0f, 180.0f,
                                   "\xE6\x8F\x8F\xE7\x94\xBB\xE3\x83\x86\xE3\x82\xB9\xE3\x83\x88",
                                   gk::ColorRGB(255, 255, 255)), "gk::DrawString Japanese UI text")) break;
