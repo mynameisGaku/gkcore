@@ -1,4 +1,5 @@
 #include "PostProcessRenderer.h"
+#include "PostProcessPlan.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 #include <float.h>
@@ -11,19 +12,31 @@
 
 namespace gk::render {
 
+/**
+ * Local pass indices and GPU constant layouts used by the Direct3D 12 implementation.
+ */
 namespace {
+/**
+ * Descriptor and constant-buffer slot assigned to each full-screen pass.
+ */
 enum PassIndex : uint32_t {
     BloomExtractPass = 0,
     BloomHorizontalPass = 1,
     BloomVerticalPass = 2,
-    CompositePass = 3
+    CompositePass = 3,
+    FxaaPass = 4
 };
 
+/**
+ * Three float4 values shared byte-for-byte with the post-process FSL constant buffer.
+ */
 struct GpuPostProcessConstants {
     float parameters[4];
+    float colorAdjustment[4];
+    float imageSize[4];
 };
 
-static_assert(sizeof(GpuPostProcessConstants) == 16, "post-process FSL constants must remain one float4");
+static_assert(sizeof(GpuPostProcessConstants) == 48, "post-process FSL constants must remain three float4 values");
 
 bool SetPostProcessError(String& error, const char* message) {
     error.Assign(message);
@@ -34,10 +47,10 @@ bool SetPostProcessError(String& error, const char* message) {
 
 PostProcessRenderer::PostProcessRenderer()
     : renderer_(nullptr), outputFormat_(TinyImageFormat_UNDEFINED), sceneTarget_(nullptr), bloomTargets_{},
-      extractShader_(nullptr), blurShader_(nullptr), compositeShader_(nullptr),
-      extractPipeline_(nullptr), blurPipeline_(nullptr), compositePipeline_(nullptr), sampler_(nullptr),
-      descriptorSets_{}, constants_{}, width_(0), height_(0), bloomWidth_(0), bloomHeight_(0),
-      bloomTargetShaderReadable_{} {}
+      linearLdrTarget_(nullptr), extractShader_(nullptr), blurShader_(nullptr), compositeShader_(nullptr),
+      fxaaShader_(nullptr), extractPipeline_(nullptr), blurPipeline_(nullptr),
+      compositeOutputPipeline_(nullptr), compositeLinearPipeline_(nullptr), fxaaPipeline_(nullptr), sampler_(nullptr),
+      descriptorSets_{}, constants_{}, width_(0), height_(0), bloomWidth_(0), bloomHeight_(0), targetStates_{} {}
 
 PostProcessRenderer::~PostProcessRenderer() { Shutdown(); }
 
@@ -53,7 +66,7 @@ bool PostProcessRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_
         Shutdown();
         return false;
     }
-    const PostProcessSettings defaults = {true, 0.15f, 1.0f, true};
+    const PostProcessSettings defaults = {true, 0.15f, 1.0f, true, 1.0f, 1.0f, true};
     for (uint32_t frame = 0; frame < kFramesInFlight; ++frame) {
         if (!UpdatePassBindings(frame, defaults, error)) {
             Shutdown();
@@ -69,6 +82,7 @@ bool PostProcessRenderer::CreateTargets(uint32_t width, uint32_t height, String&
         return SetPostProcessError(error, "The post-process target size must be positive");
     RenderTarget* newScene = nullptr;
     RenderTarget* newBloom[2] = {nullptr, nullptr};
+    RenderTarget* newLinearLdr = nullptr;
     const uint32_t newBloomWidth = width / 2 + width % 2;
     const uint32_t newBloomHeight = height / 2 + height % 2;
     const auto createTarget = [&](const char* name, uint32_t targetWidth, uint32_t targetHeight,
@@ -94,7 +108,9 @@ bool PostProcessRenderer::CreateTargets(uint32_t width, uint32_t height, String&
     };
     if (!createTarget("gkcore HDR Scene", width, height, &newScene) ||
         !createTarget("gkcore Bloom Extract", newBloomWidth, newBloomHeight, &newBloom[0]) ||
-        !createTarget("gkcore Bloom Blur", newBloomWidth, newBloomHeight, &newBloom[1])) {
+        !createTarget("gkcore Bloom Blur", newBloomWidth, newBloomHeight, &newBloom[1]) ||
+        !createTarget("gkcore Linear LDR FXAA Input", width, height, &newLinearLdr)) {
+        if (newLinearLdr) removeRenderTarget(renderer_, newLinearLdr);
         if (newBloom[1]) removeRenderTarget(renderer_, newBloom[1]);
         if (newBloom[0]) removeRenderTarget(renderer_, newBloom[0]);
         if (newScene) removeRenderTarget(renderer_, newScene);
@@ -102,16 +118,17 @@ bool PostProcessRenderer::CreateTargets(uint32_t width, uint32_t height, String&
     }
     if (bloomTargets_[1]) removeRenderTarget(renderer_, bloomTargets_[1]);
     if (bloomTargets_[0]) removeRenderTarget(renderer_, bloomTargets_[0]);
+    if (linearLdrTarget_) removeRenderTarget(renderer_, linearLdrTarget_);
     if (sceneTarget_) removeRenderTarget(renderer_, sceneTarget_);
     sceneTarget_ = newScene;
     bloomTargets_[0] = newBloom[0];
     bloomTargets_[1] = newBloom[1];
+    linearLdrTarget_ = newLinearLdr;
     width_ = width;
     height_ = height;
     bloomWidth_ = newBloomWidth;
     bloomHeight_ = newBloomHeight;
-    bloomTargetShaderReadable_[0] = false;
-    bloomTargetShaderReadable_[1] = false;
+    targetStates_.Reset();
     error.Clear();
     return true;
 }
@@ -135,7 +152,10 @@ bool PostProcessRenderer::CreatePrograms(String& error) {
     addShader(renderer_, &shaderDesc, &blurShader_);
     shaderDesc.mFrag.pFileName = "gkcore_post_composite.frag";
     addShader(renderer_, &shaderDesc, &compositeShader_);
-    if (!extractShader_ || !blurShader_ || !compositeShader_)
+    shaderDesc.mFrag.pFileName = "gkcore_fxaa.frag";
+    addShader(renderer_, &shaderDesc, &fxaaShader_);
+    waitForAllResourceLoads();
+    if (!extractShader_ || !blurShader_ || !compositeShader_ || !fxaaShader_)
         return SetPostProcessError(error, "The Forge could not load the post-process shader programs");
 
     RasterizerStateDesc rasterizer{};
@@ -165,8 +185,13 @@ bool PostProcessRenderer::CreatePrograms(String& error) {
     const TinyImageFormat hdrFormat = TinyImageFormat_R16G16B16A16_SFLOAT;
     createPipeline("gkcore Bloom Extract Pipeline", extractShader_, hdrFormat, &extractPipeline_);
     createPipeline("gkcore Bloom Blur Pipeline", blurShader_, hdrFormat, &blurPipeline_);
-    createPipeline("gkcore Post Composite Pipeline", compositeShader_, outputFormat_, &compositePipeline_);
-    if (!extractPipeline_ || !blurPipeline_ || !compositePipeline_)
+    createPipeline("gkcore Graded Linear Composite Pipeline", compositeShader_, hdrFormat,
+                   &compositeLinearPipeline_);
+    createPipeline("gkcore Direct Post Composite Pipeline", compositeShader_, outputFormat_,
+                   &compositeOutputPipeline_);
+    createPipeline("gkcore FXAA Pipeline", fxaaShader_, outputFormat_, &fxaaPipeline_);
+    if (!extractPipeline_ || !blurPipeline_ || !compositeLinearPipeline_ ||
+        !compositeOutputPipeline_ || !fxaaPipeline_)
         return SetPostProcessError(error, "The Forge could not create the post-process pipelines");
     error.Clear();
     return true;
@@ -207,19 +232,25 @@ bool PostProcessRenderer::UpdatePassBindings(uint32_t frameIndex, const PostProc
     Texture* scene = sceneTarget_ ? sceneTarget_->pTexture : nullptr;
     Texture* bloom0 = bloomTargets_[0] ? bloomTargets_[0]->pTexture : nullptr;
     Texture* bloom1 = bloomTargets_[1] ? bloomTargets_[1]->pTexture : nullptr;
-    if (!scene || !bloom0 || !bloom1 || !sampler_)
+    Texture* linearLdr = linearLdrTarget_ ? linearLdrTarget_->pTexture : nullptr;
+    if (!scene || !bloom0 || !bloom1 || !linearLdr || !sampler_)
         return SetPostProcessError(error, "The post-process textures are not initialized");
     const float horizontal = 1.0f / static_cast<float>(bloomWidth_);
     const float vertical = 1.0f / static_cast<float>(bloomHeight_);
     const GpuPostProcessConstants parameters[kPassCount] = {
-        {{kBloomKnee, kBloomThreshold, 0.0f, 0.0f}},
-        {{horizontal, 0.0f, 0.0f, 0.0f}},
-        {{0.0f, vertical, 0.0f, 0.0f}},
+        {{kBloomKnee, kBloomThreshold, 0.0f, 0.0f}, {}, {1.0f / width_, 1.0f / height_, 0.0f, 0.0f}},
+        {{horizontal, 0.0f, 0.0f, 0.0f}, {}, {1.0f / width_, 1.0f / height_, 0.0f, 0.0f}},
+        {{0.0f, vertical, 0.0f, 0.0f}, {}, {1.0f / width_, 1.0f / height_, 0.0f, 0.0f}},
         {{settings.bloomEnabled ? settings.bloomIntensity : 0.0f, settings.exposure,
-          settings.toneMappingEnabled ? 1.0f : 0.0f, 0.0f}}
+          settings.toneMappingEnabled ? 1.0f : 0.0f, 0.0f},
+         {settings.saturation, settings.contrast, 0.0f, 0.0f},
+         {1.0f / width_, 1.0f / height_, 0.0f, 0.0f}},
+        {{0.0f, 0.0f, 0.0f, 0.0f}, {}, {1.0f / width_, 1.0f / height_, 0.0f, 0.0f}}
     };
-    Texture* sources[kPassCount] = {scene, bloom0, bloom1, scene};
-    Texture* blooms[kPassCount] = {scene, scene, scene, settings.bloomEnabled ? bloom0 : scene};
+    Texture* sources[kPassCount] = {scene, bloom0, bloom1, scene, linearLdr};
+    Texture* blooms[kPassCount] = {
+        scene, scene, scene, settings.bloomEnabled ? bloom0 : scene, linearLdr
+    };
     for (uint32_t pass = 0; pass < kPassCount; ++pass) {
         if (!constants_[frameIndex][pass] || !constants_[frameIndex][pass]->pCpuMappedAddress || !descriptorSets_[pass])
             return SetPostProcessError(error, "The post-process pass resources are unavailable");
@@ -276,32 +307,77 @@ bool PostProcessRenderer::Apply(Cmd* command, RenderTarget* destination, uint32_
     if (destination->mFormat != outputFormat_ || destination->mWidth != width_ ||
         destination->mHeight != height_)
         return SetPostProcessError(error, "The post-process destination does not match its pipeline format and size");
+    PostProcessPlan plan{};
+    if (!BuildPostProcessPlan(settings, plan))
+        return SetPostProcessError(error, "The post-process plan could not be built from frame settings");
     if (!UpdatePassBindings(frameIndex, settings, error)) return false;
+
+    targetStates_.DiscardPending();
+    PostProcessTargetStates recordedStates = targetStates_.Committed();
     Transition(command, sceneTarget_, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-
-    if (settings.bloomEnabled) {
-        if (bloomTargetShaderReadable_[0])
-            Transition(command, bloomTargets_[0], RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
-        DrawFullscreen(command, bloomTargets_[0], extractPipeline_, descriptorSets_[BloomExtractPass], frameIndex);
-        Transition(command, bloomTargets_[0], RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        bloomTargetShaderReadable_[0] = true;
-
-        if (bloomTargetShaderReadable_[1])
-            Transition(command, bloomTargets_[1], RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
-        DrawFullscreen(command, bloomTargets_[1], blurPipeline_, descriptorSets_[BloomHorizontalPass], frameIndex);
-        Transition(command, bloomTargets_[1], RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        bloomTargetShaderReadable_[1] = true;
-
-        Transition(command, bloomTargets_[0], RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
-        DrawFullscreen(command, bloomTargets_[0], blurPipeline_, descriptorSets_[BloomVerticalPass], frameIndex);
-        Transition(command, bloomTargets_[0], RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        bloomTargetShaderReadable_[0] = true;
+    for (uint32_t i = 0; i < plan.count; ++i) {
+        const PostProcessStep& step = plan.steps[i];
+        switch (step.kind) {
+        case PostProcessStepKind::BloomExtract:
+            if (recordedStates.bloomShaderReadable[0])
+                Transition(command, bloomTargets_[0], RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                           RESOURCE_STATE_RENDER_TARGET);
+            DrawFullscreen(command, bloomTargets_[0], extractPipeline_,
+                           descriptorSets_[BloomExtractPass], frameIndex);
+            Transition(command, bloomTargets_[0], RESOURCE_STATE_RENDER_TARGET,
+                       RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            recordedStates.bloomShaderReadable[0] = true;
+            break;
+        case PostProcessStepKind::BloomBlurHorizontal:
+            if (recordedStates.bloomShaderReadable[1])
+                Transition(command, bloomTargets_[1], RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                           RESOURCE_STATE_RENDER_TARGET);
+            DrawFullscreen(command, bloomTargets_[1], blurPipeline_,
+                           descriptorSets_[BloomHorizontalPass], frameIndex);
+            Transition(command, bloomTargets_[1], RESOURCE_STATE_RENDER_TARGET,
+                       RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            recordedStates.bloomShaderReadable[1] = true;
+            break;
+        case PostProcessStepKind::BloomBlurVertical:
+            if (recordedStates.bloomShaderReadable[0])
+                Transition(command, bloomTargets_[0], RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                           RESOURCE_STATE_RENDER_TARGET);
+            DrawFullscreen(command, bloomTargets_[0], blurPipeline_,
+                           descriptorSets_[BloomVerticalPass], frameIndex);
+            Transition(command, bloomTargets_[0], RESOURCE_STATE_RENDER_TARGET,
+                       RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            recordedStates.bloomShaderReadable[0] = true;
+            break;
+        case PostProcessStepKind::Composite:
+            if (step.target == PostProcessTarget::LinearLdr) {
+                if (recordedStates.linearLdrShaderReadable)
+                    Transition(command, linearLdrTarget_, RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                               RESOURCE_STATE_RENDER_TARGET);
+                DrawFullscreen(command, linearLdrTarget_, compositeLinearPipeline_,
+                               descriptorSets_[CompositePass], frameIndex);
+                Transition(command, linearLdrTarget_, RESOURCE_STATE_RENDER_TARGET,
+                           RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                recordedStates.linearLdrShaderReadable = true;
+            } else {
+                DrawFullscreen(command, destination, compositeOutputPipeline_,
+                               descriptorSets_[CompositePass], frameIndex);
+            }
+            break;
+        case PostProcessStepKind::Fxaa:
+            DrawFullscreen(command, destination, fxaaPipeline_, descriptorSets_[FxaaPass], frameIndex);
+            break;
+        default:
+            return SetPostProcessError(error, "The post-process plan contains an unknown pass");
+        }
     }
-
-    DrawFullscreen(command, destination, compositePipeline_, descriptorSets_[CompositePass], frameIndex);
     Transition(command, sceneTarget_, RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
+    targetStates_.Stage(recordedStates);
     error.Clear();
     return true;
+}
+
+void PostProcessRenderer::CommitFrame() {
+    targetStates_.Commit();
 }
 
 bool PostProcessRenderer::Resize(uint32_t width, uint32_t height, String& error) {
@@ -312,7 +388,7 @@ bool PostProcessRenderer::Resize(uint32_t width, uint32_t height, String& error)
         return true;
     }
     if (!CreateTargets(width, height, error)) return false;
-    const PostProcessSettings defaults = {true, 0.15f, 1.0f, true};
+    const PostProcessSettings defaults = {true, 0.15f, 1.0f, true, 1.0f, 1.0f, true};
     for (uint32_t frame = 0; frame < kFramesInFlight; ++frame) {
         if (!UpdatePassBindings(frame, defaults, error)) return false;
     }
@@ -333,11 +409,15 @@ void PostProcessRenderer::Shutdown() {
         for (uint32_t i = 0; i < 2; ++i) {
             if (bloomTargets_[i]) { removeRenderTarget(renderer_, bloomTargets_[i]); bloomTargets_[i] = nullptr; }
         }
+        if (linearLdrTarget_) { removeRenderTarget(renderer_, linearLdrTarget_); linearLdrTarget_ = nullptr; }
         if (sceneTarget_) { removeRenderTarget(renderer_, sceneTarget_); sceneTarget_ = nullptr; }
-        if (compositePipeline_) { removePipeline(renderer_, compositePipeline_); compositePipeline_ = nullptr; }
+        if (fxaaPipeline_) { removePipeline(renderer_, fxaaPipeline_); fxaaPipeline_ = nullptr; }
+        if (compositeLinearPipeline_) { removePipeline(renderer_, compositeLinearPipeline_); compositeLinearPipeline_ = nullptr; }
+        if (compositeOutputPipeline_) { removePipeline(renderer_, compositeOutputPipeline_); compositeOutputPipeline_ = nullptr; }
         if (blurPipeline_) { removePipeline(renderer_, blurPipeline_); blurPipeline_ = nullptr; }
         if (extractPipeline_) { removePipeline(renderer_, extractPipeline_); extractPipeline_ = nullptr; }
         if (compositeShader_) { removeShader(renderer_, compositeShader_); compositeShader_ = nullptr; }
+        if (fxaaShader_) { removeShader(renderer_, fxaaShader_); fxaaShader_ = nullptr; }
         if (blurShader_) { removeShader(renderer_, blurShader_); blurShader_ = nullptr; }
         if (extractShader_) { removeShader(renderer_, extractShader_); extractShader_ = nullptr; }
         if (sampler_) { removeSampler(renderer_, sampler_); sampler_ = nullptr; }
@@ -345,7 +425,7 @@ void PostProcessRenderer::Shutdown() {
     renderer_ = nullptr;
     outputFormat_ = TinyImageFormat_UNDEFINED;
     width_ = height_ = bloomWidth_ = bloomHeight_ = 0;
-    bloomTargetShaderReadable_[0] = bloomTargetShaderReadable_[1] = false;
+    targetStates_.Reset();
 }
 
 RenderTarget* PostProcessRenderer::SceneTarget() const { return sceneTarget_; }

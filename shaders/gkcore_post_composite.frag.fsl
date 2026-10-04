@@ -6,6 +6,9 @@ STRUCT(PostProcessVertex)
     DATA(float2, UV, TEXCOORD);
 };
 
+/**
+ * Maps scene-linear RGB into display range with a soft shoulder.
+ */
 float3 ToneMapAces(float3 color)
 {
     color = max(color, float3(0.0, 0.0, 0.0));
@@ -13,6 +16,9 @@ float3 ToneMapAces(float3 color)
 }
 
 ROOT_SIGNATURE(DefaultRootSignature)
+/**
+ * Combines scene and bloom, then applies display tone and color adjustments.
+ */
 float4 PS_MAIN(PostProcessVertex input)
 {
     INIT_MAIN;
@@ -23,5 +29,9 @@ float4 PS_MAIN(PostProcessVertex input)
         color = ToneMapAces(color);
     else
         color = saturate(color);
+
+    float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
+    color = luminance + (color - luminance) * gPostConstants.ColorAdjustment.x;
+    color = saturate((color - 0.5) * gPostConstants.ColorAdjustment.y + 0.5);
     RETURN(float4(color, 1.0));
 }

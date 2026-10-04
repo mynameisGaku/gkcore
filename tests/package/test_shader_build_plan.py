@@ -22,7 +22,7 @@ class ShaderBuildPlanTests(unittest.TestCase):
         self.assertEqual({path.name for path in runtime_artifacts(out)},
                          {"gkcore_color.vert", "gkcore_color.frag", "gkcore_sprite.vert", "gkcore_sprite.frag",
                           "gkcore_post.vert", "gkcore_bloom_extract.frag", "gkcore_bloom_blur.frag",
-                          "gkcore_post_composite.frag", "default.rootsig", "compute.rootsig"})
+                          "gkcore_post_composite.frag", "gkcore_fxaa.frag", "default.rootsig", "compute.rootsig"})
 
 
 if __name__ == "__main__":

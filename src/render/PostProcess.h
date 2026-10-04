@@ -24,10 +24,13 @@ struct LinearColor {
  * Settings sampled once for a frame's post-process pass.
  */
 struct PostProcessSettings {
-    bool bloomEnabled;
-    float bloomIntensity;
-    float exposure;
-    bool toneMappingEnabled;
+    bool bloomEnabled = true;
+    float bloomIntensity = 0.15f;
+    float exposure = 1.0f;
+    bool toneMappingEnabled = true;
+    float saturation = 1.0f;
+    float contrast = 1.0f;
+    bool fxaaEnabled = true;
 };
 
 /**
@@ -35,7 +38,11 @@ struct PostProcessSettings {
  */
 float SrgbToLinear(float value);
 /**
- * Validates bloom and exposure values against the public API limits.
+ * Converts one normalized linear-light channel to sRGB for perceptual edge detection.
+ */
+float LinearToSrgb(float value);
+/**
+ * Validates all post-process values against their public API limits.
  */
 bool IsPostProcessSettingsValid(const PostProcessSettings& settings);
 /**
@@ -47,7 +54,7 @@ LinearColor ExtractBloom(LinearColor color);
  */
 void GetBloomGaussianWeights(float* weights);
 /**
- * Adds bloom, applies exposure, tone maps optionally, and clamps to display range.
+ * Composites bloom, then applies exposure, tone mapping, saturation, contrast, and display clamping.
  */
 LinearColor CompositeAndToneMap(LinearColor scene, LinearColor bloom,
                                 const PostProcessSettings& settings);

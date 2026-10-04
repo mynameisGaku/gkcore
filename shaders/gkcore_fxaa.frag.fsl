@@ -1,0 +1,71 @@
+#include "gkcore_postprocess.fsl.h"
+
+/**
+ * Fullscreen input carrying clip-space position and normalized texture coordinates.
+ */
+STRUCT(PostProcessVertex)
+{
+    DATA(float4, Position, SV_Position);
+    DATA(float2, UV, TEXCOORD);
+};
+
+/**
+ * Computes edge contrast from the final display-linear color.
+ */
+float FxaaLuminance(float3 linearColor)
+{
+    linearColor = saturate(linearColor);
+    float3 srgb = lerp(12.92 * linearColor,
+                       1.055 * pow(linearColor, 1.0 / 2.4) - 0.055,
+                       step(0.0031308, linearColor));
+    return dot(srgb, float3(0.299, 0.587, 0.114));
+}
+
+/**
+ * Samples the source image while clamping to its visible texture bounds.
+ */
+float3 FxaaColor(float2 uv)
+{
+    return SampleTex2D(gPostSourceTexture, gPostSampler, saturate(uv)).rgb;
+}
+
+ROOT_SIGNATURE(DefaultRootSignature)
+/**
+ * Filters diagonal stair steps while preserving source alpha.
+ */
+float4 PS_MAIN(PostProcessVertex input)
+{
+    INIT_MAIN;
+    float2 texel = gPostConstants.ImageSize.xy;
+    float3 center = FxaaColor(input.UV);
+    float lumaM = FxaaLuminance(center);
+    float lumaNW = FxaaLuminance(FxaaColor(input.UV + float2(-texel.x, -texel.y)));
+    float lumaNE = FxaaLuminance(FxaaColor(input.UV + float2( texel.x, -texel.y)));
+    float lumaSW = FxaaLuminance(FxaaColor(input.UV + float2(-texel.x,  texel.y)));
+    float lumaSE = FxaaLuminance(FxaaColor(input.UV + float2( texel.x,  texel.y)));
+    float lumaN = FxaaLuminance(FxaaColor(input.UV + float2(0.0, -texel.y)));
+    float lumaS = FxaaLuminance(FxaaColor(input.UV + float2(0.0,  texel.y)));
+    float lumaW = FxaaLuminance(FxaaColor(input.UV + float2(-texel.x, 0.0)));
+    float lumaE = FxaaLuminance(FxaaColor(input.UV + float2( texel.x, 0.0)));
+    float minimum = min(lumaM, min(min(lumaNW, lumaNE), min(min(lumaSW, lumaSE), min(min(lumaN, lumaS), min(lumaW, lumaE)))));
+    float maximum = max(lumaM, max(max(lumaNW, lumaNE), max(max(lumaSW, lumaSE), max(max(lumaN, lumaS), max(lumaW, lumaE)))));
+    if (maximum - minimum < max(0.0312, maximum * 0.125))
+        RETURN(float4(center, SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).a));
+
+    float2 direction = float2((lumaSW + lumaSE - lumaNW - lumaNE) * 0.5,
+                              (lumaNW + lumaSW - lumaNE - lumaSE) * 0.5);
+    float magnitude = max(abs(direction.x), abs(direction.y));
+    if (magnitude <= 1.0e-6)
+        RETURN(float4(center, SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).a));
+    float reduction = max((lumaNW + lumaNE + lumaSW + lumaSE) * 0.03125, 1.0 / 128.0);
+    float minimumDirection = min(abs(direction.x), abs(direction.y));
+    float scale = min(1.0 / (minimumDirection + reduction), 8.0 / magnitude);
+    direction = clamp(direction * scale, -8.0, 8.0) * texel;
+    float3 sampleA = 0.5 * (FxaaColor(input.UV - direction / 6.0) +
+                            FxaaColor(input.UV + direction / 6.0));
+    float3 sampleB = sampleA * 0.5 + 0.25 * (FxaaColor(input.UV - direction * 0.5) +
+                                             FxaaColor(input.UV + direction * 0.5));
+    float candidate = FxaaLuminance(sampleB);
+    float3 result = (candidate < minimum || candidate > maximum) ? sampleA : sampleB;
+    RETURN(float4(result, SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).a));
+}

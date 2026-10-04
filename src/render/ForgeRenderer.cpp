@@ -243,6 +243,8 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
                    &noDepth, nullptr, &uiPipeline_);
     createPipeline("gkcore HDR Image Pipeline", spriteShader_, &spriteLayout, sceneFormat, depthTarget_->mFormat,
                    &noDepth, nullptr, &spritePipeline_);
+    createPipeline("gkcore HDR Model Texture Pipeline", spriteShader_, &spriteLayout, sceneFormat,
+                   depthTarget_->mFormat, &depth, nullptr, &spriteDepthPipeline_);
     createPipeline("gkcore HDR Alpha Image Pipeline", spriteShader_, &spriteLayout, sceneFormat, depthTarget_->mFormat,
                    &noDepth, &alphaBlend, &spriteAlphaPipeline_);
     createPipeline("gkcore UI Image Pipeline", spriteShader_, &spriteLayout, displayFormat, TinyImageFormat_UNDEFINED,
@@ -250,7 +252,7 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
     createPipeline("gkcore UI Alpha Image Pipeline", spriteShader_, &spriteLayout, displayFormat, TinyImageFormat_UNDEFINED,
                    &noDepth, &alphaBlend, &spriteAlphaUiPipeline_);
     if (!scenePipeline_ || !depthPipeline_ || !uiPipeline_ || !spritePipeline_ ||
-        !spriteAlphaPipeline_ || !spriteUiPipeline_ || !spriteAlphaUiPipeline_)
+        !spriteAlphaPipeline_ || !spriteDepthPipeline_ || !spriteUiPipeline_ || !spriteAlphaUiPipeline_)
         return SetError(error, "The Forge renderer could not create the built-in draw pipelines");
 
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
@@ -287,6 +289,7 @@ void ForgeRenderer::DestroyGraphicsResources() {
     if (spriteAlphaUiPipeline_) { removePipeline(renderer_, spriteAlphaUiPipeline_); spriteAlphaUiPipeline_ = nullptr; }
     if (spriteUiPipeline_) { removePipeline(renderer_, spriteUiPipeline_); spriteUiPipeline_ = nullptr; }
     if (spritePipeline_) { removePipeline(renderer_, spritePipeline_); spritePipeline_ = nullptr; }
+    if (spriteDepthPipeline_) { removePipeline(renderer_, spriteDepthPipeline_); spriteDepthPipeline_ = nullptr; }
     if (uiPipeline_) { removePipeline(renderer_, uiPipeline_); uiPipeline_ = nullptr; }
     if (depthPipeline_) { removePipeline(renderer_, depthPipeline_); depthPipeline_ = nullptr; }
     if (scenePipeline_) { removePipeline(renderer_, scenePipeline_); scenePipeline_ = nullptr; }
@@ -301,7 +304,8 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     if (!renderer_ || !swapChain_ || !graphicsQueue_) return SetError(error, "The Forge renderer is not initialized");
     if (frame.width == 0 || frame.height == 0) return SetError(error, "The frame size must be positive");
     const PostProcessSettings settings = {
-        frame.bloomEnabled, frame.bloomIntensity, frame.exposure, frame.toneMappingEnabled
+        frame.bloomEnabled, frame.bloomIntensity, frame.exposure, frame.toneMappingEnabled,
+        frame.saturation, frame.contrast, frame.fxaaEnabled
     };
     if (!IsPostProcessSettingsValid(settings))
         return SetError(error, "The frame post-process settings are invalid");
@@ -312,6 +316,27 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
+    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured,
+                         bool alphaBlend, detail::ImageResource* image,
+                         const detail::DrawPacket& draw, bool customShader,
+                         uint32_t customDrawIndex) -> bool {
+        if (count == 0) return true;
+        const bool canBatch = !customShader && runs_.Count() &&
+            !runs_.At(runs_.Count() - 1).customShader &&
+            runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first &&
+            runs_.At(runs_.Count() - 1).depthTest == depthTest &&
+            runs_.At(runs_.Count() - 1).textured == textured &&
+            runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend &&
+            runs_.At(runs_.Count() - 1).layer == draw.layer &&
+            runs_.At(runs_.Count() - 1).image == image;
+        if (canBatch) {
+            runs_.At(runs_.Count() - 1).count += count;
+            return true;
+        }
+        const RenderRun run{first, count, depthTest, textured, alphaBlend, draw.layer,
+                            image, draw.shader, customDrawIndex, customShader};
+        return runs_.Append(run);
+    };
     for (uint32_t layer = 0; layer < 2; ++layer) {
         for (uint32_t i = 0; i < frame.draws.Count(); ++i) {
             const detail::DrawPacket& draw = frame.draws.At(i);
@@ -319,12 +344,58 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             if (draw.layer != layer) continue;
 
             const bool customShader = draw.shader.IsValid();
-            bool needsTexture = draw.kind == detail::DrawKind::Image;
             if (customShader) {
                 if (customDrawCount >= kCustomShaderMaximumDraws)
                     return SetError(error, "The frame exceeds the 4096 custom shader draw limit");
                 if (draw.shaderConstantCount > kShaderConstantSlotCount)
                     return SetError(error, "The custom shader draw has too many constant values");
+            }
+            const uint32_t customDrawIndex = customDrawCount;
+
+            if (draw.kind == detail::DrawKind::Model && draw.model) {
+                ModelDrawPlan plan;
+                if (!BuildModelDrawPlan(*draw.model, plan, error)) return false;
+                if (plan.parts.Count() == 0) continue;
+                const bool customNeedsTexture = customShader &&
+                    (customShaders_.RequiresTexture(draw.shader) ||
+                     customShaders_.RequiresSampler(draw.shader));
+                if (customShader) {
+                    CustomShaderDraw snapshot{};
+                    snapshot.shader = draw.shader;
+                    snapshot.constantCount = draw.shaderConstantCount;
+                    for (uint32_t constant = 0; constant < draw.shaderConstantCount; ++constant)
+                        snapshot.constants[constant] = draw.shaderConstants[constant];
+                    if (!customDraws_.Append(snapshot))
+                        return SetError(error, "The custom shader draw snapshot allocation failed");
+                }
+                for (uint32_t partIndex = 0; partIndex < plan.parts.Count(); ++partIndex) {
+                    const ModelPartPlan& part = plan.parts.At(partIndex);
+                    const uint32_t first = vertices_.Count();
+                    if (!AppendModelPart(frame, draw, part, vertices_, kVertexCapacity, error)) return false;
+                    const uint32_t count = vertices_.Count() - first;
+                    if (count == 0) continue;
+                    detail::ImageResource* materialImage = part.textureIndex >= 0 ?
+                        draw.model->textures.At(static_cast<uint32_t>(part.textureIndex)) : nullptr;
+                    const bool needsTexture = customNeedsTexture || (!customShader && materialImage);
+                    detail::ImageResource* image = needsTexture ?
+                        (materialImage ? materialImage : whiteImage_) : nullptr;
+                    if (needsTexture) {
+                        if (!image) return SetError(error, "The model texture fallback is unavailable");
+                        if (!textureCache_.Prepare(image, error)) return false;
+                    }
+                    const bool alphaBlend = customShader &&
+                        (draw.flags & detail::DrawAlphaBlend) != 0;
+                    const bool depthTest = layer == 0;
+                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image,
+                                   draw, customShader, customDrawIndex))
+                        return SetError(error, "The frame draw-run allocation failed");
+                }
+                if (customShader) ++customDrawCount;
+                continue;
+            }
+
+            bool needsTexture = draw.kind == detail::DrawKind::Image;
+            if (customShader) {
                 needsTexture = customShaders_.RequiresTexture(draw.shader) ||
                                customShaders_.RequiresSampler(draw.shader);
             }
@@ -356,21 +427,9 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
                     return SetError(error, "The custom shader draw snapshot allocation failed");
             }
 
-            const bool canBatch = !customShader && runs_.Count() &&
-                !runs_.At(runs_.Count() - 1).customShader &&
-                runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first &&
-                runs_.At(runs_.Count() - 1).depthTest == depthTest &&
-                runs_.At(runs_.Count() - 1).textured == textured &&
-                runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend &&
-                runs_.At(runs_.Count() - 1).layer == draw.layer &&
-                runs_.At(runs_.Count() - 1).image == image;
-            if (canBatch) {
-                runs_.At(runs_.Count() - 1).count += count;
-            } else {
-                const RenderRun run{first, count, depthTest, textured, alphaBlend, draw.layer,
-                                    image, draw.shader, customShader ? customDrawCount : 0, customShader};
-                if (!runs_.Append(run)) return SetError(error, "The frame draw-run allocation failed");
-            }
+            if (!appendRun(first, count, depthTest, textured, alphaBlend, image, draw,
+                           customShader, customDrawIndex))
+                return SetError(error, "The frame draw-run allocation failed");
             if (customShader) ++customDrawCount;
         }
     }
@@ -435,8 +494,10 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
                     return false;
                 }
             } else {
-                Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_)
-                                                    : (run.depthTest ? depthPipeline_ : scenePipeline_);
+                Pipeline* pipeline = run.textured ?
+                    (run.depthTest ? spriteDepthPipeline_ :
+                     (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_)) :
+                    (run.depthTest ? depthPipeline_ : scenePipeline_);
                 cmdBindPipeline(command, pipeline);
             }
             if (run.textured && !textureCache_.Bind(command, run.image, error)) {
@@ -518,6 +579,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     submit.ppSignalSemaphores = &element.pSemaphore;
     submit.mSignalSemaphoreCount = 1;
     queueSubmit(graphicsQueue_, &submit);
+    postProcess_.CommitFrame();
     if (hasTextureUploads) textureCache_.MarkSubmitted();
 
     QueuePresentDesc present{};

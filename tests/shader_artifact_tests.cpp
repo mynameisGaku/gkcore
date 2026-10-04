@@ -272,6 +272,7 @@ bool ShaderArtifactContract(String& failure) {
         "gkcore_bloom_extract.frag",
         "gkcore_bloom_blur.frag",
         "gkcore_post_composite.frag",
+        "gkcore_fxaa.frag",
         "gkcore_user_tint.frag"
     };
     for (uint32_t i = 0; i < sizeof(compiledPixelShaderNames) / sizeof(compiledPixelShaderNames[0]); ++i) {

@@ -4,13 +4,14 @@
 
 #include "../foundation/String.h"
 #include "PostProcess.h"
+#include "PostProcessPlan.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 
 namespace gk::render {
 
 /**
- * Owns the HDR scene, bloom, and fullscreen presentation resources for one renderer.
+ * Owns HDR scene, bloom, grading, FXAA, and fullscreen presentation resources.
  */
 class PostProcessRenderer {
 public:
@@ -26,7 +27,7 @@ public:
     PostProcessRenderer& operator=(const PostProcessRenderer&) = delete;
 
     /**
-     * Creates HDR targets, shader programs, pipelines, descriptor sets, and constants.
+     * Creates HDR/LDR targets, shader programs, pipelines, descriptor sets, and constants.
      */
     bool Initialize(Renderer* renderer, uint32_t width, uint32_t height,
                     TinyImageFormat outputFormat, String& error);
@@ -35,11 +36,15 @@ public:
      */
     bool Resize(uint32_t width, uint32_t height, String& error);
     /**
-     * Records extraction, separable blur, and display-composite passes.
-     * The destination must be in render-target state; output is linear for an sRGB RTV.
+     * Records bloom, grading, and optional FXAA passes before UI composition.
+     * The destination must be in render-target state; shader output stays linear for an sRGB RTV.
      */
     bool Apply(Cmd* command, RenderTarget* destination, uint32_t frameIndex,
                const PostProcessSettings& settings, String& error);
+    /**
+     * Commits recorded target states after the owning graphics queue accepts the command.
+     */
+    void CommitFrame();
     /**
      * Releases Forge resources in reverse initialization order.
      */
@@ -51,10 +56,10 @@ public:
 
 private:
     static constexpr uint32_t kFramesInFlight = 2;
-    static constexpr uint32_t kPassCount = 4;
+    static constexpr uint32_t kPassCount = 5;
 
     /**
-     * Recreates the scene HDR target and half-resolution bloom targets.
+     * Recreates the scene, full-resolution FXAA input, and bloom targets transactionally.
      */
     bool CreateTargets(uint32_t width, uint32_t height, String& error);
     /**
@@ -83,12 +88,16 @@ private:
     TinyImageFormat outputFormat_;
     RenderTarget* sceneTarget_;
     RenderTarget* bloomTargets_[2];
+    RenderTarget* linearLdrTarget_;
     Shader* extractShader_;
     Shader* blurShader_;
     Shader* compositeShader_;
+    Shader* fxaaShader_;
     Pipeline* extractPipeline_;
     Pipeline* blurPipeline_;
-    Pipeline* compositePipeline_;
+    Pipeline* compositeOutputPipeline_;
+    Pipeline* compositeLinearPipeline_;
+    Pipeline* fxaaPipeline_;
     Sampler* sampler_;
     DescriptorSet* descriptorSets_[kPassCount];
     Buffer* constants_[kFramesInFlight][kPassCount];
@@ -96,7 +105,7 @@ private:
     uint32_t height_;
     uint32_t bloomWidth_;
     uint32_t bloomHeight_;
-    bool bloomTargetShaderReadable_[2];
+    PostProcessTargetStateTracker targetStates_;
 };
 
 }

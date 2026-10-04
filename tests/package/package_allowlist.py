@@ -26,6 +26,7 @@ RUNTIME_SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_post_composite.frag",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag",
 }
 _FIXED = {
     "include/gkcore.h",

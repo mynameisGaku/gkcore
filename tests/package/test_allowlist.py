@@ -16,6 +16,7 @@ SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_post_composite.frag",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag",
 }
 BASE = _FIXED | PUBLIC_HEADERS | RUNTIME_DLLS | SHADERS | {"lib/gkcore.lib", "lib/cmake/gkcore/gkcoreTargets-release.cmake"}
 
@@ -42,6 +43,8 @@ class RuntimeAllowlistTests(unittest.TestCase):
     def test_rejects_missing_compiled_shader(self):
         with self.assertRaisesRegex(PackageError, "gkcore_color.frag"):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_color.frag"})
+        with self.assertRaisesRegex(PackageError, "gkcore_fxaa.frag"):
+            validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag"})
 
     def test_rejects_prefix_escape(self):
         with self.assertRaises(PackageError):

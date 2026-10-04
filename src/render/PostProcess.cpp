@@ -38,11 +38,21 @@ float SrgbToLinear(float value) {
     return powf((value + 0.055f) / 1.055f, 2.4f);
 }
 
+float LinearToSrgb(float value) {
+    value = Clamp(value, 0.0f, 1.0f);
+    if (value <= 0.0031308f) return value * 12.92f;
+    return 1.055f * powf(value, 1.0f / 2.4f) - 0.055f;
+}
+
 bool IsPostProcessSettingsValid(const PostProcessSettings& settings) {
     return settings.bloomIntensity == settings.bloomIntensity &&
            settings.bloomIntensity >= 0.0f && settings.bloomIntensity <= 4.0f &&
            settings.exposure == settings.exposure && settings.exposure > 0.0f && settings.exposure <= 16.0f &&
-           settings.bloomIntensity <= FLT_MAX && settings.exposure <= FLT_MAX;
+           settings.bloomIntensity <= FLT_MAX && settings.exposure <= FLT_MAX &&
+           settings.saturation == settings.saturation && settings.saturation >= 0.0f &&
+           settings.saturation <= 2.0f && settings.saturation <= FLT_MAX &&
+           settings.contrast == settings.contrast && settings.contrast >= 0.0f &&
+           settings.contrast <= 2.0f && settings.contrast <= FLT_MAX;
 }
 
 LinearColor ExtractBloom(LinearColor color) {
@@ -77,6 +87,15 @@ LinearColor CompositeAndToneMap(LinearColor scene, LinearColor bloom,
         green = Clamp(green, 0.0f, 1.0f);
         blue = Clamp(blue, 0.0f, 1.0f);
     }
+    const float luminance = red * kLuminanceWeights[0] +
+                            green * kLuminanceWeights[1] +
+                            blue * kLuminanceWeights[2];
+    red = luminance + (red - luminance) * settings.saturation;
+    green = luminance + (green - luminance) * settings.saturation;
+    blue = luminance + (blue - luminance) * settings.saturation;
+    red = Clamp((red - 0.5f) * settings.contrast + 0.5f, 0.0f, 1.0f);
+    green = Clamp((green - 0.5f) * settings.contrast + 0.5f, 0.0f, 1.0f);
+    blue = Clamp((blue - 0.5f) * settings.contrast + 0.5f, 0.0f, 1.0f);
     return {red, green, blue, Clamp(scene.a, 0.0f, 1.0f)};
 }
 

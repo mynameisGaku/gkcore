@@ -37,3 +37,7 @@
 #frag gkcore_post_composite.frag
 #include "gkcore_post_composite.frag.fsl"
 #end
+
+#frag gkcore_fxaa.frag
+#include "gkcore_fxaa.frag.fsl"
+#end

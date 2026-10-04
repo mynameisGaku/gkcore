@@ -52,7 +52,9 @@ int main() {
     bool initialized = false;
     bool passed = false;
     gk::ImageHandle image{};
+    gk::ModelHandle model{};
     gk::ShaderHandle shader{};
+    gk::ShaderHandle modelShader{};
     do {
         if (!Check(gk::SetWindowSize(800, 600), "gk::SetWindowSize") ||
             !Check(gk::Init(), "gk::Init")) break;
@@ -82,6 +84,32 @@ int main() {
         shader = gk::LoadPixelShader(shaderPath);
         if (!shader.IsValid()) {
             Fail("gk::LoadPixelShader tests/assets/shaders/gkcore_user_tint.frag");
+            break;
+        }
+
+        char modelPath[MAX_PATH * 4 + 64]{};
+        const int modelPathLength = std::snprintf(modelPath, sizeof(modelPath),
+            "%s/tests/assets/models/gkcore_basecolor.glb", GKCORE_TEST_SOURCE_DIR);
+        if (modelPathLength <= 0 || static_cast<size_t>(modelPathLength) >= sizeof(modelPath)) {
+            std::fprintf(stderr, "Could not construct the base-color GLB fixture path\n");
+            break;
+        }
+        model = gk::LoadModel(modelPath);
+        if (!model.IsValid()) {
+            Fail("gk::LoadModel tests/assets/models/gkcore_basecolor.glb");
+            break;
+        }
+
+        char modelShaderPath[MAX_PATH * 4 + 96]{};
+        const int modelShaderPathLength = std::snprintf(modelShaderPath, sizeof(modelShaderPath),
+            "%s/tests/assets/shaders/gkcore_user_textured.frag", GKCORE_TEST_SOURCE_DIR);
+        if (modelShaderPathLength <= 0 || static_cast<size_t>(modelShaderPathLength) >= sizeof(modelShaderPath)) {
+            std::fprintf(stderr, "Could not construct the textured custom shader fixture path\n");
+            break;
+        }
+        modelShader = gk::LoadPixelShader(modelShaderPath);
+        if (!modelShader.IsValid()) {
+            Fail("gk::LoadPixelShader tests/assets/shaders/gkcore_user_textured.frag");
             break;
         }
 
@@ -132,7 +160,11 @@ int main() {
             break;
         }
 
-        if (!Check(gk::BeginFrame(), "gk::BeginFrame") ||
+        if (!Check(gk::SetBloomEnabled(false), "gk::SetBloomEnabled(false)") ||
+            !Check(gk::SetFxaaEnabled(false), "gk::SetFxaaEnabled(false)") ||
+            !Check(gk::SetSaturation(0.9f), "gk::SetSaturation") ||
+            !Check(gk::SetContrast(1.1f), "gk::SetContrast") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame") ||
             !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer(Scene)") ||
             !Check(gk::DrawImage(image, 210.0f, 32.0f, true), "gk::DrawImage alpha PNG first scene draw") ||
             !Check(gk::SetPixelShader(shader), "gk::SetPixelShader(scene)") ||
@@ -147,6 +179,12 @@ int main() {
                                       gk::Vec3{1.0f, 0.0f, 2.0f},
                                       gk::Vec3{0.0f, 1.5f, 2.0f},
                                       gk::ColorRGB(40, 180, 240), true), "gk::DrawTriangle3D") ||
+            !Check(gk::SetPixelShader({}), "gk::SetPixelShader(built-in model)") ||
+            !Check(gk::DrawModel(model), "gk::DrawModel built-in material runs") ||
+            !Check(gk::SetPixelShader(modelShader), "gk::SetPixelShader(textured model)") ||
+            !Check(gk::SetShaderFloat4(modelShader, 0, gk::Float4{0.8f, 0.9f, 1.0f, 1.0f}),
+                   "gk::SetShaderFloat4(model draw)") ||
+            !Check(gk::DrawModel(model), "gk::DrawModel custom material runs") ||
             !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "gk::SetDrawLayer(UI)") ||
             !Check(gk::SetPixelShader(shader), "gk::SetPixelShader(UI)") ||
             !Check(gk::SetShaderFloat4(shader, 0, gk::Float4{0.25f, 1.0f, 0.35f, 1.0f}),
@@ -159,9 +197,17 @@ int main() {
                                   gk::ColorRGB(255, 255, 255)), "gk::DrawString Japanese UI text")) break;
         if (!Check(gk::DeleteImage(image), "gk::DeleteImage after queuing")) break;
         image = {};
+        if (!Check(gk::DeleteModel(model), "gk::DeleteModel after queuing")) break;
+        model = {};
         if (!Check(gk::Present(), "gk::Present effects, alpha sprite, Japanese UI, and resized window")) break;
+        if (!Check(gk::DeleteShader(modelShader), "gk::DeleteShader after model Present")) break;
+        modelShader = {};
 
-        if (!Check(gk::BeginFrame(), "gk::BeginFrame for custom constant arena reuse") ||
+        if (!Check(gk::SetBloomEnabled(true), "gk::SetBloomEnabled(true)") ||
+            !Check(gk::SetFxaaEnabled(true), "gk::SetFxaaEnabled(true)") ||
+            !Check(gk::SetSaturation(1.0f), "gk::SetSaturation(default)") ||
+            !Check(gk::SetContrast(1.0f), "gk::SetContrast(default)") ||
+            !Check(gk::BeginFrame(), "gk::BeginFrame for custom constant arena reuse") ||
             !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "gk::SetDrawLayer(Scene custom reuse)") ||
             !Check(gk::SetPixelShader(shader), "gk::SetPixelShader(scene custom reuse)") ||
             !Check(gk::SetShaderFloat4(shader, 0, gk::Float4{0.15f, 0.3f, 1.0f, 1.0f}),
@@ -216,7 +262,9 @@ int main() {
     } while (false);
 
     if (image.IsValid()) gk::DeleteImage(image);
+    if (model.IsValid()) gk::DeleteModel(model);
     if (shader.IsValid()) gk::DeleteShader(shader);
+    if (modelShader.IsValid()) gk::DeleteShader(modelShader);
     if (initialized) gk::Shutdown();
     return passed ? 0 : 1;
 }

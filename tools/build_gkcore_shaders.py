@@ -22,6 +22,7 @@ EXPECTED_ARTIFACTS = (
     "gkcore_bloom_extract.frag",
     "gkcore_bloom_blur.frag",
     "gkcore_post_composite.frag",
+    "gkcore_fxaa.frag",
     "default.rootsig",
     "compute.rootsig",
 )

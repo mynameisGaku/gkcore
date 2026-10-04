@@ -110,6 +110,7 @@ private:
     Shader* spriteShader_ = nullptr;
     Pipeline* scenePipeline_ = nullptr;
     Pipeline* depthPipeline_ = nullptr;
+    Pipeline* spriteDepthPipeline_ = nullptr;
     Pipeline* uiPipeline_ = nullptr;
     Pipeline* spritePipeline_ = nullptr;
     Pipeline* spriteAlphaPipeline_ = nullptr;
