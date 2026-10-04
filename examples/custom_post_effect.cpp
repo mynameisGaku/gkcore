@@ -26,8 +26,13 @@ int main() {
 
     gk::SetCamera(gk::Vec3{0.0f, 0.0f, -6.0f}, gk::Vec3{0.0f, 0.0f, 0.0f});
     bool failed = false;
+    bool heldSpace = false;
+    bool effectEnabled = true;
     while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
-        if (gk::SetPostEffectShader(postEffect) != 0 ||
+        const bool spaceDown = gk::IsKeyDown(gk::Key::Space);
+        if (spaceDown && !heldSpace) effectEnabled = !effectEnabled;
+        heldSpace = spaceDown;
+        if (gk::SetPostEffectShader(effectEnabled ? postEffect : gk::ShaderHandle{}) != 0 ||
             gk::SetShaderFloat4(postEffect, 0, gk::Float4{0.8f, 1.0f, 1.0f, 1.0f}) != 0 ||
             gk::BeginFrame() != 0) {
             failed = true;
@@ -42,9 +47,11 @@ int main() {
             gk::DrawRect(32.0f, 32.0f, 180.0f, 64.0f,
                          gk::ColorRGB(230, 130, 50), true) == 0 &&
             gk::SetDrawLayer(gk::DrawLayer::UI) == 0 &&
-            gk::DrawRect(1120.0f, 24.0f, 120.0f, 44.0f,
+            gk::DrawRect(640.0f, 24.0f, 120.0f, 44.0f,
                          gk::ColorRGB(60, 220, 130), true) == 0 &&
-            gk::DrawString(32.0f, 660.0f, "Escape キーで終了",
+            gk::DrawString(32.0f, 500.0f,
+                           effectEnabled ? "Space: ポスト効果 ON / Escape: 終了"
+                                         : "Space: ポスト効果 OFF / Escape: 終了",
                            gk::ColorRGB(255, 255, 255)) == 0;
         const bool presented = gk::Present() == 0;
         if (!commandsSucceeded || !presented) {
