@@ -16,6 +16,8 @@ bin/dxcompiler.dll
 bin/dxil.dll
 bin/amd_ags_x64.dll
 bin/WinPixEventRuntime.dll
+bin/gpu.data
+bin/gpu.cfg
 bin/CompiledShaders/DIRECT3D12/gkcore_color.vert
 bin/CompiledShaders/DIRECT3D12/gkcore_color.frag
 bin/CompiledShaders/DIRECT3D12/gkcore_sprite.vert
@@ -52,6 +54,8 @@ share/licenses/gkcore/ufbx-LICENSE.txt
 ```
 
 Allowlist はこの一覧以外の Runtime file を拒否します。対象 DLL の由来と個別ライセンス文書は CMake install rules と The Forge source tree からコピーします。The Forge と DXC の固定版は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) に記録されています。gkcore 自身の配布ライセンスは未決定で、依存の配布条件を含む最終 audit も未完了です。したがって、この一覧は検査契約であり、再配布許可が確定したという意味ではありません。
+
+`gpu.data` はGPUの識別情報と初期プリセット、`gpu.cfg` はGPU選択と設定規則をThe Forgeへ渡します。Runtime起動時にThe ForgeがGPU設定を読み込むため、両方を`bin`へ配置します。固定The Forge checkoutの `Common_3/OS/Windows/pc_gpu.data` と `Examples_3/Unit_Tests/src/01_Transformations/GPUCfg/gpu.cfg` を使い、独自設定は加えません。
 
 ## 開発用 checkout
 

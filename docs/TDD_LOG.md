@@ -478,3 +478,25 @@ Releaseの全targetがビルドできるようになりました。ビルド出�
 SDK22621のRelease全CTestは30件中29件成功し、配布ファイルの許可リスト検査、SDKのみを使うconsumerのビルド・実行、Windowsのshader reflectionを確認しました（runtime-ctest-release.log）。GPU smokeはgkcore.dll内のアクセス違反で失敗しました。MAPによる例外位置はaddLogFile内で、ログ初期化に必要なRD_LOGのI/O設定不足を特定しました。この時点ではGPU初期化・描画の成功を示しません。配置修正前のsmokeは60秒でtimeoutしましたが、それだけでは停止原因を特定できないため、DLL不足だけが原因だったとは断定していません。
 
 Runtime無効のWindows CPUビルドも更新後のソースでDebug / Releaseを再ビルドし、CTestはそれぞれ26/26件成功しました。build/native-validation/cpu-{debug,release}-final-{build,tests}.logに保存しました。
+
+## 2026-10-05: Runtime初期化と実GPU smoke
+
+SDK22621のRelease Runtimeは、初期化直後に`0xc0000005`で終了しました。MAPとWindowsの障害情報から`addLogFile`内を確認すると、tool用のファイルシステム初期化では`RD_LOG`が未設定のまま`initLog("gkcore")`がファイルを開いていました。最初にファイル名なしでloggerを初期化し、DLLの場所を`RD_LOG`に設定した後でログファイルを開くよう修正しました。再初期化時のパス設定の警告も、初期化済みloggerで扱います。
+
+次の実行ではGPUを検出しましたが、`gpu.data`と`gpu.cfg`の不足で初期化が失敗しました。固定Forgeの`Common_3/OS/Windows/pc_gpu.data`を`gpu.data`へ、`Examples_3/Unit_Tests/src/01_Transformations/GPUCfg/gpu.cfg`を同名のまま、ビルド出力とRuntime SDKのbinへ配置します。独自のGPU設定やvendorソース変更は加えていません。Runtime allowlistに2ファイルの欠落を検出するテストを先に追加し、REDを確認してから必須ファイルを更新しました。`python -B tests/package/test_allowlist.py`は7/7成功しました。
+
+出力先のGPU設定2ファイルを除いた後の増分ビルドで両方が復元され、固定Forgeのコピー元とSHA-256が一致しました。DLLとshaderに続き、再配置を確認した記録は`build/native-validation/runtime-stage-gpu-incremental.log`です。GPU smokeには60秒のtimeoutを設定しました。
+
+Windows 11 Pro build 26200、Visual Studio 18 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1、Python 3.11.9、NVIDIA GeForce RTX 4070 SUPER / driver 610.74で、次を実行しました。
+
+```powershell
+.\PRE_SETUP.bat --gpu-check
+```
+
+指定Forgeの1,825ファイルとDXC 1.8.2405の7ファイルの照合、ForgeのRenderer/OS、13個のshader artifact、Release Runtimeと全targetのビルドが成功しました。生成された`gkcore.vcxproj`でもSDK22621とv142を確認しました。CTestは30/30件成功し、GPU smokeは2.46秒、全体は7.46秒で`BUILD READY`になりました。最終実行ログは`build/native-validation/pre-setup-gpu-final.log`、選択GPUの記録は`build/runtime-windows/Release/gkcore.log`です。
+
+GPU smokeは初期化、PNG画像とGLBモデルの読み込み、2D・3D・文字・照明・独自shader・ポスト処理のAPI呼び出しとPresent、960×540へのresize、リソース削除後の描画、終了と再初期化を確認しました。COM reflectionとモデルshaderのreflection検査も成功しました。配布検査ではinstall済みSDKだけを参照する別consumerのビルド・実行が成功しましたが、そのconsumerはInitを呼ばず、GPU描画は検証しません。
+
+同日のRuntimeOFF構成はDebugとReleaseの全targetを再ビルドし、CTestが各26/26成功しました。ログは`build/native-validation/cpu-debug-final-{build,tests}.log`と`cpu-release-final-{build,tests}.log`にあります。
+
+画素読み戻し、サンプルの見た目と品質、FBXなど全形式の実GPU表示、Runtime Debug、他のGPUとWindows 10での検証は未実施です。固定Forgeの開発用shader reloadは`reload-server.txt`がないエラーを出しますが、今回のRelease実行は継続して成功しました。Runtimeの設定項目に無効化の指定がないため、依存物のビルド設定として今後整理します。配布ライセンスの最終確認と初学者による導入確認も残っています。

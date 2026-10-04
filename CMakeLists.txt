@@ -406,6 +406,13 @@ if(GKCORE_BUILD_RUNTIME)
             message(FATAL_ERROR "A required The Forge Runtime DLL is missing from the pinned tree: ${_dll}")
         endif()
     endforeach()
+    set(_gkcore_runtime_gpu_data "${_gkcore_forge_common}/OS/Windows/pc_gpu.data")
+    set(_gkcore_runtime_gpu_config "${GKCORE_FORGE_ROOT}/Examples_3/Unit_Tests/src/01_Transformations/GPUCfg/gpu.cfg")
+    foreach(_runtime_config IN ITEMS "${_gkcore_runtime_gpu_data}" "${_gkcore_runtime_gpu_config}")
+        if(NOT EXISTS "${_runtime_config}")
+            message(FATAL_ERROR "A required The Forge Runtime GPU configuration file is missing: ${_runtime_config}")
+        endif()
+    endforeach()
 
     add_library(Forge::Renderer STATIC IMPORTED GLOBAL)
     set_target_properties(Forge::Renderer PROPERTIES
@@ -532,7 +539,7 @@ if(GKCORE_BUILD_RUNTIME)
         target_link_libraries(gkcore_backend_smoke PRIVATE gkcore::gkcore)
         if(GKCORE_RUN_BACKEND_SMOKE)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
-            set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu")
+            set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60)
         endif()
     endif()
 
@@ -542,6 +549,12 @@ if(GKCORE_BUILD_RUNTIME)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${_gkcore_runtime_dlls}
             "$<TARGET_FILE_DIR:gkcore>"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_gkcore_runtime_gpu_data}"
+            "$<TARGET_FILE_DIR:gkcore>/gpu.data"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${_gkcore_runtime_gpu_config}"
+            "$<TARGET_FILE_DIR:gkcore>/gpu.cfg"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${_gkcore_shader_artifacts}
             "$<TARGET_FILE_DIR:gkcore>/CompiledShaders/DIRECT3D12"
@@ -568,6 +581,8 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES docs/THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/gkcore COMPONENT Runtime)
     install(FILES ${_gkcore_runtime_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
+    install(FILES "${_gkcore_runtime_gpu_data}" DESTINATION ${CMAKE_INSTALL_BINDIR} RENAME gpu.data COMPONENT Runtime)
+    install(FILES "${_gkcore_runtime_gpu_config}" DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
     install(FILES ${_gkcore_shader_artifacts} DESTINATION ${CMAKE_INSTALL_BINDIR}/CompiledShaders/DIRECT3D12 COMPONENT Runtime)
     set(_gkcore_licenses "${CMAKE_INSTALL_DATADIR}/licenses/gkcore")
     install(FILES "${GKCORE_FORGE_ROOT}/LICENSE" DESTINATION ${_gkcore_licenses} RENAME The-Forge-LICENSE.txt COMPONENT Runtime)

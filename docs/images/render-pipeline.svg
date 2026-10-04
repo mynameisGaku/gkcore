@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1080" height="620" viewBox="0 0 1080 620" role="img" aria-labelledby="title desc">
   <title id="title">gkcore の描画処理順</title>
-  <desc id="desc">Scene の 2D と 3D を HDR 描画先へ描き、Bloom、露出・トーンマッピング、色調整、FXAA を適用した後に UI を合成する処理順を示す概念図です。Windows/MSVC でのリンクと実 GPU 上の表示は未検証です。</desc>
+  <desc id="desc">Scene の 2D と 3D を HDR 描画先へ描き、Bloom、露出・トーンマッピング、色調整、FXAA を適用した後に UI を合成する処理順を示す概念図です。Windows Runtime Release build/link と RTX 4070 SUPER での GPU smoke を確認済みです。画素読み戻し・画質評価は対象外です。</desc>
   <defs>
     <linearGradient id="scene" x1="0" x2="1" y1="0" y2="1">
       <stop offset="0" stop-color="#162a48"/>
@@ -76,6 +76,6 @@
   <circle cx="82" cy="426" r="7" fill="#d28b32"/>
   <text x="102" y="432" class="status">描画処理の実装状況</text>
   <text x="76" y="470" class="statusBody">図形・モデル形状・画像・文字表示と、Scene → HDR/Bloom/色調整/FXAA → UI の経路を実装。</text>
-  <text x="76" y="499" class="statusBody">Windows/MSVC でのリンクと実 GPU 上の表示は未確認。</text>
+  <text x="76" y="499" class="statusBody">Windowsビルドと実GPUの動作テストは成功。画質は未検証。</text>
   <text x="76" y="531" class="small">処理順を示す図です。実際の画面を撮影した画像ではありません。</text>
 </svg>

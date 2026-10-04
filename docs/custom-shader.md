@@ -41,7 +41,7 @@ python tools/compile_pixel_shader.py --dxc-root .devtools/dxc-1.8.2405 --input e
 
 shader を選択してから描画命令を追加します。定数はその値を設定した後にキューへ追加した各描画命令へ複写されます。shader を使わない描画には無効 handle を選び、内蔵 shader に戻します。
 
-次のコードは公開 API の使用手順です。D3D12 描画部にはコンパイル済みシェーダーの読み込み、入力検査、描画 pipeline と定数・画像 binding の処理が実装されています。Linux 側のテストと MinGW 構文検査は成功していますが、Windows/MSVC でのリンク、Windows の COM reflection、実 GPU 上の表示は未確認です。この例を Windows で動作確認済みとは扱わないでください。
+次のコードは公開 API の使用手順です。D3D12 描画部にはコンパイル済みシェーダーの読み込み、入力検査、描画 pipeline と定数・画像 binding の処理が実装されています。Windows/MSVC Runtime Release build/link と Windows COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では独自 pixel shader と画像を使う描画 API、resize 後の Present を確認しています。ただし画素の読み戻しや見た目の品質は検証していないため、この例の画面表示まで確認済みとは扱いません。
 
 ```cpp
 #include <stdio.h>
@@ -99,4 +99,4 @@ int main() {
 
 ## 現在の対応範囲
 
-公開 API は shader handle、64 個の `Float4` 定数、描画命令ごとの設定 snapshot を提供し、1 フレームあたり独自 shader を使う描画は最大 4096 件です。D3D12 描画部は共通の頂点シェーダーを使い、Scene/UI、深度検査、alpha blending の pipeline を用意しています。reflection 検査は `b0, space3` の定数と、任意の `t0, space0` / `s0, space0` binding を確認します。独自の頂点 shader と利用者が差し替えるモデル材質 shader ABI は対象外です。モデル描画は gkcore 内蔵の PBR 材質 shader を使います。ポストエフェクト用 shader API と CPU 契約も統合済みで、[専用ガイド](post-effect-shader.md)に使い方をまとめています。Linux DXC で tint HLSL とモデル shader のコンパイル、FSL 形式への変換を確認しましたが、Windows 用 DXC package、Windows COM reflection、Runtime 上の表示を検証した結果ではありません。
+公開 API は shader handle、64 個の `Float4` 定数、描画命令ごとの設定 snapshot を提供し、1 フレームあたり独自 shader を使う描画は最大 4096 件です。D3D12 描画部は共通の頂点シェーダーを使い、Scene/UI、深度検査、alpha blending の pipeline を用意しています。Windows COM reflection は `b0, space3` の定数と、任意の `t0, space0` / `s0, space0` binding を確認します。独自の頂点 shader と利用者が差し替えるモデル材質 shader ABI は対象外です。モデル描画は gkcore 内蔵の PBR 材質 shader を使います。ポストエフェクト用 shader API と CPU 契約も統合済みで、[専用ガイド](post-effect-shader.md)に使い方をまとめています。Windows Runtime Release build/link と RTX 4070 SUPER で独自 shader を使う GPU smoke を確認していますが、画素の読み戻しや見た目の品質を検証した結果ではありません。

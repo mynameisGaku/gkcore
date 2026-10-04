@@ -29,7 +29,9 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-CMake による開発用 build 設定と、The Forge を使う Windows 描画部があります。Windows 実機での Runtime build と GPU 描画はまだ確認していません。Linux の CPU テストは API の約束を検査しますが、GPU の表示結果は保証しません。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeのビルドとGPU smokeを含むCTest 30件が成功しています。画素の読み戻し、見た目の確認、RuntimeのDebug構成、別GPUでの実行は未検証です。CPUテストとGPU smokeだけでは表示結果の正しさを保証しません。
+
+固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。今回のRelease実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
 ## Windows GPU smoke と画面の目視確認
 
@@ -38,6 +40,8 @@ DX12 対応 GPU を搭載した Windows PC で次を実行すると、通常の 
 ```bat
 PRE_SETUP.bat --gpu-check
 ```
+
+2026-10-05に`PRE_SETUP.bat --gpu-check`を実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプルのビルド、全CTest 30件が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。実行ログは`build/native-validation/pre-setup-gpu-final.log`にあります。
 
 この smoke は初期化、カスタムポスト shader の有効化、960×540 へのサイズ変更、Scene と UI を含む描画命令の `Present`、ポスト shader の無効化・再有効化、無効化後の削除、終了と再初期化を確認します。API の戻り値とウィンドウの client size を検査しますが、画素の読み戻しは行わないため、色や UI が期待どおりに見えることまでは判定しません。
 
@@ -54,7 +58,7 @@ cd build\runtime-windows\Release
 gkcore_model_lighting.exe
 ```
 
-この操作手順は Windows DX12 実機で実行し、法線による明暗と材質の違いが表示されることを目視で確認してください。CPU 契約テストや shader / C++ 構文検査は画面表示の確認を代替しません。Runtime の Windows/MSVC link と GPU 上の見た目は未確認です。GPU smoke 自体も画素読み戻しをしないため、手動の目視確認が必要です。
+この操作手順で、法線による明暗と材質の違いが表示されることを目視で確認してください。Windows/MSVCでのReleaseビルドとリンク、実GPUでのAPI呼び出しは確認済みですが、このサンプルの見た目は未確認です。GPU smokeは画素を読み戻さないため、表示の正しさは別に確認する必要があります。
 
 ## 開発テストの実行
 

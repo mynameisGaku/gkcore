@@ -1,4 +1,4 @@
-"""Fail-closed allowlist for the small gkcore Runtime SDK."""
+﻿"""Fail-closed allowlist for the small gkcore Runtime SDK."""
 from pathlib import PurePosixPath
 import re
 
@@ -14,6 +14,11 @@ RUNTIME_DLLS = {
     "bin/dxil.dll",
     "bin/amd_ags_x64.dll",
     "bin/WinPixEventRuntime.dll",
+}
+# 起動時に読み込むGPUの識別情報と設定。
+RUNTIME_GPU_CONFIGURATION = {
+    "bin/gpu.data",
+    "bin/gpu.cfg",
 }
 RUNTIME_SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_color.vert",
@@ -65,7 +70,7 @@ def validate(files):
         normalized.add(path.as_posix())
     if any(path == "." for path in normalized):
         raise PackageError("package manifest contains a path outside its prefix")
-    required = _FIXED | RUNTIME_DLLS | RUNTIME_SHADERS | {"lib/gkcore.lib"}
+    required = _FIXED | RUNTIME_DLLS | RUNTIME_GPU_CONFIGURATION | RUNTIME_SHADERS | {"lib/gkcore.lib"}
     missing = required - normalized
     if missing:
         raise PackageError("missing required runtime files: " + ", ".join(sorted(missing)))

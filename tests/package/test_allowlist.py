@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
+import re
 import unittest
 
 from package_allowlist import PackageError, RUNTIME_DLLS, _FIXED, validate
@@ -20,7 +21,9 @@ SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_post_composite.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_fxaa.frag",
 }
-BASE = _FIXED | PUBLIC_HEADERS | RUNTIME_DLLS | SHADERS | {"lib/gkcore.lib", "lib/cmake/gkcore/gkcoreTargets-release.cmake"}
+# 片方の欠落も検出するため、配布物に必要な2ファイルを明示する。
+GPU_CONFIGURATION = {"bin/gpu.data", "bin/gpu.cfg"}
+BASE = _FIXED | PUBLIC_HEADERS | RUNTIME_DLLS | GPU_CONFIGURATION | SHADERS | {"lib/gkcore.lib", "lib/cmake/gkcore/gkcoreTargets-release.cmake"}
 
 
 class RuntimeAllowlistTests(unittest.TestCase):
@@ -60,6 +63,12 @@ class RuntimeAllowlistTests(unittest.TestCase):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.vert"})
         with self.assertRaisesRegex(PackageError, "gkcore_model.frag"):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.frag"})
+
+    def test_rejects_missing_gpu_configuration_data(self):
+        for path in GPU_CONFIGURATION:
+            pattern = rf"missing required runtime files:.*{re.escape(path.rsplit('/', 1)[-1])}"
+            with self.subTest(path=path), self.assertRaisesRegex(PackageError, pattern):
+                validate(BASE - {path})
 
     def test_rejects_prefix_escape(self):
         with self.assertRaises(PackageError):

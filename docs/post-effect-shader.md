@@ -98,4 +98,4 @@ flowchart LR
     U --> P["画面へ表示"]
 ```
 
-これは gkcore が処理する順序です。カスタムポストシェーダー API と CPU 契約は統合済みです。Windows/MSVC のリンク、実 GPU 上の表示は未確認です。最新状況は[機能一覧](ROADMAP.md)を参照してください。
+これは gkcore が処理する順序です。カスタムポストシェーダー API と CPU 契約は統合済みです。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では独自 post-effect shader を適用した描画 API と Present を確認していますが、画素の読み戻しや見た目の品質は検証していません。最新状況は[機能一覧](ROADMAP.md)を参照してください。

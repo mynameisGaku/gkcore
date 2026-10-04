@@ -32,7 +32,7 @@ int main() {
 
 [`examples/mixed_scene.cpp`](../examples/mixed_scene.cpp) は同じフレームの `Scene` 層に 3D 三角形と 2D 矩形を置き、`UI` 層に矩形と日本語文字を描く例です。`gk::DrawString` は Windows のシステム標準フォントを使い、同じ文字列・色・大きさの描画を上限付きキャッシュで再利用します。フォントファイルを別途用意する必要はありません。
 
-PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めます。FBX の ASCII・バイナリ形式、基本色係数、相対パスの PNG 画像取り込みは CPU テストで確認しています。GLB の metallic / roughness 係数と基本色、方向光・一様な環境光によるモデル照明を実装しています。OBJ / FBX は非金属・粗い材質の係数で描画します。影、環境マップ、metallic-roughness texture、normal map、alpha mode は未対応です。照明設定、法線、材質計画の CPU テストと Linux shader compile/reflection は成功していますが、Windows/MSVC link と実 GPU 表示は未確認です。形式ごとの手順は [モデルの読み込み](models.md)、[モデル照明ガイド](lighting.md)、機能一覧は [ROADMAP](ROADMAP.md) を確認してください。
+PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めます。FBX の ASCII・バイナリ形式、基本色係数、相対パスの PNG 画像取り込みは CPU テストで確認しています。GLB の metallic / roughness 係数と基本色、方向光・一様な環境光によるモデル照明を実装しています。OBJ / FBX は非金属・粗い材質の係数で描画します。影、環境マップ、metallic-roughness texture、normal map、alpha mode は未対応です。照明設定、法線、材質計画の CPU テストと Linux shader compile/reflection に加え、Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER での GPU smoke を確認しています。smoke は描画 API の戻り値、Present、resize、再初期化を検査しますが、画素の読み戻しや見た目の品質は検証していません。個別形式の手順は [モデルの読み込み](models.md)、[モデル照明ガイド](lighting.md)、機能一覧は [ROADMAP](ROADMAP.md) を確認してください。
 
 3D カメラには `gk::SetCamera(gk::Vec3{...}, gk::Vec3{...})` で位置と注視点を渡します。モデルハンドルは `gk::LoadModel` で取得し、`gk::SetModelPosition`、`gk::SetModelRotation`、`gk::SetModelScale` で指定した値が後続の `gk::DrawModel` に使われます。使い終えたら `gk::DeleteModel` で解放します。画像も `ImageHandle` で管理します。
 
@@ -44,11 +44,11 @@ PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めま�
 
 ## ポストエフェクト
 
-`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled`、`gk::SetSaturation`、`gk::SetContrast`、`gk::SetFxaaEnabled` で効果を調整できます。Bloom、トーンマッピング、FXAA は初期設定で有効です。彩度とコントラストの `1.0f` は補正なしです。設定できる範囲や例は [ポストエフェクトの使い方](effects.md) を参照してください。Windows/MSVC でのリンクと実 GPU 上の見た目は未確認です。
+`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled`、`gk::SetSaturation`、`gk::SetContrast`、`gk::SetFxaaEnabled` で効果を調整できます。Bloom、トーンマッピング、FXAA は初期設定で有効です。彩度とコントラストの `1.0f` は補正なしです。設定できる範囲や例は [ポストエフェクトの使い方](effects.md) を参照してください。Windows/MSVC Runtime Release build/link と RTX 4070 SUPER での GPU smoke は確認済みです。smoke では効果を有効にした描画 API と Present を検査しますが、画素の読み戻しや見た目の品質は検証していません。
 
 ## カスタムシェーダー
 
-HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC でのビルドと実 GPU 上の表示は未確認です。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
+HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で shader を使う GPU smoke を確認しています。smoke は API 戻り値と Present を検査し、画素出力や見た目は判定していません。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
 
 ## 開発環境
 

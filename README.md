@@ -5,37 +5,62 @@ gkcore は Windows 向けの C++ ゲーム描画フレームワークです。�
 ```cpp
 #include <gkcore.h>
 
-int main() {
-    if (gk::SetWindowSize(1280, 720) != 0) return 1;
-    if (gk::Init() != 0) return 1;
+int main()
+{
+    if (gk::SetWindowSize(1280, 720) != 0)
+    {
+        return 1;
+    }
+    if (gk::Init() != 0)
+    {
+        return 1;
+    }
 
-    while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
-        if (gk::BeginFrame() != 0 ||
-            gk::SetDrawLayer(gk::DrawLayer::Scene) != 0 ||
-            gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f,
-                         gk::ColorRGB(70, 150, 240), true) != 0 ||
-            gk::SetDrawLayer(gk::DrawLayer::UI) != 0 ||
-            gk::DrawString(32.0f, 660.0f, "Escape キーで終了", gk::ColorRGB(255, 255, 255)) != 0 ||
-            gk::Present() != 0) break;
+    while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape))
+    {
+        if (gk::BeginFrame() != 0)
+        {
+            break;
+        }
+        if (gk::SetDrawLayer(gk::DrawLayer::Scene) != 0)
+        {
+            break;
+        }
+        if (gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f, gk::ColorRGB(70, 150, 240), true) != 0)
+        {
+            break;
+        }
+        if (gk::SetDrawLayer(gk::DrawLayer::UI) != 0)
+        {
+            break;
+        }
+        if (gk::DrawString(32.0f, 660.0f, "Escape キーで終了", gk::ColorRGB(255, 255, 255)) != 0)
+        {
+            break;
+        }
+        if (gk::Present() != 0)
+        {
+            break;
+        }
     }
 
     gk::Shutdown();
 }
 ```
 
-描画部は Scene 層の 2D・3D を HDR 描画先へまとめ、Bloom、露出・トーンマッピング、彩度・コントラスト、FXAA を適用してから UI 層を合成します。PNG / BMP 画像のスプライト描画、OBJ / GLB 2.0 / FBX の静的モデル読み込み、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。Windows/MSVC でのリンクと実 GPU 上の表示はまだ確認していません。
+描画部は Scene 層の 2D・3D を HDR 描画先へまとめ、Bloom、露出・トーンマッピング、彩度・コントラスト、FXAA を適用してから UI 層を合成します。PNG / BMP 画像のスプライト描画、OBJ / GLB 2.0 / FBX の静的モデル読み込み、ウィンドウサイズ変更、システム標準フォントを使う `gk::DrawString` も実装しています。
 
-HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する経路も実装しました。[色を変えるサンプルと使い方](docs/custom-shader.md)を用意しています。こちらも Windows 上の描画は未確認です。
+HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する経路も実装しました。[色を変えるサンプルと使い方](docs/custom-shader.md)を用意しています。
 
-Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガイド](docs/post-effect-shader.md)にまとめています。API と CPU 側の契約テストは確認済みです。Windows/MSVC でのリンクと実 GPU 上の動作は未確認です。
+Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガイド](docs/post-effect-shader.md)にまとめています。
 
 ## 2D・3D とエフェクト
 
 矩形は塗りつぶしと輪郭を選べます。線幅は `gk::DrawRectOutline` で指定します。[使い方とサンプル](docs/rectangles.md)を参照してください。
 
-GLB モデルには方向光と一様な環境光を設定できます。サンプルでは、非金属と金属の球を並べ、キー操作で光の向きを変えます。[モデル照明のガイド](docs/lighting.md)と[実行例](examples/model_lighting.cpp)を参照してください。Windows/MSVC でのリンクと DX12 GPU 上の表示確認は未完了です。
+GLB モデルには方向光と一様な環境光を設定できます。サンプルでは、非金属と金属の球を並べ、キー操作で光の向きを変えます。[モデル照明のガイド](docs/lighting.md)と[実行例](examples/model_lighting.cpp)を参照してください。
 
-Scene の 2D と 3D を同じ描画先へ重ね、Bloom、露出・トーンマッピング、色調整、必要に応じた FXAA を適用してから UI を合成します。処理順と、Windows/GPU 上では未確認であることを図に示します。
+Scene の 2D と 3D を同じ描画先へ重ね、Bloom、露出・トーンマッピング、色調整、必要に応じた FXAA を適用してから UI を合成します。図は処理順を示します。
 
 ![gkcore の描画処理順](docs/images/render-pipeline.svg)
 
@@ -53,7 +78,9 @@ flowchart LR
     D -. 開発専用 .-> X[Runtime には含めない]
 ```
 
-開発には Windows 10/11 x64、Python 3.9 以降、Windows SDK 10.0.22621.0、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は The Forge と DXC 1.8.2405 の SHA-256 を確かめ、依存物と gkcore の FSL シェーダーをビルドした後、ライブラリ、サンプル、テストをビルドします。DX12 対応 GPU があれば `PRE_SETUP.bat --gpu-check` で描画確認も実行できます。Runtime から STL を除く方針で、テストや開発ツールは別に保ちます。[開発ガイド](docs/development.md) と [機能サポート状況](docs/ROADMAP.md) を参照してください。
+開発には Windows 10/11 x64、Python 3.9 以降、Windows SDK 10.0.22621.0、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は The Forge と DXC 1.8.2405 の SHA-256 を確かめ、依存物と gkcore の FSL シェーダーをビルドした後、ライブラリ、サンプル、テストをビルドします。Runtime から STL を除く方針で、テストや開発ツールは別に保ちます。[開発ガイド](docs/development.md) と [機能サポート状況](docs/ROADMAP.md) を参照してください。
+
+Windows 11 Pro x64、Visual Studio 2026/v142、Windows SDK 22621、CMake 4.3.1、RTX 4070 SUPER で `PRE_SETUP.bat --gpu-check` が成功し、Release Runtime と CTest 30/30を確認しました。画面の見た目と画質は未検証です。CPU-only の Debug/Release CTest と、インストール SDK consumer の build/run も成功しています。GPU smoke と consumer の確認範囲、CPU-only 検証の toolchain、未確認事項は[機能とサポート状況](docs/ROADMAP.md)と[TDD 検証ログ](docs/TDD_LOG.md)を参照してください。
 
 ## 詳細
 
