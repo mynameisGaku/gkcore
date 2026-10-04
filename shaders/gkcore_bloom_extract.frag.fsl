@@ -1,4 +1,4 @@
-#include "gkcore_postprocess.fsl.h"
+﻿#include "gkcore_postprocess.fsl.h"
 
 STRUCT(PostProcessVertex)
 {
@@ -10,7 +10,7 @@ ROOT_SIGNATURE(DefaultRootSignature)
 float4 PS_MAIN(PostProcessVertex input)
 {
     INIT_MAIN;
-    float3 color = max(SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).rgb, float3(0.0, 0.0, 0.0));
+    float3 color = max(SampleTex2D(gPostTextures[0], gPostSampler, input.UV).rgb, float3(0.0, 0.0, 0.0));
     float luminance = dot(color, float3(0.2126, 0.7152, 0.0722));
     float knee = max(gPostConstants.Parameters.x, 0.0001);
     float threshold = gPostConstants.Parameters.y;

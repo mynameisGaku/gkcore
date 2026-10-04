@@ -1,4 +1,4 @@
-#include "gkcore_postprocess.fsl.h"
+﻿#include "gkcore_postprocess.fsl.h"
 
 STRUCT(PostProcessVertex)
 {
@@ -22,8 +22,8 @@ ROOT_SIGNATURE(DefaultRootSignature)
 float4 PS_MAIN(PostProcessVertex input)
 {
     INIT_MAIN;
-    float3 scene = SampleTex2D(gPostSourceTexture, gPostSampler, input.UV).rgb;
-    float3 bloom = SampleTex2D(gPostBloomTexture, gPostSampler, input.UV).rgb;
+    float3 scene = SampleTex2D(gPostTextures[0], gPostSampler, input.UV).rgb;
+    float3 bloom = SampleTex2D(gPostTextures[1], gPostSampler, input.UV).rgb;
     float3 color = (scene + bloom * gPostConstants.Parameters.x) * gPostConstants.Parameters.y;
     if (gPostConstants.Parameters.z > 0.5)
         color = ToneMapAces(color);

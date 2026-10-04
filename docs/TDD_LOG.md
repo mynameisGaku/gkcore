@@ -454,3 +454,13 @@ The Forgeの取得先URLが、保存済みSHA-256と異なる形式のアーカ�
 Windowsの長い一時パスへの展開は修正前にWinError 206で失敗しました。長いパスに対応した展開処理を追加し、移動後の内容確認と不正なパスの拒否を含む `python -B tests/package/test_forge_checkout.py` の5件が成功しました。実アーカイブを展開し、既定の `.devtools/The-Forge` でも1,825ファイルの検証に成功しました。今回変更したPythonソースはUTF-8 BOM付き・CRLFで確認しています。
 
 変更後に `ctest --test-dir build/dev-windows -C Debug --output-on-failure` とRelease構成の同コマンドを実行し、どちらも26/26件成功しました。既存のRuntime無効ビルドを使った回帰検証です。ログは `build/native-validation/ctest-tools-debug.log` と `ctest-tools-release.log` に保存しました。
+
+## 2026-10-05: Windowsポストエフェクトshaderの画像割り当て
+
+WindowsのFSL/DXC実行では、sourceとBloomを別々のtextureとして宣言すると両方がt0になり、register重複でコンパイルが失敗しました（`build/native-validation/shaders-first.log`）。2要素のtexture配列にまとめ、CPU側から同じ順番で2枚を渡すよう修正しました。生成したpost-compositeのDXILをDXCで検査し、textureがt0〜t1、samplerがs0、constant bufferがb0であることを確認します。
+
+UTF-8 BOM付きのFSL入力は固定バージョンのコンパイラで処理に失敗しました。元ソースはBOM付き・CRLFのまま保ち、ビルド時の一時コピーだけBOMを除去し、子Pythonの文字コードをUTF-8へ固定しました。元ファイルの内容を保持するテストも追加しました。
+
+`python -B tests/package/test_shader_build_plan.py` の3件と `python -B tests/shader_contract_tests.py` の13件が成功しました。固定ForgeとDXC 1.8.2405を使うWindows実行で13個のshader artifactを生成し、生成物のreflection検査も成功しました（`build/native-validation/shaders-arraybinding-final.log`）。この確認はshaderの生成と割り当てを対象とし、GPU表示や画質の検証ではありません。
+
+中カッコを改行する書式と、括弧・初期化子内部を1行に保つ設定を追加しました。変更したC++とFSLはclang-format 12の再実行で差分が出ず、UTF-8 BOM付き・CRLFを確認しました。整形後もWindowsで13個のshaderを再生成し、reflection検査が成功しました（build/native-validation/shaders-final-format.log）。

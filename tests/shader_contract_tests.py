@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Validate The Forge FSL artifact and built-in shader contracts.
 
 A D3D12 FSL build uses FSL's @FSL derivative container; each selected stage
@@ -171,6 +171,27 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
         raise ShaderContractError(f"{source}: model pixel shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
 
+def validate_post_composite_shader_reflection(dump: str, source: str = "<DXC reflection>") -> None:
+    """合成shaderが隣接する2つのtexture slotを公開することを確認する。"""
+    resource_section = _section(dump, "Resource Bindings:", "ViewId state:", "Buffer Definitions:")
+    texture_rows = [line for line in resource_section.splitlines()
+                    if re.search(r"\btexture\b", line, re.IGNORECASE)]
+    missing: list[str] = []
+    if len(texture_rows) != 1 or not re.search(
+            r"\btexture\s+f32\s+2d\s+T\d+\s+t0(?:,space0)?\s+2\b",
+            texture_rows[0] if texture_rows else "", re.IGNORECASE):
+        missing.append("two-element Texture2D binding at t0-t1")
+    if not re.search(r"\bsampler\s+NA\s+NA\s+S\d+\s+s0(?:,space0)?\s+1\b",
+                     resource_section, re.IGNORECASE):
+        missing.append("one sampler binding at s0")
+    if not re.search(r"\bcbuffer\s+NA\s+NA\s+CB\d+\s+cb0(?:,space0)?\s+1\b",
+                     resource_section, re.IGNORECASE):
+        missing.append("one constant-buffer binding at b0")
+    if missing:
+        raise ShaderContractError(
+            f"{source}: post-composite shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
+
+
 def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC reflection>") -> None:
     """Check the model lighting vertex shader's mesh input and varyings."""
     input_section = _section(dump, "Input signature:", "Output signature:")
@@ -299,6 +320,31 @@ class ShaderReflectionTests(unittest.TestCase):
         with self.assertRaisesRegex(ShaderContractError, "LightingConstants at b0, space1"):
             validate_model_pixel_shader_reflection(REFLECTION_GOOD, "gkcore_model.frag")
 
+    def test_accepts_post_composite_texture_array_reflection(self):
+        reflection = """\
+; Resource Bindings:
+; Name                                 Type  Format         Dim      ID      HLSL Bind  Count
+; ------------------------------ ---------- ------- ----------- ------- -------------- ------
+;                                   cbuffer      NA          NA     CB0            cb0     1
+;                                   sampler      NA          NA      S0             s0     1
+;                                   texture     f32          2d      T0             t0     2
+; ViewId state:
+"""
+        validate_post_composite_shader_reflection(reflection, "gkcore_post_composite.frag")
+
+    def test_rejects_overlapping_single_texture_bindings_for_post_composite(self):
+        reflection = """\
+; Resource Bindings:
+; Name                                 Type  Format         Dim      ID      HLSL Bind  Count
+;                                   cbuffer      NA          NA     CB0            cb0     1
+;                                   sampler      NA          NA      S0             s0     1
+;                                   texture     f32          2d      T0             t0     1
+;                                   texture     f32          2d      T0            t0     1
+; ViewId state:
+"""
+        with self.assertRaisesRegex(ShaderContractError, "two-element Texture2D binding at t0-t1"):
+            validate_post_composite_shader_reflection(reflection, "gkcore_post_composite.frag")
+
     def test_runtime_manifest_rejects_compilers(self):
         validate_runtime_manifest(["include/gkcore.h", "bin/gkcore.dll", "lib/gkcore.lib"])
         with self.assertRaisesRegex(ShaderContractError, r"Runtime SDK contains development shader tools:"):
@@ -317,7 +363,8 @@ class ShaderReflectionTests(unittest.TestCase):
 
 
 def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bool,
-                     model_pixel: bool = False, model_vertex: bool = False) -> None:
+                     model_pixel: bool = False, model_vertex: bool = False,
+                     post_composite: bool = False) -> None:
     parsed = parse_fsl_artifact(path.read_bytes(), str(path))
     print(f"PASS: {path}: valid @FSL artifact, {len(parsed.derivatives)} DXIL derivative(s)")
     if not dxc:
@@ -342,6 +389,9 @@ def inspect_artifact(path: pathlib.Path, dxc: str | None, require_reflection: bo
         elif model_vertex:
             validate_model_vertex_shader_reflection(result.stdout, str(path))
             print(f"PASS: {path}: DXC reflection satisfies the model lighting vertex shader contract")
+        elif post_composite:
+            validate_post_composite_shader_reflection(result.stdout, str(path))
+            print(f"PASS: {path}: DXC reflection exposes both post-composite texture slots")
         else:
             validate_pixel_shader_reflection(result.stdout, str(path))
             print(f"PASS: {path}: DXC reflection satisfies the built-in color pixel shader contract")
@@ -356,6 +406,8 @@ def main() -> int:
                         help="check the model lighting pixel shader reflection ABI")
     parser.add_argument("--model-vertex", action="store_true",
                         help="check the model lighting vertex shader reflection ABI")
+    parser.add_argument("--post-composite", action="store_true",
+                        help="check the post-composite texture-array reflection ABI")
     parser.add_argument("--runtime-manifest", type=pathlib.Path,
                         help="newline-separated install manifest to check for shader build tools")
     args = parser.parse_args()
@@ -371,7 +423,7 @@ def main() -> int:
         if args.artifact:
             dxc = args.dxc or shutil.which("dxc")
             inspect_artifact(args.artifact, dxc, args.require_reflection,
-                             args.model_pixel, args.model_vertex)
+                             args.model_pixel, args.model_vertex, args.post_composite)
         elif args.require_reflection:
             raise ShaderContractError("--require-reflection needs --artifact <compiled shader>")
     except (OSError, ShaderContractError) as error:
