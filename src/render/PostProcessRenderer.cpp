@@ -68,7 +68,7 @@ bool PostProcessRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_
     }
     const PostProcessSettings defaults = {true, 0.15f, 1.0f, true, 1.0f, 1.0f, true};
     for (uint32_t frame = 0; frame < kFramesInFlight; ++frame) {
-        if (!UpdatePassBindings(frame, defaults, error)) {
+        if (!UpdatePassBindings(frame, defaults, nullptr, error)) {
             Shutdown();
             return false;
         }
@@ -226,10 +226,12 @@ bool PostProcessRenderer::CreateDescriptorsAndConstants(String& error) {
     return true;
 }
 
-bool PostProcessRenderer::UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings, String& error) {
+bool PostProcessRenderer::UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings,
+                                             RenderTarget* sceneSource, String& error) {
     if (frameIndex >= kFramesInFlight || !IsPostProcessSettingsValid(settings))
         return SetPostProcessError(error, "The post-process frame settings are invalid");
-    Texture* scene = sceneTarget_ ? sceneTarget_->pTexture : nullptr;
+    if (!sceneSource) sceneSource = sceneTarget_;
+    Texture* scene = sceneSource ? sceneSource->pTexture : nullptr;
     Texture* bloom0 = bloomTargets_[0] ? bloomTargets_[0]->pTexture : nullptr;
     Texture* bloom1 = bloomTargets_[1] ? bloomTargets_[1]->pTexture : nullptr;
     Texture* linearLdr = linearLdrTarget_ ? linearLdrTarget_->pTexture : nullptr;
@@ -301,20 +303,30 @@ void PostProcessRenderer::DrawFullscreen(Cmd* command, RenderTarget* target, Pip
 }
 
 bool PostProcessRenderer::Apply(Cmd* command, RenderTarget* destination, uint32_t frameIndex,
-                        const PostProcessSettings& settings, String& error) {
+                                const PostProcessSettings& settings, String& error,
+                                RenderTarget* sceneOverride) {
     if (!renderer_ || !command || !destination || !sceneTarget_)
         return SetPostProcessError(error, "The post-process command or target is unavailable");
     if (destination->mFormat != outputFormat_ || destination->mWidth != width_ ||
         destination->mHeight != height_)
         return SetPostProcessError(error, "The post-process destination does not match its pipeline format and size");
+    RenderTarget* sceneSource = sceneOverride ? sceneOverride : sceneTarget_;
+    if (!sceneSource || sceneSource == destination ||
+        sceneSource->mFormat != TinyImageFormat_R16G16B16A16_SFLOAT ||
+        sceneSource->mWidth != width_ || sceneSource->mHeight != height_ || !sceneSource->pTexture)
+        return SetPostProcessError(error, "The post-process scene source must be a distinct full-size RGBA16F target");
+    if (sceneOverride && (sceneOverride == sceneTarget_ || sceneOverride == bloomTargets_[0] ||
+                          sceneOverride == bloomTargets_[1] || sceneOverride == linearLdrTarget_))
+        return SetPostProcessError(error, "The post-process override must not alias an internal render target");
     PostProcessPlan plan{};
     if (!BuildPostProcessPlan(settings, plan))
         return SetPostProcessError(error, "The post-process plan could not be built from frame settings");
-    if (!UpdatePassBindings(frameIndex, settings, error)) return false;
+    if (!UpdatePassBindings(frameIndex, settings, sceneSource, error)) return false;
 
     targetStates_.DiscardPending();
     PostProcessTargetStates recordedStates = targetStates_.Committed();
-    Transition(command, sceneTarget_, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    if (!sceneOverride)
+        Transition(command, sceneTarget_, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     for (uint32_t i = 0; i < plan.count; ++i) {
         const PostProcessStep& step = plan.steps[i];
         switch (step.kind) {
@@ -370,7 +382,8 @@ bool PostProcessRenderer::Apply(Cmd* command, RenderTarget* destination, uint32_
             return SetPostProcessError(error, "The post-process plan contains an unknown pass");
         }
     }
-    Transition(command, sceneTarget_, RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
+    if (!sceneOverride)
+        Transition(command, sceneTarget_, RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET);
     targetStates_.Stage(recordedStates);
     error.Clear();
     return true;
@@ -390,7 +403,7 @@ bool PostProcessRenderer::Resize(uint32_t width, uint32_t height, String& error)
     if (!CreateTargets(width, height, error)) return false;
     const PostProcessSettings defaults = {true, 0.15f, 1.0f, true, 1.0f, 1.0f, true};
     for (uint32_t frame = 0; frame < kFramesInFlight; ++frame) {
-        if (!UpdatePassBindings(frame, defaults, error)) return false;
+        if (!UpdatePassBindings(frame, defaults, nullptr, error)) return false;
     }
     error.Clear();
     return true;

@@ -19,7 +19,8 @@ enum class CustomShaderPipelineVariant : uint8_t {
     SceneOpaque,
     SceneAlpha,
     UiOpaque,
-    UiAlpha
+    UiAlpha,
+    PostEffect
 };
 
 /**
@@ -27,6 +28,12 @@ enum class CustomShaderPipelineVariant : uint8_t {
  */
 bool SelectCustomShaderPipelineVariant(uint32_t layer, bool depthTest, bool alphaBlend,
                                       CustomShaderPipelineVariant& output);
+
+/**
+ * Selects the depth-free post-effect variant for a valid frame and prepared draw ordinal.
+ */
+bool SelectPostEffectShaderPipelineVariant(uint32_t frameIndex, uint32_t drawIndex,
+                                           CustomShaderPipelineVariant& output);
 
 /**
  * Validates the frame slot and number of custom draw snapshots before arena writes.

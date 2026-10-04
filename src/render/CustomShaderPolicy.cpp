@@ -23,6 +23,17 @@ bool SelectCustomShaderPipelineVariant(uint32_t layer, bool depthTest, bool alph
     return true;
 }
 
+/**
+ * Selects the dedicated HDR variant after validating its constant-snapshot address.
+ */
+bool SelectPostEffectShaderPipelineVariant(uint32_t frameIndex, uint32_t drawIndex,
+                                           CustomShaderPipelineVariant& output) {
+    if (frameIndex >= kCustomShaderFrameCount || drawIndex >= kCustomShaderMaximumDraws)
+        return false;
+    output = CustomShaderPipelineVariant::PostEffect;
+    return true;
+}
+
 bool IsCustomShaderFrameValid(uint32_t frameIndex, uint32_t drawCount) {
     return frameIndex < kCustomShaderFrameCount && drawCount <= kCustomShaderMaximumDraws;
 }

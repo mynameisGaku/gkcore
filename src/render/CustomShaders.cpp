@@ -211,7 +211,8 @@ ShaderHandle CustomShaders::Load(const char* path, String& error) {
     static const char* const kPipelineNames[] = {
         "gkcore Custom Scene Depth Opaque", "gkcore Custom Scene Depth Alpha",
         "gkcore Custom Scene Opaque", "gkcore Custom Scene Alpha",
-        "gkcore Custom UI Opaque", "gkcore Custom UI Alpha"
+        "gkcore Custom UI Opaque", "gkcore Custom UI Alpha",
+        "gkcore Custom Post Effect"
     };
     bool created =
         CreatePipeline(record.program, kPipelineNames[0], sceneFormat_, depthFormat_, true, false,
@@ -225,7 +226,9 @@ ShaderHandle CustomShaders::Load(const char* path, String& error) {
         CreatePipeline(record.program, kPipelineNames[4], displayFormat_, TinyImageFormat_UNDEFINED,
                        false, false, &record.uiOpaque, error) &&
         CreatePipeline(record.program, kPipelineNames[5], displayFormat_, TinyImageFormat_UNDEFINED,
-                       false, true, &record.uiAlpha, error);
+                       false, true, &record.uiAlpha, error) &&
+        CreatePipeline(record.program, kPipelineNames[6], TinyImageFormat_R16G16B16A16_SFLOAT,
+                       TinyImageFormat_UNDEFINED, false, false, &record.postEffect, error, true);
     if (!created || !shaders_.Append(record)) {
         DestroyRecord(record);
         if (created) Fail(error, "not enough memory to register custom shader pipelines");
@@ -315,6 +318,8 @@ bool CustomShaders::Bind(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
     case CustomShaderPipelineVariant::SceneAlpha: pipeline = record->sceneAlpha; break;
     case CustomShaderPipelineVariant::UiOpaque: pipeline = record->uiOpaque; break;
     case CustomShaderPipelineVariant::UiAlpha: pipeline = record->uiAlpha; break;
+    case CustomShaderPipelineVariant::PostEffect:
+        return Fail(error, "post-effect pipelines require post-effect shader binding");
     }
     if (!pipeline || !constantDescriptorSet_)
         return Fail(error, "custom shader pipeline resources are incomplete");
@@ -322,6 +327,27 @@ bool CustomShaders::Bind(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
     if (!MakeShaderConstantSlice(frameIndex, customDrawIndex, slice))
         return Fail(error, "custom shader descriptor slice is invalid");
     cmdBindPipeline(command, pipeline);
+    cmdBindDescriptorSet(command, slice.descriptorIndex, constantDescriptorSet_);
+    error.Clear();
+    return true;
+}
+
+bool CustomShaders::BindPostEffect(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
+                                   uint32_t customDrawIndex, String& error) const {
+    CustomShaderPipelineVariant variant = CustomShaderPipelineVariant::UiOpaque;
+    if (!command || !SelectPostEffectShaderPipelineVariant(frameIndex, customDrawIndex, variant))
+        return Fail(error, "post-effect shader binding is outside the supported frame or draw range");
+    if (variant != CustomShaderPipelineVariant::PostEffect)
+        return Fail(error, "post-effect shader binding selected an incompatible pipeline variant");
+    if (customDrawIndex >= preparedDrawCounts_[frameIndex])
+        return Fail(error, "post-effect shader draw has no prepared constant snapshot");
+    const ShaderRecord* record = Find(shader);
+    if (!record || !record->postEffect)
+        return Fail(error, "post-effect shader handle or pipeline is unavailable");
+    ShaderConstantSlice slice = {};
+    if (!MakeShaderConstantSlice(frameIndex, customDrawIndex, slice))
+        return Fail(error, "post-effect shader constant descriptor slice is invalid");
+    cmdBindPipeline(command, record->postEffect);
     cmdBindDescriptorSet(command, slice.descriptorIndex, constantDescriptorSet_);
     error.Clear();
     return true;
@@ -356,13 +382,14 @@ void CustomShaders::DestroyRecord(ShaderRecord& record) {
     RemovePipeline(renderer_, record.sceneAlpha);
     RemovePipeline(renderer_, record.uiOpaque);
     RemovePipeline(renderer_, record.uiAlpha);
+    RemovePipeline(renderer_, record.postEffect);
     if (renderer_ && record.program) removeShader(renderer_, record.program);
     record = {};
 }
 
 bool CustomShaders::CreatePipeline(Shader* shader, const char* name, TinyImageFormat colorFormat,
                                    TinyImageFormat depthFormat, bool depthTest, bool alphaBlend,
-                                   Pipeline** output, String& error) {
+                                   Pipeline** output, String& error, bool singleSample) {
     VertexLayout layout = {};
     layout.mBindingCount = 1;
     layout.mBindings[0].mStride = sizeof(Vertex);
@@ -411,8 +438,8 @@ bool CustomShaders::CreatePipeline(Shader* shader, const char* name, TinyImageFo
     graphics.pColorFormats = &colorFormat;
     graphics.mRenderTargetCount = 1;
     graphics.mDepthStencilFormat = depthFormat;
-    graphics.mSampleCount = sampleCount_;
-    graphics.mSampleQuality = sampleQuality_;
+    graphics.mSampleCount = singleSample ? SAMPLE_COUNT_1 : sampleCount_;
+    graphics.mSampleQuality = singleSample ? 0 : sampleQuality_;
     graphics.mPrimitiveTopo = PRIMITIVE_TOPO_TRI_LIST;
     desc.pName = name;
     addPipeline(renderer_, &desc, output);

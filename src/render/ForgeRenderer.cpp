@@ -96,6 +96,10 @@ bool ForgeRenderer::Resize(uint32_t width, uint32_t height, String& error) {
         width_ = height_ = 0;
         return false;
     }
+    if (!postEffect_.Resize(width, height, error)) {
+        width_ = height_ = 0;
+        return false;
+    }
     width_ = width;
     height_ = height;
     return true;
@@ -143,7 +147,8 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
     rootDesc.pComputeFileName = "compute.rootsig";
     initRootSignature(renderer_, &rootDesc);
     rootSignatureInitialized_ = true;
-    if (!postProcess_.Initialize(renderer_, width_, height_, swapChain_->mFormat, error)) return false;
+    if (!postProcess_.Initialize(renderer_, width_, height_, swapChain_->mFormat, error) ||
+        !postEffect_.Initialize(renderer_, width_, height_, error)) return false;
     if (!textureCache_.Initialize(renderer_, graphicsQueue_, error)) return false;
     const TinyImageFormat displayFormat = swapChain_->ppRenderTargets[0]->mFormat;
     const TinyImageFormat sceneFormat = postProcess_.SceneTarget()->mFormat;
@@ -275,6 +280,8 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error) {
 
 void ForgeRenderer::DestroyGraphicsResources() {
     if (!renderer_) return;
+    postEffect_.DiscardPendingFrame();
+    postEffect_.Shutdown();
     customShaders_.Shutdown();
     textureCache_.Shutdown();
     if (whiteImage_) {
@@ -301,6 +308,7 @@ void ForgeRenderer::DestroyGraphicsResources() {
 }
 
 bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
+    postEffect_.DiscardPendingFrame();
     if (!renderer_ || !swapChain_ || !graphicsQueue_) return SetError(error, "The Forge renderer is not initialized");
     if (frame.width == 0 || frame.height == 0) return SetError(error, "The frame size must be positive");
     const PostProcessSettings settings = {
@@ -433,6 +441,19 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
             if (customShader) ++customDrawCount;
         }
     }
+    PostEffectPlan postEffectPlan{};
+    if (!BuildPostEffectPlan(frame, customDrawCount, postEffectPlan, error)) return false;
+    if (postEffectPlan.enabled) {
+        CustomShaderDraw postEffectDraw{};
+        postEffectDraw.shader = postEffectPlan.shader;
+        postEffectDraw.constantCount = postEffectPlan.constantCount;
+        for (uint32_t constant = 0; constant < postEffectPlan.constantCount; ++constant)
+            postEffectDraw.constants[constant] = postEffectPlan.constants[constant];
+        if (!customDraws_.Append(postEffectDraw))
+            return SetError(error, "The post-effect shader draw snapshot allocation failed");
+    }
+    if (customDraws_.Count() != postEffectPlan.preparedDrawCount)
+        return SetError(error, "The custom shader draw snapshot count does not match the frame plan");
     if (vertices_.Count() > kVertexCapacity) return SetError(error, "The frame exceeds the dynamic vertex capacity");
 
     GpuCmdRingElement element = getNextGpuCmdRingElement(&commandRing_, true, 1);
@@ -509,7 +530,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     }
     cmdBindRenderTargets(command, nullptr);
 
-    if (!postProcess_.Apply(command, renderTarget, frameIndex, settings, error)) {
+    if (postEffectPlan.enabled &&
+        !postEffect_.Apply(command, postProcess_.SceneTarget(), customShaders_, frameIndex,
+                           postEffectPlan, error)) {
+        endCmd(command);
+        return false;
+    }
+
+    RenderTarget* postProcessSource = postEffectPlan.enabled ? postEffect_.OutputTarget() : nullptr;
+    if (!postProcess_.Apply(command, renderTarget, frameIndex, settings, error, postProcessSource)) {
         endCmd(command);
         return false;
     }
@@ -579,6 +608,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error) {
     submit.ppSignalSemaphores = &element.pSemaphore;
     submit.mSignalSemaphoreCount = 1;
     queueSubmit(graphicsQueue_, &submit);
+    postEffect_.CommitFrame();
     postProcess_.CommitFrame();
     if (hasTextureUploads) textureCache_.MarkSubmitted();
 

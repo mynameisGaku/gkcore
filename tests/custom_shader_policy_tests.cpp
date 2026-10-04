@@ -43,6 +43,24 @@ bool CustomShaderPolicyContract(String& failure) {
         failure.Assign("custom shader frame, draw, or layer bounds do not match the arena");
         return false;
     }
+    render::CustomShaderPipelineVariant postEffect = render::CustomShaderPipelineVariant::UiAlpha;
+    if (!render::SelectPostEffectShaderPipelineVariant(0, 0, postEffect) ||
+        postEffect != render::CustomShaderPipelineVariant::PostEffect ||
+        !render::SelectPostEffectShaderPipelineVariant(
+            1, render::kCustomShaderMaximumDraws - 1, postEffect) ||
+        postEffect != render::CustomShaderPipelineVariant::PostEffect) {
+        failure.Assign("post-effect shader selection rejected a valid frame or draw ordinal");
+        return false;
+    }
+    const render::CustomShaderPipelineVariant postEffectBefore = postEffect;
+    if (render::SelectPostEffectShaderPipelineVariant(2, 0, postEffect) ||
+        postEffect != postEffectBefore ||
+        render::SelectPostEffectShaderPipelineVariant(
+            0, render::kCustomShaderMaximumDraws, postEffect) ||
+        postEffect != postEffectBefore) {
+        failure.Assign("invalid post-effect shader frame or draw ordinal changed the output");
+        return false;
+    }
     return true;
 }
 

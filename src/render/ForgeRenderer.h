@@ -7,6 +7,7 @@
 #include "Geometry.h"
 #include "CustomShaders.h"
 #include "PostProcessRenderer.h"
+#include "PostEffectRenderer.h"
 #include "TextureCache.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
@@ -123,6 +124,7 @@ private:
     TextureCache textureCache_;
     CustomShaders customShaders_;
     PostProcessRenderer postProcess_;
+    PostEffectRenderer postEffect_;
     detail::ImageResource* whiteImage_ = nullptr;
     Array<Vertex> vertices_;
     Array<RenderRun> runs_;

@@ -37,10 +37,12 @@ public:
     bool Resize(uint32_t width, uint32_t height, String& error);
     /**
      * Records bloom, grading, and optional FXAA passes before UI composition.
+     * An override must be a distinct full-size RGBA16F source already in shader-resource state.
      * The destination must be in render-target state; shader output stays linear for an sRGB RTV.
      */
     bool Apply(Cmd* command, RenderTarget* destination, uint32_t frameIndex,
-               const PostProcessSettings& settings, String& error);
+               const PostProcessSettings& settings, String& error,
+               RenderTarget* sceneOverride = nullptr);
     /**
      * Commits recorded target states after the owning graphics queue accepts the command.
      */
@@ -73,7 +75,8 @@ private:
     /**
      * Binds source, bloom, sampler, and settings for one frame slot.
      */
-    bool UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings, String& error);
+    bool UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings,
+                            RenderTarget* sceneSource, String& error);
     /**
      * Draws one fullscreen pass using its frame-specific resource bindings.
      */

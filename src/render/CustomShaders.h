@@ -65,6 +65,11 @@ public:
               uint32_t customDrawIndex, uint32_t layer, bool depthTest,
               bool alphaBlend, String& error) const;
     /**
+     * Binds the dedicated single-sample HDR pipeline and this draw's constant slice.
+     */
+    bool BindPostEffect(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
+                        uint32_t customDrawIndex, String& error) const;
+    /**
      * Reports whether the shader expects the optional t0 texture binding.
      */
     bool RequiresTexture(ShaderHandle shader) const;
@@ -86,6 +91,7 @@ private:
         Pipeline* sceneAlpha;
         Pipeline* uiOpaque;
         Pipeline* uiAlpha;
+        Pipeline* postEffect;
         bool texture;
         bool sampler;
     };
@@ -107,7 +113,7 @@ private:
      */
     bool CreatePipeline(Shader* shader, const char* name, TinyImageFormat colorFormat,
                         TinyImageFormat depthFormat, bool depthTest, bool alphaBlend,
-                        Pipeline** output, String& error);
+                        Pipeline** output, String& error, bool singleSample = false);
 
     static constexpr uint64_t kArenaBytes =
         static_cast<uint64_t>(kCustomShaderMaximumDraws) * kShaderConstantBlockBytes;

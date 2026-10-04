@@ -51,6 +51,7 @@ set(GKCORE_CORE_SOURCES
     src/render/ShaderAbi.cpp
     src/render/PostProcess.cpp
     src/render/PostProcessPlan.cpp
+    src/render/PostEffectPlan.cpp
     src/render/ModelDrawPlan.cpp
     src/render/CustomShaderPolicy.cpp
     src/render/TextureCachePolicy.cpp)
@@ -102,6 +103,16 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_post_process_plan_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_post_process_plan_tests)
     add_test(NAME gkcore.post_process_plan COMMAND gkcore_post_process_plan_tests)
+    add_executable(gkcore_post_effect_plan_tests
+        tests/post_effect_plan_tests.cpp
+        src/render/PostEffectPlan.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_post_effect_plan_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_post_effect_plan_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_post_effect_plan_tests)
+    add_test(NAME gkcore.post_effect_plan COMMAND gkcore_post_effect_plan_tests)
     add_executable(gkcore_fxaa_tests
         tests/fxaa_tests.cpp
         src/render/Fxaa.cpp
@@ -358,6 +369,7 @@ if(GKCORE_BUILD_RUNTIME)
         src/render/ForgeRenderer.cpp
         src/render/TextureCache.cpp
         src/render/PostProcessRenderer.cpp
+        src/render/PostEffectRenderer.cpp
         src/render/CustomShaders.cpp
         src/render/ShaderReflection.cpp
         src/render/ShaderInterface.cpp
@@ -392,6 +404,15 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_mixed_scene examples/mixed_scene.cpp)
     target_compile_features(gkcore_mixed_scene PRIVATE cxx_std_17)
     target_link_libraries(gkcore_mixed_scene PRIVATE gkcore::gkcore)
+
+    add_executable(gkcore_custom_post_effect examples/custom_post_effect.cpp)
+    target_compile_features(gkcore_custom_post_effect PRIVATE cxx_std_17)
+    target_link_libraries(gkcore_custom_post_effect PRIVATE gkcore::gkcore)
+    gkcore_enable_warnings(gkcore_custom_post_effect)
+    add_custom_command(TARGET gkcore_custom_post_effect POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/post_effect_tint.frag"
+            "$<TARGET_FILE_DIR:gkcore_custom_post_effect>/post_effect_tint.frag")
 
     if(GKCORE_BUILD_TESTS)
         add_executable(gkcore_shader_reflection_tests
