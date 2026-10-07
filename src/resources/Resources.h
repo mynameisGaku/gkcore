@@ -1,4 +1,6 @@
-#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_RESOURCES_RESOURCES_H
+#define GKCORE_RESOURCES_RESOURCES_H
 
 #include "../../include/gkcore/Handle.h"
 #include "../foundation/Array.h"
@@ -7,87 +9,120 @@
 #include <stdint.h>
 
 /**
- * Resource payloads and operations used by the gkcore runtime.
+ * gkcoreが所有する画像・モデルのデータと操作。
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
- * Decoded image pixels stored as tightly packed top-left RGBA bytes.
+ * 左上から並ぶRGBA画素を保持するdecode済み画像。
  */
-struct ImageResource {
+struct ImageResource
+{
+    // 共有所有権を管理する参照情報。
     RefCounted reference;
+    // 画像の横幅。
     uint32_t width;
+    // 画像の縦幅。
     uint32_t height;
+    // 左上から詰めて並べたRGBA画素byte列。
     Array<uint8_t> rgba;
 };
 
 /**
- * One model vertex with position, normal, and texture coordinates.
+ * 位置、法線、画像座標を持つモデル頂点。
  */
-struct ModelVertex {
+struct ModelVertex
+{
+    // model localの位置。
     float position[3];
+    // model localの法線。
     float normal[3];
+    // base color imageを参照する座標。
     float uv[2];
 };
 
 /**
- * Material factors and optional base-color image index for a mesh primitive.
+ * mesh primitiveの材質係数と任意の基本色画像参照。
  */
-struct ModelMaterial {
+struct ModelMaterial
+{
+    // RGBA基本色係数。
     float baseColorFactor[4];
+    // 金属度係数。
     float metallicFactor;
+    // 粗さ係数。
     float roughnessFactor;
+    // 基本色画像配列のindex。未使用は-1。
     int32_t baseColorTextureIndex;
+    // 基本色のアルファ値で画素を切り抜く場合はtrue。
+    bool alphaMask = false;
+    // 切り抜く画素の境界値。0以上の有限値を使い、1を超える値も保持する。
+    float alphaCutoff = 0.5f;
 };
 
 /**
- * Contiguous index range associated with one material.
+ * 1つの材質に結び付く連続したindex範囲。
  */
-struct ModelPrimitive {
+struct ModelPrimitive
+{
+    // index配列内の開始位置。
     uint32_t firstIndex;
+    // primitiveが使うindex数。
     uint32_t indexCount;
+    // 材質配列のindex。未指定は-1。
     int32_t materialIndex;
 };
 
 /**
- * Static indexed geometry, primitive materials, and retained texture images.
+ * 静的な頂点・index、primitive材質、保持中の画像をまとめたモデル。
  */
-struct ModelResource {
+struct ModelResource
+{
+    // 共有所有権を管理する参照情報。
     RefCounted reference;
+    // 読み込み済み頂点。
     Array<ModelVertex> vertices;
+    // 頂点を結ぶ三角形index。
     Array<uint32_t> indices;
+    // 描画単位ごとの範囲と材質。
     Array<ModelPrimitive> primitives;
+    // primitiveから参照される材質。
     Array<ModelMaterial> materials;
+    // 材質が参照する保持中の画像。
     Array<ImageResource*> textures;
 };
 
 /**
- * Loads a supported image file and returns its typed resource handle.
+ * 対応画像を読み込み、失敗理由と画像handleを返す。
  */
 ImageHandle LoadImage(const char* path, String& error);
 /**
- * Removes a registered image handle while retained draw snapshots stay valid.
+ * 画像handleを登録解除する。描画側が保持する参照は有効なまま残る。
  */
 bool DeleteImage(ImageHandle handle, String& error);
 /**
- * Returns a borrowed image payload for a currently registered handle.
+ * 登録中handleの画像payloadを借用参照で返す。無効handleならnullを返す。
  */
 ImageResource* FindImage(ImageHandle handle);
 /**
- * Loads static geometry and materials from a supported model file.
+ * 対応model fileから静的形状と材質を読み込み、失敗理由とhandleを返す。
  */
 ModelHandle LoadModel(const char* path, String& error);
 /**
- * Removes a registered model handle while retained draw snapshots stay valid.
+ * model handleを登録解除する。描画側が保持する参照は有効なまま残る。
  */
 bool DeleteModel(ModelHandle handle, String& error);
 /**
- * Returns a borrowed model payload for a currently registered handle.
+ * 登録中handleのmodel payloadを借用参照で返す。無効handleならnullを返す。
  */
 ModelResource* FindModel(ModelHandle handle);
 /**
- * Releases registry ownership of every loaded resource.
+ * 読み込み済みresourceすべてのregistry所有権を解放する。
  */
 void ClearResources();
 
-} // namespace gk::detail
+// namespace gk::detail
+}
+
+#endif

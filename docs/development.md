@@ -110,3 +110,14 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 ## 効果別のGPU画像テスト
 
 `gkcore.post_effect_capture`は各効果の個別設定と、BeginFrameの前後での設定取り込みを実GPU画像で比較します。露出の明暗順、彩度0の無彩色化、Contrast0の共通中間値、Bloomのにじみ、FXAAの斜辺処理、UI領域の保持を独立した条件で判定します。新しい画像テストを含むRelease/Debugの全CTestは各35/35成功しました。対応する14画像も同GPU・driver内で一致しました。内容と再実行コマンドは[効果の使い方](effects.md)を参照してください。
+
+
+## 内蔵モデルshaderの検査用ファイル
+
+Runtimeへ配布するFSL出力はbinding名などの照合情報を削ります。DXC reflectionテストが使うモデル用の2ファイルは、次の開発用ツールで照合情報を残して生成します。Runtime出力の設定は変えません。
+
+```bat
+python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
+```
+
+このツールは既存のFSLビルド機構と固定コンパイラーを使い、開発用buildフォルダーから`gkcore_model.vert`と`gkcore_model.frag`だけを検査用assetsへ保存します。追加された材質データは内部の頂点配置を80byteにし、vertex inputのTEXCOORD3と、pixel inputのTEXCOORD4へ2成分のアルファ抜き情報を渡します。公開カスタムshaderの入力は変更していません。

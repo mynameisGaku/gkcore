@@ -690,3 +690,39 @@ Releaseは全39/39件成功、追加GPU検査7.40秒、全体48.37秒でした�
 RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0の別toolchainで各29/29件成功し、全体はDebug 2.80秒、Release 2.69秒でした。ログは`glb-uv-cpu-{debug,release}-{build,tests}.log`です。コメントを日本語に整えた後、元のソースに今回の実装変更を加えた内容と、最終ソースのコメント・空白を除いた要素が一致することを確認しました。Releaseの追加2テストも再ビルド後に成功し、GPU検査7.16秒、全体7.21秒でした（`glb-uv-release-focused-final.log`）。モデルガイドのC++サンプルもv142で構文検査が成功しています。
 
 検査用モデル・画像・生成スクリプト・画像取得DLLはRuntime SDKへinstallしません。公開APIと描画shaderのABIは変更していません。GPU画像はRGBを変更せずPNGに保存してモデルガイドへ掲載しました。仕様根拠は[glTF 2.0 Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord)と[Accessor normalized](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_accessor_normalized)です。
+
+
+## 2026-10-07: GLB材質のアルファ抜き
+
+MASK材質の切り抜きをテストから追加しました。材質と描画計画へalphaMask/alphaCutoff、内蔵モデル用頂点へ2成分を保持する宣言を先に用意し、実装前のCPU/GPUテストを実行しました。CPUは『mask-defaultのalpha情報を保持していない』、GPUは『透明stripeの背景色期待に対して赤く描かれた』と失敗しました（`build/native-validation/model-alpha-red-tests.log`）。描画値の伝播を追加検査したCPUも、頂点へ既定cutoff .5が渡らず失敗しました（`model-alpha-payload-red-tests.log`）。初稿のPNGが白RGBだった点とmixed材質のOPAQUE既定cutoff期待値は、失敗を捕捉する前に入力・期待値を修正しています。
+
+GLBローダーはOPAQUE/MASKを保持し、BLENDと非有限・負のcutoffを読み込み時に拒否します。cutoffは0以上の有限値で、2も許可します。材質の重複判定へmask/cutoffを含め、同じ画像・色のOPAQUE、MASK .5、MASK 1を誤って統合しません。ModelDrawPlanは値を検証・複写し、ModelGeometryは全頂点へ同じ有効値・cutoffを渡します。不正cutoff/NaNで以前の描画計画と頂点出力を変えない契約もCPUで検査しました。
+
+内蔵モデル用頂点は72から80byteへ拡張しました。vertex inputのTEXCOORD3、pixel inputのTEXCOORD4へ2成分を渡し、材質の値はFLAT（頂点間で補間しない指定）で渡します。shaderは画像の線形alphaと材質alphaを掛け、MASK時にcutoff未満の画素だけdiscardします。等号は残し、残った画素とOPAQUEはalpha 1で出力します。既存の深度検査・書き込み設定を使い、discardした画素は色と深度を更新しません。公開カスタムshaderの40byte頂点と入力ABIは変えず、MASKモデルを独自pixel shaderで描こうとしたPresentは、材質条件を無視せず診断付きで失敗させます。
+
+15種類のGLBを生成し、11種類のScene、4種類のUI、1種類の深度対照の計16画像を検査します。OPAQUEのalpha無視、MASKの既定.5、cutoff 0・1・2、factor .5・.25、alpha128/255と等しいcutoff、画像なしの材質を確認しました。青い面をモデルの後から奥へ描く深度対照では、穴だけが青くなり、残った赤い部分は前面に保たれました。独自shaderでMASKを描く呼出しは指定の診断付きで拒否され、画像を生成しませんでした。Release/Debugの16画像はbyte単位に一致しています。
+
+最初の全体Release検査はモデルshaderのreflection 2件で失敗しました（`model-alpha-release-first-full-tests.log`）。新しいvertex inputへTEXCOORD4を誤って要求した検査をTEXCOORD3へ修正し、outputはTEXCOORD4を必須としました。また、Runtime用FSLは-Qstrip_reflectでbinding名を削るため、そこからコピーした検査用fixtureでは名前・buffer情報を照合できませんでした。既存の固定FSL/DXCと互換複製機構を共有する開発用`tests/support/compile_model_shader_fixtures.py`を追加し、検査用に--debugで照合情報を残したモデル2ファイルを生成しました。Runtime出力は通常どおり情報を削り、検査用ファイル・コンパイラーはSDKへ入れません。reflectionの3件を再検査して成功しました（`model-alpha-reflection-green-tests.log`）。
+
+```powershell
+python tools/build_gkcore_shaders.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir build/runtime-windows/gkcore_shaders
+python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0でRuntimeを検証しました。最終Releaseは全41/41件成功、追加画像検査19.88秒、全体67.97秒です。Debugも全41/41件成功、追加画像検査21.52秒、全体75.93秒でした。ログは`build/native-validation/model-alpha-{release,debug}-final-{build,tests}.log`です。SDK consumerを含む配布物検査も成功し、Debugは画像取得時のInfoQueue必須確認を通しています。GPU-based validationは有効化していません。
+
+RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0でDebug・Release各30/30件成功、全体2.94秒・2.84秒でした（`model-alpha-cpu-{debug,release}-{build,tests}.log`）。shaderのコンパイルは固定13artifact、契約テストは14件が成功しました。日本語コメントを整えた9ファイルは、コメント・空白を除いた要素のhashが実装後の基準と一致しました。変更する内部headerはSPDX NOASSERTIONとinclude guardを使い、配布ライセンス未確定の状態でライセンスを付与したと主張しません。
+
+取得RGBを変えずにPNGへ保存し、モデルガイドへOPAQUE/MASK/深度対照を掲載しました。検査は代表画素と固定領域による機能確認で、全面画質、ちらつき、全GPU、BLEND、alpha-to-coverageの品質、影を評価する結果ではありません。未知のalphaMode文字列を既定値へ扱うcgltfの既存挙動を含め、全JSON schemaを検証したとは主張しません。標準alpha modeの根拠は[glTF Alpha Coverage](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#alpha-coverage)です。
+
+最終のC++書式確認で、fieldの行末コメントを宣言直前へ移し、括弧内部を1行へ整えました。formatter検査と、9ファイルの機能要素のhash一致を再確認しています。
+
+最終の書式整理後もRelease・Debugの再ビルドが成功しました。ログは`model-alpha-{release,debug}-formatted-build.log`です。

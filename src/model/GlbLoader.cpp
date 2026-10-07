@@ -91,6 +91,24 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         const cgltf_size sourceIndex = cgltf_material_index(data, source);
         if (sourceIndex >= data->materials_count)
             return -1;
+        // 対応していない混合描画と、不正なalpha境界値を拒否する。
+        if (source->alpha_mode == cgltf_alpha_mode_blend)
+        {
+            error.Assign("GLB BLEND alpha mode is unsupported");
+            return -1;
+        }
+        if (source->alpha_mode != cgltf_alpha_mode_opaque && source->alpha_mode != cgltf_alpha_mode_mask)
+        {
+            error.Assign("GLB alpha mode is invalid");
+            return -1;
+        }
+        if (!IsFinite(source->alpha_cutoff) || source->alpha_cutoff < 0.0f)
+        {
+            error.Assign("GLB alpha cutoff must be finite and nonnegative");
+            return -1;
+        }
+        material.alphaMask = source->alpha_mode == cgltf_alpha_mode_mask;
+        material.alphaCutoff = source->alpha_cutoff;
     }
     if (source && source->has_pbr_metallic_roughness)
     {
@@ -147,7 +165,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex;
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];

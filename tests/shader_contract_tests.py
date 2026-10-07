@@ -153,7 +153,7 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     resource_section = _section(dump, "Resource Bindings:", "ViewId state:", "Buffer Definitions:")
     missing: list[str] = []
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     if not re.search(r"\bSV_Target\s+0\b", output_section, re.IGNORECASE):
@@ -167,6 +167,9 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     buffer_section = _section(dump, "Buffer Definitions:", "Resource Bindings:")
     if not re.search(r"Size:\s*32\b", buffer_section):
         missing.append("32-byte LightingConstants block")
+    # 切り抜きの有効値と境界値は、追加した2成分の入力を必須とする。
+    if not re.search(r"\bTEXCOORD\s+4\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
+        missing.append("alpha mask/cutoff at TEXCOORD4.xy")
     if missing:
         raise ShaderContractError(f"{source}: model pixel shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
@@ -198,13 +201,18 @@ def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC refle
     output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
     missing: list[str] = []
     for semantic in (r"\bPOSITION\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b"):
+                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b"):
         if not re.search(semantic, output_section, re.IGNORECASE):
             missing.append("output " + semantic.replace(r"\b", "").replace(r"\s+", " "))
+    # 80byteの頂点末尾に追加したアルファ抜き情報の2成分を確認する。
+    if not re.search(r"\bTEXCOORD\s+3\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
+        missing.append("alpha mask/cutoff input at TEXCOORD3.xy")
+    if not re.search(r"\bTEXCOORD\s+4\s+xy\s+\d+\s+\S+\s+float\s+xy\b", output_section, re.IGNORECASE):
+        missing.append("alpha mask/cutoff output at TEXCOORD4.xy")
     if missing:
         raise ShaderContractError(f"{source}: model vertex shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
@@ -305,6 +313,7 @@ class ShaderReflectionTests(unittest.TestCase):
 ; TEXCOORD 1 xyzw 3 NONE float xyzw
 ; TEXCOORD 2 xyzw 4 NONE float xyzw
 ; TEXCOORD 3 xyzw 5 NONE float xyzw
+; TEXCOORD 4 xy 6 NONE float xy
 ; Output signature:
 ; SV_Target 0 xyzw 0 TARGET float xyzw
 ; Buffer Definitions:
@@ -315,6 +324,9 @@ class ShaderReflectionTests(unittest.TestCase):
 ; gModelLighting cbuffer NA NA NA CB0 cb0,space1 1
 """
         validate_model_pixel_shader_reflection(good, "gkcore_model.frag")
+        # 従来の6入力だけのshaderを、新しい頂点配置へ誤って使わせない。
+        with self.assertRaisesRegex(ShaderContractError, "alpha mask/cutoff"):
+            validate_model_pixel_shader_reflection(good.replace("; TEXCOORD 4 xy 6 NONE float xy\n", ""), "old-model.frag")
 
     def test_rejects_model_reflection_without_lighting_abi(self):
         with self.assertRaisesRegex(ShaderContractError, "LightingConstants at b0, space1"):

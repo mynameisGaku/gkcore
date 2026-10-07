@@ -1,67 +1,112 @@
-#include "gkcore_model.fsl.h"
+﻿#include "gkcore_model.fsl.h"
 
 /**
- * Pixel shader inputs interpolated from model surface attributes.
+ * model表面から補間された画素shader入力。
  */
 STRUCT(VSOutput)
 {
+    // rasterizerから受け取るclip空間位置。
     DATA(float4, Position, SV_Position);
+    // 基本色と頂点alpha。
     DATA(float4, Color, COLOR);
+    // 基本色画像の座標。
     DATA(float2, UV, TEXCOORD0);
+    // world空間の法線。
     DATA(float3, WorldNormal, TEXCOORD1);
+    // cameraから頂点へ向かう方向量。
     DATA(float3, ViewDirection, TEXCOORD2);
+    // PBR金属度と粗さ。
     DATA(float2, MetallicRoughness, TEXCOORD3);
+    // 材質ごとのアルファ抜きの有効値と境界値は補間しない。
+    DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
 };
 
 
 /**
- * Normalizes interpolated vectors without overflowing on large camera-relative payloads.
+ * 大きなcamera相対値でもoverflowを避け、補間vectorを正規化する。
  */
 float3 SafeNormalize(float3 value, float3 fallbackValue)
 {
     if (!all(isfinite(value))) return fallbackValue;
+    // 成分を先に縮めるための最大絶対値。
     const float scale = max(abs(value.x), max(abs(value.y), abs(value.z)));
     if (!(scale > 0.0000000001)) return fallbackValue;
+    // 長さ計算でoverflowしないよう縮小したvector。
     const float3 scaled = value / scale;
     return scaled * rsqrt(max(dot(scaled, scaled), 0.00000001));
 }
 
 /**
- * Evaluates a linear base-color metallic-roughness model with one directional light.
+ * 線形基本色と金属度・粗さを使い、単一方向光の反射を計算する。
  */
 ROOT_SIGNATURE(DefaultRootSignature)
 float4 PS_MAIN(VSOutput input) : SV_Target0
 {
     INIT_MAIN;
+    // 材質画像から読み込む線形色とcoverage alpha。
     const float4 baseSample = SampleTex2D(gImageTexture, gImageSampler, input.UV);
+    // 画像のアルファは線形値で読み、材質のアルファ係数を掛ける。
+    const float coverageAlpha = baseSample.a * input.Color.a;
+    if (input.AlphaMaskCutoff.x > 0.5 && coverageAlpha < input.AlphaMaskCutoff.y)
+    {
+        // 破棄した画素は色と深度を更新しない。境界値と等しい画素は残す。
+        discard;
+    }
+    // 頂点色を掛けたlinear基本色。
     const float3 baseColor = baseSample.rgb * input.Color.rgb;
+    // 正規化したsurface法線。
     const float3 N = SafeNormalize(input.WorldNormal, float3(0.0, 1.0, 0.0));
+    // 正規化したcamera方向。
     const float3 V = SafeNormalize(input.ViewDirection, N);
+    // 正規化した方向光vector。
     const float3 L = SafeNormalize(-gModelLighting.DirectionIntensity.xyz, N);
+    // 視線と光の間を向くhalf vector。
     const float3 H = SafeNormalize(V + L, N);
+    // 材質の金属度を0から1へ収めた値。
     const float metallic = saturate(input.MetallicRoughness.x);
+    // 粗さを反射式で使う範囲へ収めた値。
     const float roughness = clamp(input.MetallicRoughness.y, 0.045, 1.0);
+    // microfacet分布計算に使う粗さ二乗。
     const float alpha = roughness * roughness;
+    // 粗さ二乗をさらに二乗した項。
     const float alpha2 = alpha * alpha;
+    // 法線と方向光の内積。
     const float nDotL = saturate(dot(N, L));
+    // 法線と視線の内積。後続除算の下限を保つ。
     const float nDotV = max(saturate(dot(N, V)), 0.0001);
+    // 法線とhalf vectorの内積。
     const float nDotH = saturate(dot(N, H));
+    // 視線とhalf vectorの内積。
     const float vDotH = saturate(dot(V, H));
+    // 材質の正面反射率。
     const float3 f0 = lerp(float3(0.04, 0.04, 0.04), baseColor, metallic);
+    // Schlick近似で求めるfresnel反射率。
     const float3 F = f0 + (1.0 - f0) * pow(1.0 - vDotH, 5.0);
+    // GGX法線分布の分母。
     const float distributionBase = max(nDotH * nDotH * (alpha2 - 1.0) + 1.0, 0.00000001);
+    // GGX法線分布値。
     const float D = alpha2 / (3.14159265 * distributionBase * distributionBase);
+    // Smith遮蔽近似に使う粗さ係数。
     const float k = (roughness + 1.0) * (roughness + 1.0) * 0.125;
+    // 視線方向のSmith遮蔽係数。
     const float Gv = nDotV / max(nDotV * (1.0 - k) + k, 0.0001);
+    // 光方向のSmith遮蔽係数。
     const float Gl = nDotL / max(nDotL * (1.0 - k) + k, 0.0001);
+    // 視線と光の遮蔽係数の積。
     const float G = Gv * Gl;
+    // 金属度とfresnelを反映した鏡面反射。
     const float3 specular = (D * G / max(4.0 * nDotV * nDotL, 0.00001)) * F;
+    // diffuseへ配分する残りのenergy。
     const float3 diffuseWeight = (1.0 - F) * (1.0 - metallic);
+    // lambertian diffuse反射。
     const float3 diffuse = diffuseWeight * baseColor * (1.0 / 3.14159265);
+    // 方向光の強さを掛けたdirect反射。
     const float3 direct = (diffuse + specular) *
         max(gModelLighting.DirectionIntensity.w, 0.0) * nDotL;
+    // 基本色にambient強度を掛けた環境光。
     const float3 ambient = baseColor * max(gModelLighting.Ambient.x, 0.0);
+    // HDR render targetへ書き込む有限範囲の最終照明値。
     const float3 radiance = clamp(direct + ambient, 0.0, 65504.0);
-    const float alphaOut = baseSample.a * input.Color.a;
-    RETURN(float4(radiance, alphaOut));
+    // OPAQUEと、MASKで残した画素は不透明として出力する。
+    RETURN(float4(radiance, 1.0));
 }

@@ -475,6 +475,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     return false;
                 if (plan.parts.Count() == 0)
                     continue;
+                // 独自ピクセルシェーダーの入力には材質の切り抜き条件がないため、無視して描かない。
+                if (customShader)
+                {
+                    for (uint32_t partIndex = 0; partIndex < plan.parts.Count(); ++partIndex)
+                    {
+                        if (plan.parts.At(partIndex).alphaMask)
+                        {
+                            return SetError(error, "custom pixel shaders do not support masked model materials");
+                        }
+                    }
+                }
                 const bool customNeedsTexture = customShader && (customShaders_.RequiresTexture(draw.shader) || customShaders_.RequiresSampler(draw.shader));
                 if (customShader)
                 {

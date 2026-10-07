@@ -76,7 +76,8 @@ int main() {
 - モデル専用材質 shader は GLB の base color factor / texture と metallic / roughness factor を使う。拡散反射は Lambert、直接光の鏡面反射は GGX 分布、Fresnel、Smith masking-shadowing を使う。均一な環境光は簡易な Lambert 寄与とし、環境マップとは区別する。
 - 頂点法線はワールド変換の逆転置で変換し正規化する。法線がない三角形には面法線を使い、退化面には不正な法線を生成しない。
 - 2D 図形・画像・文字と公開カスタム pixel shader は従来どおり unlit で描画する。モデルは UI 層でも材質照明を使い、UI 合成位置に従う。モデル材質用公開 shader ABI は別途固定する。
-- 影、環境マップ / IBL、metallic-roughness texture、normal map、alpha mode の切り替えを標準機能として提供する。
+- GLBの標準材質はOPAQUEとMASKに対応する。MASKでは画像のアルファと基本色のアルファ係数を掛け、alphaCutoff未満の画素を破棄して色と深度を更新しない。境界値と等しい画素は残す。BLENDは未対応として読み込み時に診断を返す。
+- 完成時の対応目標として、影、環境マップ / IBL、metallic-roughness texture、normal map、BLENDの合成を標準機能に追加する。現在の対応範囲は機能一覧へ記載する。
 
 ### ポストエフェクトとシェーダー
 

@@ -136,6 +136,8 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.shader_binding_c
 
 この検査はslot 0と63、矩形と不透明PNGのScene/UI描画、6フレームの値の更新とshaderの削除条件を扱います。全64slot、4096件上限、半透明の独自shader、3D深度検査、shaderを指定したモデル描画、GPU負荷、全面画像の画質、他GPUの検証ではありません。
 
+MASK材質のGLBモデルは内蔵モデルshaderで描きます。描画命令用の独自pixel shaderを選んでMASKモデルを登録すると、材質の切り抜き条件を渡す入力がないためPresentが診断付きで失敗します。`gk::SetPixelShader({})`で内蔵shaderへ戻してください。対応する材質の設定は[モデルガイド](models.md)を参照してください。
+
 ## 現在の対応範囲
 
 公開 API は shader handle、64 個の `Float4` 定数、描画命令ごとの設定 snapshot を提供し、1 フレームあたり独自 shader を使う描画は最大 4096 件です。D3D12 描画部は共通の頂点シェーダーを使い、Scene/UI、深度検査、alpha blending の pipeline を用意しています。Windows COM reflection は `b0, space3` の定数と、任意の `t0, space0` / `s0, space0` binding を確認します。独自の頂点 shader と利用者が差し替えるモデル材質 shader ABI は対象外です。モデル描画は gkcore 内蔵の PBR 材質 shader を使います。ポストエフェクト用 shader API と CPU 契約も統合済みで、[専用ガイド](post-effect-shader.md)に使い方をまとめています。Windows Runtimeのビルド・GPU smokeに加え、上記の範囲で実GPUの画素を確認しています。全面画像の画質判定とは分けて扱います。

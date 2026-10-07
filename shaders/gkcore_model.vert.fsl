@@ -1,36 +1,53 @@
-/**
- * Vertex inputs supplied by the dedicated PBR model layout.
+﻿/**
+ * 専用PBR model layoutから受け取る頂点入力。
  */
 STRUCT(VSInput)
 {
+    // 変換済み位置を受け取る。
     DATA(float4, Position, POSITION);
+    // 基本色と頂点alphaを受け取る。
     DATA(float4, Color, COLOR);
+    // 基本色画像を参照する座標。
     DATA(float2, UV, TEXCOORD0);
+    // world空間の法線。
     DATA(float3, WorldNormal, NORMAL);
+    // cameraから頂点へ向かう方向量。
     DATA(float3, ViewDirection, TEXCOORD1);
+    // PBR金属度と粗さ。
     DATA(float2, MetallicRoughness, TEXCOORD2);
+    // アルファ抜きの有効値と境界値。
+    DATA(float2, AlphaMaskCutoff, TEXCOORD3);
 };
 
 /**
- * Model surface attributes passed to the per-pixel lighting shader.
+ * 画素shaderへ渡すmodel表面と照明属性。
  */
 STRUCT(VSOutput)
 {
+    // rasterizerへ渡すclip空間位置。
     DATA(float4, Position, SV_Position);
+    // 基本色と頂点alpha。
     DATA(float4, Color, COLOR);
+    // 基本色画像の座標。
     DATA(float2, UV, TEXCOORD0);
+    // world空間の法線。
     DATA(float3, WorldNormal, TEXCOORD1);
+    // cameraから頂点へ向かう方向量。
     DATA(float3, ViewDirection, TEXCOORD2);
+    // PBR金属度と粗さ。
     DATA(float2, MetallicRoughness, TEXCOORD3);
+    // 材質ごとの値を補間せず、画素の切り抜きへ渡す。
+    DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
 };
 
 /**
- * Forwards projected surface, lighting, and material attributes.
+ * 投影済み表面、照明、材質属性を画素shaderへ渡す。
  */
 ROOT_SIGNATURE(DefaultRootSignature)
 VSOutput VS_MAIN(VSInput input)
 {
     INIT_MAIN;
+    // 次段shaderへ渡す属性一式。
     VSOutput output;
     output.Position = input.Position;
     output.Color = input.Color;
@@ -38,5 +55,6 @@ VSOutput VS_MAIN(VSInput input)
     output.WorldNormal = input.WorldNormal;
     output.ViewDirection = input.ViewDirection;
     output.MetallicRoughness = input.MetallicRoughness;
+    output.AlphaMaskCutoff = input.AlphaMaskCutoff;
     RETURN(output);
 }
