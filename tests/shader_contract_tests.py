@@ -153,15 +153,17 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     resource_section = _section(dump, "Resource Bindings:", "ViewId state:", "Buffer Definitions:")
     missing: list[str] = []
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     if not re.search(r"\bSV_Target\s+0\b", output_section, re.IGNORECASE):
         missing.append("SV_Target0")
     if not re.search(r"\bgImageTexture\s+texture\b[^\n]*\bt0\b", resource_section, re.IGNORECASE):
         missing.append("gImageTexture at t0")
-    if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs1\b", resource_section, re.IGNORECASE):
-        missing.append("gImageSampler in the SpriteResources persistent set")
+    if not re.search(r"\bgMetallicRoughnessTexture\s+texture\b[^\n]*\bt1\b", resource_section, re.IGNORECASE):
+        missing.append("gMetallicRoughnessTexture at t1")
+    if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs2\b", resource_section, re.IGNORECASE):
+        missing.append("gImageSampler in the ModelTextureResources persistent set")
     if not re.search(r"\bgModelLighting\s+cbuffer\b[^\n]*\bcb0,space1\b", resource_section, re.IGNORECASE):
         missing.append("LightingConstants at b0, space1")
     buffer_section = _section(dump, "Buffer Definitions:", "Resource Bindings:")
@@ -170,6 +172,8 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     # 切り抜きの有効値と境界値は、追加した2成分の入力を必須とする。
     if not re.search(r"\bTEXCOORD\s+4\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
         missing.append("alpha mask/cutoff at TEXCOORD4.xy")
+    if not re.search(r"\bTEXCOORD\s+5\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
+        missing.append("metallic-roughness UV at TEXCOORD5.xy")
     if missing:
         raise ShaderContractError(f"{source}: model pixel shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
@@ -201,18 +205,22 @@ def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC refle
     output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
     missing: list[str] = []
     for semantic in (r"\bPOSITION\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b"):
+                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b"):
         if not re.search(semantic, output_section, re.IGNORECASE):
             missing.append("output " + semantic.replace(r"\b", "").replace(r"\s+", " "))
-    # 80byteの頂点末尾に追加したアルファ抜き情報の2成分を確認する。
+    # 88byteの頂点末尾に追加したアルファ抜き情報の2成分を確認する。
     if not re.search(r"\bTEXCOORD\s+3\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
         missing.append("alpha mask/cutoff input at TEXCOORD3.xy")
     if not re.search(r"\bTEXCOORD\s+4\s+xy\s+\d+\s+\S+\s+float\s+xy\b", output_section, re.IGNORECASE):
         missing.append("alpha mask/cutoff output at TEXCOORD4.xy")
+    if not re.search(r"\bTEXCOORD\s+4\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
+        missing.append("metallic-roughness UV input at TEXCOORD4.xy")
+    if not re.search(r"\bTEXCOORD\s+5\s+xy\s+\d+\s+\S+\s+float\s+xy\b", output_section, re.IGNORECASE):
+        missing.append("metallic-roughness UV output at TEXCOORD5.xy")
     if missing:
         raise ShaderContractError(f"{source}: model vertex shader reflection is missing required gkcore ABI entries: " + ", ".join(missing))
 
@@ -314,13 +322,15 @@ class ShaderReflectionTests(unittest.TestCase):
 ; TEXCOORD 2 xyzw 4 NONE float xyzw
 ; TEXCOORD 3 xyzw 5 NONE float xyzw
 ; TEXCOORD 4 xy 6 NONE float xy
+; TEXCOORD 5 xy 7 NONE float xy
 ; Output signature:
 ; SV_Target 0 xyzw 0 TARGET float xyzw
 ; Buffer Definitions:
 ; gModelLighting Size: 32
 ; Resource Bindings:
 ; gImageTexture texture f32 2d 0 T0 t0 1
-; gImageSampler sampler NA NA 0 S0 s1 1
+; gMetallicRoughnessTexture texture f32 2d 1 T1 t1 1
+; gImageSampler sampler NA NA 0 S0 s2 1
 ; gModelLighting cbuffer NA NA NA CB0 cb0,space1 1
 """
         validate_model_pixel_shader_reflection(good, "gkcore_model.frag")

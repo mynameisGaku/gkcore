@@ -65,6 +65,8 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             source[corner].normal = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
             source[corner].uv[0] = vertex.uv[0];
             source[corner].uv[1] = vertex.uv[1];
+            source[corner].metallicRoughnessUv[0] = vertex.metallicRoughnessUv[0];
+            source[corner].metallicRoughnessUv[1] = vertex.metallicRoughnessUv[1];
         }
         // camera clipping後の頂点を受け取る固定配列。
         ProjectedWorldVertex projected[18]{};
@@ -98,6 +100,8 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             vertex.metallicRoughness[1] = part.roughnessFactor;
             vertex.alphaMaskCutoff[0] = part.alphaMask ? 1.0f : 0.0f;
             vertex.alphaMaskCutoff[1] = part.alphaCutoff;
+            vertex.metallicRoughnessUv[0] = projected[i].metallicRoughnessUv[0];
+            vertex.metallicRoughnessUv[1] = projected[i].metallicRoughnessUv[1];
             if (!candidate.Append(vertex))
             {
                 error.Assign("The model vertex allocation failed");

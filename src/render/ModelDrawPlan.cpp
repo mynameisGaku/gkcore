@@ -92,6 +92,7 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
         part.indexCount = primitive.indexCount;
         part.materialIndex = primitive.materialIndex;
         part.textureIndex = -1;
+        part.metallicRoughnessTextureIndex = -1;
         part.baseColorFactor[0] = 1.0f;
         part.baseColorFactor[1] = 1.0f;
         part.baseColorFactor[2] = 1.0f;
@@ -114,6 +115,12 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
             part.roughnessFactor = material.roughnessFactor;
             part.alphaMask = material.alphaMask;
             part.alphaCutoff = material.alphaCutoff;
+            if (material.metallicRoughnessTextureIndex != -1)
+            {
+                if (material.metallicRoughnessTextureIndex < 0 || static_cast<uint32_t>(material.metallicRoughnessTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.metallicRoughnessTextureIndex)))
+                    return Fail(error, "The model material metallic-roughness texture index is invalid");
+                part.metallicRoughnessTextureIndex = material.metallicRoughnessTextureIndex;
+            }
             if (material.baseColorTextureIndex != -1)
             {
                 if (material.baseColorTextureIndex < 0 || static_cast<uint32_t>(material.baseColorTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.baseColorTextureIndex)))

@@ -55,7 +55,7 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
     VertexLayout layout{};
     layout.mBindingCount = 1;
     layout.mBindings[0].mStride = sizeof(ModelRenderVertex);
-    layout.mAttribCount = 7;
+    layout.mAttribCount = 8;
     layout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
     layout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
     layout.mAttribs[0].mBinding = 0;
@@ -92,6 +92,12 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
     layout.mAttribs[6].mBinding = 0;
     layout.mAttribs[6].mLocation = 6;
     layout.mAttribs[6].mOffset = offsetof(ModelRenderVertex, alphaMaskCutoff);
+    // 金属度・粗さの画像だけが使うUVの入力。
+    layout.mAttribs[7].mSemantic = SEMANTIC_TEXCOORD4;
+    layout.mAttribs[7].mFormat = TinyImageFormat_R32G32_SFLOAT;
+    layout.mAttribs[7].mBinding = 0;
+    layout.mAttribs[7].mLocation = 7;
+    layout.mAttribs[7].mOffset = offsetof(ModelRenderVertex, metallicRoughnessUv);
 
     // scene/UIで共通利用するrasterizer設定。
     RasterizerStateDesc rasterizer{};

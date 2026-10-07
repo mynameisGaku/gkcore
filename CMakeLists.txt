@@ -290,6 +290,25 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_alpha_tests)
     add_dependencies(gkcore_model_alpha_tests gkcore_model_alpha_fixtures)
     add_test(NAME gkcore.model_alpha COMMAND gkcore_model_alpha_tests "${_gkcore_model_alpha_fixture_dir}")
+    # 基本色と金属度・粗さの画像を独立して保持するGLBを検査する。
+    set(_gkcore_model_material_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-material-fixtures")
+    set(_gkcore_model_material_fixture_files)
+    foreach(_fixture_name IN ITEMS no-mr-default uniform-mr factor-reference ignored-ra scaled-mr scaled-reference shared-image shared-reference mr-only mr-only-reference uv1-pattern uv1-reference mixed-pairs mixed-reference masked-mr missing-mr-uv transform-mr bad-mr-image bad-mr-index)
+        list(APPEND _gkcore_model_material_fixture_files "${_gkcore_model_material_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_material_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_material_fixtures.py
+            --output-dir "${_gkcore_model_material_fixture_dir}"
+        DEPENDS tests/support/model_material_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_material_fixtures DEPENDS ${_gkcore_model_material_fixture_files})
+    add_executable(gkcore_model_material_tests tests/model_material_tests.cpp ${_gkcore_resource_test_sources}
+        src/render/ModelDrawPlan.cpp src/render/ModelGeometry.cpp src/render/WorldGeometry.cpp src/render/PostProcess.cpp)
+    target_compile_features(gkcore_model_material_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_material_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_model_material_tests)
+    add_dependencies(gkcore_model_material_tests gkcore_model_material_fixtures)
+    add_test(NAME gkcore.model_material COMMAND gkcore_model_material_tests "${_gkcore_model_material_fixture_dir}")
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
         src/model/FbxGeometry.cpp
@@ -650,6 +669,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_alpha_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_alpha_capture_tests)
             add_dependencies(gkcore_model_alpha_capture_tests gkcore_model_alpha_fixtures)
+            add_executable(gkcore_model_material_capture_tests tests/model_material_capture_tests.cpp)
+            target_compile_features(gkcore_model_material_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_material_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_material_capture_tests)
+            add_dependencies(gkcore_model_material_capture_tests gkcore_model_material_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -692,6 +716,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --shader ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/gkcore_user_tint.frag
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-alpha-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_alpha_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_material_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_material_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_material_capture_tests>
+                    --fixture-dir "${_gkcore_model_material_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-material-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_material_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -746,6 +776,10 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(TARGET gkcore_model_alpha_capture_tests)
         add_dependencies(gkcore_model_alpha_capture_tests gkcore_stage_runtime_payload)
+    endif()
+
+    if(TARGET gkcore_model_material_capture_tests)
+        add_dependencies(gkcore_model_material_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

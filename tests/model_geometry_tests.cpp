@@ -87,7 +87,7 @@ bool Near(float a, float b, float tolerance = 0.0002f)
 bool TestVertexContractAndBasicLightingPayload()
 {
     static_assert(sizeof(Vertex) == 40, "legacy vertex ABI remains unchanged");
-    static_assert(sizeof(ModelRenderVertex) == 80, "lit model vertex ABI is 80 bytes");
+    static_assert(sizeof(ModelRenderVertex) == 88, "lit model vertex ABI is 88 bytes");
     const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
     const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
     detail::ModelResource model{};
@@ -198,6 +198,14 @@ bool TestClippingInterpolatesLightingAndRejectsNonFiniteInputs()
     const Vec3 normals[3] = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
     detail::ModelResource model{};
     MakeTriangle(model, normals, points);
+    // 2つのUVが別の値でも、同じ交点で正しく補間されるかを確認する。
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 基本色のUVから独立した2次元の線形関係を持つ材質座標。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.metallicRoughnessUv[0] = 2.0f + 3.0f * vertex.uv[0] - 2.0f * vertex.uv[1];
+        vertex.metallicRoughnessUv[1] = -1.0f + vertex.uv[0] + 4.0f * vertex.uv[1];
+    }
     detail::FramePacket frame{};
     Frame(frame);
     detail::DrawPacket draw = Draw(model);
@@ -212,6 +220,11 @@ bool TestClippingInterpolatesLightingAndRejectsNonFiniteInputs()
     for (uint32_t i = 0; i < vertices.Count(); ++i)
     {
         const ModelRenderVertex& vertex = vertices.At(i);
+        // 線形な関係は、切り詰めて作った交点にも成り立つ。
+        const float expectedU = 2.0f + 3.0f * vertex.surface.uv[0] - 2.0f * vertex.surface.uv[1];
+        const float expectedV = -1.0f + vertex.surface.uv[0] + 4.0f * vertex.surface.uv[1];
+        if (!Check(Near(vertex.metallicRoughnessUv[0], expectedU) && Near(vertex.metallicRoughnessUv[1], expectedV), "near clipping preserves independent metallic-roughness UV"))
+            return false;
         if (Near(vertex.surface.position[3], 0.1f))
         {
             foundInterpolatedNormal = foundInterpolatedNormal || (vertex.worldNormal[0] > 0.98f && vertex.worldNormal[1] > 0.005f && vertex.worldNormal[1] < 0.02f);
@@ -233,7 +246,13 @@ bool TestClippingInterpolatesLightingAndRejectsNonFiniteInputs()
     vertices.Clear();
     if (!Check(!AppendLitModelPart(frame, draw, Part(), vertices, 32, error), "non-finite model normal is rejected"))
         return false;
-    return Check(vertices.Count() == 0, "invalid input does not append partial lit vertices");
+    if (!Check(vertices.Count() == 0, "invalid input does not append partial lit vertices"))
+        return false;
+    model.vertices.At(0).normal[0] = 1.0f;
+    model.vertices.At(0).metallicRoughnessUv[1] = std::numeric_limits<float>::quiet_NaN();
+    if (!Check(!AppendLitModelPart(frame, draw, Part(), vertices, 32, error), "non-finite metallic-roughness UV is rejected"))
+        return false;
+    return Check(vertices.Count() == 0, "invalid metallic-roughness UV leaves output unchanged");
 }
 
 bool TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping()

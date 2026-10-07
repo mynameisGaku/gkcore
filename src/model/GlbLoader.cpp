@@ -34,6 +34,53 @@ bool IsFinite(float value)
 }
 
 /**
+ * glTF textureを画像resourceへ登録し、共有済みslotを返す。
+ * 参照外、未対応画像、読み込みや確保の失敗では-1を返す。
+ */
+int32_t AddTexture(cgltf_data* data, const cgltf_texture_view& view, const char* role, ModelResource& model, uint32_t* textureMap, String& error)
+{
+    // data内のtexture配列で参照textureが占める位置。
+    const cgltf_size textureIndex = static_cast<cgltf_size>(view.texture - data->textures);
+    if (textureIndex >= data->textures_count)
+    {
+        error.Assign(role);
+        error.Append(" texture reference is invalid");
+        return -1;
+    }
+    if (textureMap[textureIndex] == missingIndex)
+    {
+        // このtextureが参照する画像データ。
+        cgltf_image* sourceImage = view.texture->image;
+        if (!sourceImage || !sourceImage->buffer_view || !sourceImage->mime_type || strcmp(sourceImage->mime_type, "image/png") != 0)
+        {
+            error.Assign(role);
+            error.Append(" image must be embedded PNG data");
+            return -1;
+        }
+        // decoderへ渡す埋め込みPNG byte列。
+        const uint8_t* encoded = cgltf_buffer_view_data(sourceImage->buffer_view);
+        if (!encoded || sourceImage->buffer_view->size > maxModelFileBytes)
+        {
+            error.Assign(role);
+            error.Append(" image buffer is invalid or too large");
+            return -1;
+        }
+        // decodeした画像resource。複数材質から同じtextureを共有する。
+        ImageResource* image = DecodeImagePayload(encoded, static_cast<uint32_t>(sourceImage->buffer_view->size), error);
+        if (!image)
+            return -1;
+        textureMap[textureIndex] = model.textures.Count();
+        if (!model.textures.Append(image))
+        {
+            Release(&image->reference);
+            error.Assign("GLB material texture allocation failed");
+            return -1;
+        }
+    }
+    return static_cast<int32_t>(textureMap[textureIndex]);
+}
+
+/**
  * 列優先のworld行列を位置へ適用する。
  */
 void TransformPosition(const float matrix[16], const float source[3], float output[3])
@@ -85,6 +132,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
     material.metallicFactor = 1.0f;
     material.roughnessFactor = 1.0f;
     material.baseColorTextureIndex = -1;
+    material.metallicRoughnessTextureIndex = -1;
     if (source)
     {
         // source材質がdata内にあることを確かめるindex。
@@ -121,42 +169,15 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         material.roughnessFactor = pbr.roughness_factor;
         if (pbr.base_color_texture.texture)
         {
-            // glTF texture配列内での参照位置。
-            const cgltf_size textureIndex = static_cast<cgltf_size>(pbr.base_color_texture.texture - data->textures);
-            if (textureIndex >= data->textures_count)
-            {
-                error.Assign("GLB material has an invalid base-color texture");
+            material.baseColorTextureIndex = AddTexture(data, pbr.base_color_texture, "GLB base-color", model, textureMap, error);
+            if (material.baseColorTextureIndex < 0)
                 return -1;
-            }
-            if (textureMap[textureIndex] == missingIndex)
-            {
-                // base color textureが参照するembedded image。
-                cgltf_image* sourceImage = pbr.base_color_texture.texture->image;
-                if (!sourceImage || !sourceImage->buffer_view || !sourceImage->mime_type || strcmp(sourceImage->mime_type, "image/png") != 0)
-                {
-                    error.Assign("GLB base-color image must be embedded PNG data");
-                    return -1;
-                }
-                // decodeへ渡すPNG byte列。
-                const uint8_t* encoded = cgltf_buffer_view_data(sourceImage->buffer_view);
-                if (!encoded || sourceImage->buffer_view->size > maxModelFileBytes)
-                {
-                    error.Assign("GLB image buffer is invalid or too large");
-                    return -1;
-                }
-                // PNG byte列から作った画像resource。
-                ImageResource* image = DecodeImagePayload(encoded, static_cast<uint32_t>(sourceImage->buffer_view->size), error);
-                if (!image)
-                    return -1;
-                textureMap[textureIndex] = model.textures.Count();
-                if (!model.textures.Append(image))
-                {
-                    Release(&image->reference);
-                    error.Assign("GLB material texture allocation failed");
-                    return -1;
-                }
-            }
-            material.baseColorTextureIndex = static_cast<int32_t>(textureMap[textureIndex]);
+        }
+        if (pbr.metallic_roughness_texture.texture)
+        {
+            material.metallicRoughnessTextureIndex = AddTexture(data, pbr.metallic_roughness_texture, "GLB metallic-roughness", model, textureMap, error);
+            if (material.metallicRoughnessTextureIndex < 0)
+                return -1;
         }
     }
     // 既存材質と等しければ同じslotを再利用するloop。
@@ -165,7 +186,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];
@@ -188,26 +209,20 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
 /**
  * 材質が使う画像座標を選ぶ。指定先の欠損、不正な型、未対応の座標変換は失敗する。
  */
-bool SelectBaseColorUv(const cgltf_primitive& primitive, const cgltf_accessor*& output, String& error)
+bool SelectTextureUv(const cgltf_primitive& primitive, const cgltf_texture_view& texture, const char* role, const cgltf_accessor*& output, String& error)
 {
-    // 画像を使わない材質は、従来どおりUV0を保持する。
-    const cgltf_material* material = primitive.material;
-    if (!material || !material->has_pbr_metallic_roughness || !material->pbr_metallic_roughness.base_color_texture.texture)
-    {
-        output = cgltf_find_accessor(&primitive, cgltf_attribute_type_texcoord, 0);
-        return true;
-    }
-
-    // 基本色の画像と、そこへ渡す座標セットの指定。
-    const cgltf_texture_view& texture = material->pbr_metallic_roughness.base_color_texture;
     if (texture.has_transform)
     {
-        error.Assign("GLB base-color texture coordinate transforms are unsupported");
+        error.Assign("GLB ");
+        error.Append(role);
+        error.Append(" texture coordinate transforms are unsupported");
         return false;
     }
     if (texture.texcoord < 0)
     {
-        error.Assign("GLB base-color texture coordinate set index must be nonnegative");
+        error.Assign("GLB ");
+        error.Append(role);
+        error.Append(" texture coordinate set index must be nonnegative");
         return false;
     }
 
@@ -215,7 +230,9 @@ bool SelectBaseColorUv(const cgltf_primitive& primitive, const cgltf_accessor*& 
     const cgltf_accessor* selected = cgltf_find_accessor(&primitive, cgltf_attribute_type_texcoord, texture.texcoord);
     if (!selected)
     {
-        error.Assign("GLB base-color texture coordinate set is missing from the primitive");
+        error.Assign("GLB ");
+        error.Append(role);
+        error.Append(" texture coordinate set is missing from the primitive");
         return false;
     }
 
@@ -225,7 +242,9 @@ bool SelectBaseColorUv(const cgltf_primitive& primitive, const cgltf_accessor*& 
     const bool normalizedUnsigned = selected->normalized && (selected->component_type == cgltf_component_type_r_8u || selected->component_type == cgltf_component_type_r_16u);
     if (!floating && !normalizedUnsigned)
     {
-        error.Assign("GLB base-color texture coordinates require FLOAT or normalized unsigned byte/short data");
+        error.Assign("GLB ");
+        error.Append(role);
+        error.Append(" texture coordinates require FLOAT or normalized unsigned byte/short data");
         return false;
     }
     output = selected;
@@ -246,9 +265,16 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     const cgltf_accessor* position = cgltf_find_accessor(primitive, cgltf_attribute_type_position, 0);
     // primitiveが持つ法線属性。
     const cgltf_accessor* normal = cgltf_find_accessor(primitive, cgltf_attribute_type_normal, 0);
-    // 材質が選んだ座標を頂点へ複写するための入力。
-    const cgltf_accessor* uv = nullptr;
-    if (!SelectBaseColorUv(*primitive, uv, error))
+    // 基本色画像へ渡す座標accessor。画像がなければ従来どおりUV0を保持する。
+    const cgltf_accessor* baseColorUv = cgltf_find_accessor(primitive, cgltf_attribute_type_texcoord, 0);
+    // 金属度・粗さ画像へ渡す独立した座標accessor。
+    const cgltf_accessor* metallicRoughnessUv = nullptr;
+    const cgltf_pbr_metallic_roughness* pbr = primitive->material && primitive->material->has_pbr_metallic_roughness ? &primitive->material->pbr_metallic_roughness : nullptr;
+    if (pbr && pbr->base_color_texture.texture && !SelectTextureUv(*primitive, pbr->base_color_texture, "base-color", baseColorUv, error))
+    {
+        return false;
+    }
+    if (pbr && pbr->metallic_roughness_texture.texture && !SelectTextureUv(*primitive, pbr->metallic_roughness_texture, "metallic-roughness", metallicRoughnessUv, error))
     {
         return false;
     }
@@ -257,7 +283,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         error.Assign("GLB primitive has invalid or excessive positions");
         return false;
     }
-    if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (uv && (uv->type != cgltf_type_vec2 || uv->count != position->count || uv->is_sparse || !uv->buffer_view)))
+    if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (baseColorUv && (baseColorUv->type != cgltf_type_vec2 || baseColorUv->count != position->count || baseColorUv->is_sparse || !baseColorUv->buffer_view)) || (metallicRoughnessUv && (metallicRoughnessUv->type != cgltf_type_vec2 || metallicRoughnessUv->count != position->count || metallicRoughnessUv->is_sparse || !metallicRoughnessUv->buffer_view)))
     {
         error.Assign("GLB primitive has incompatible normals or texture coordinates");
         return false;
@@ -286,9 +312,9 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             }
             TransformNormal(matrix, value, vertex.normal);
         }
-        if (uv)
+        if (baseColorUv)
         {
-            if (!cgltf_accessor_read_float(uv, i, value, 2))
+            if (!cgltf_accessor_read_float(baseColorUv, i, value, 2))
             {
                 error.Assign("GLB texture accessor could not be read");
                 return false;
@@ -296,7 +322,17 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             vertex.uv[0] = value[0];
             vertex.uv[1] = value[1];
         }
-        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !model.vertices.Append(vertex))
+        if (metallicRoughnessUv)
+        {
+            if (!cgltf_accessor_read_float(metallicRoughnessUv, i, value, 2))
+            {
+                error.Assign("GLB metallic-roughness texture accessor could not be read");
+                return false;
+            }
+            vertex.metallicRoughnessUv[0] = value[0];
+            vertex.metallicRoughnessUv[1] = value[1];
+        }
+        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !model.vertices.Append(vertex))
         {
             error.Assign("GLB vertex values or allocation are invalid");
             return false;

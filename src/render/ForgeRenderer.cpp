@@ -435,17 +435,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
-    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex) -> bool
+    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr) -> bool
     {
         if (count == 0)
             return true;
-        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image;
+        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage;
         if (canBatch)
         {
             runs_.At(runs_.Count() - 1).count += count;
             return true;
         }
-        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel };
+        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage };
         return runs_.Append(run);
     };
     for (uint32_t layer = 0; layer < 2; ++layer)
@@ -520,16 +520,23 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     detail::ImageResource* materialImage = part.textureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.textureIndex)) : nullptr;
                     const bool needsTexture = customNeedsTexture || !customShader;
                     detail::ImageResource* image = needsTexture ? (materialImage ? materialImage : whiteImage_) : nullptr;
+                    // MR画像がないモデルは線形の白を使い、係数だけの材質を保つ。
+                    detail::ImageResource* metallicRoughnessImage = litModel ? (part.metallicRoughnessTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.metallicRoughnessTextureIndex)) : whiteImage_) : nullptr;
                     if (needsTexture)
                     {
                         if (!image)
                             return SetError(error, "The model texture fallback is unavailable");
-                        if (!textureCache_.Prepare(image, error))
+                        if (litModel)
+                        {
+                            if (!metallicRoughnessImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error))
+                                return false;
+                        }
+                        else if (!textureCache_.Prepare(image, error))
                             return false;
                     }
                     const bool alphaBlend = customShader && (draw.flags & detail::DrawAlphaBlend) != 0;
                     const bool depthTest = layer == 0;
-                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex))
+                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex, metallicRoughnessImage))
                         return SetError(error, "The frame draw-run allocation failed");
                 }
                 if (customShader)
@@ -681,10 +688,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                 Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaPipeline_ : spritePipeline_) : (run.depthTest ? depthPipeline_ : scenePipeline_);
                 cmdBindPipeline(command, pipeline);
             }
-            if (run.textured && !textureCache_.Bind(command, run.image, error))
+            if (run.textured)
             {
-                endCmd(command);
-                return false;
+                // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error) : textureCache_.Bind(command, run.image, error);
+                if (!bound)
+                {
+                    endCmd(command);
+                    return false;
+                }
             }
             cmdDraw(command, run.count, run.first);
         }
@@ -753,10 +765,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                 Pipeline* pipeline = run.textured ? (run.alphaBlend ? spriteAlphaUiPipeline_ : spriteUiPipeline_) : uiPipeline_;
                 cmdBindPipeline(command, pipeline);
             }
-            if (run.textured && !textureCache_.Bind(command, run.image, error))
+            if (run.textured)
             {
-                endCmd(command);
-                return false;
+                // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error) : textureCache_.Bind(command, run.image, error);
+                if (!bound)
+                {
+                    endCmd(command);
+                    return false;
+                }
             }
             cmdDraw(command, run.count, run.first);
         }

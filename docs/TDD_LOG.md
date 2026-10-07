@@ -726,3 +726,39 @@ RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0でDebug・Release各30/30件�
 最終のC++書式確認で、fieldの行末コメントを宣言直前へ移し、括弧内部を1行へ整えました。formatter検査と、9ファイルの機能要素のhash一致を再確認しています。
 
 最終の書式整理後もRelease・Debugの再ビルドが成功しました。ログは`model-alpha-{release,debug}-formatted-build.log`です。
+
+
+## 2026-10-07: GLB金属度・粗さの画像
+
+MR画像をテストから追加しました。保持する画像番号と第2のUVを宣言後、実装前のCPU/GPUを実行しました。CPUはuniform-mrの画像資源が不足し、GPUはMR画像モデルと数値係数だけの参照モデルに45,000画素・最大RGB差88が出て失敗しました（`build/native-validation/model-material-red-tests.log`）。MR画像を無視した結果と参照が偶然一致しないよう、MRなしの係数1/1モデルとの色差も別に確認します。
+
+GLB画像登録を既存のAddTextureへ共通化し、同じglTF textureを基本色とMRに使う場合は同じImageResourceを保持します。MR画像番号を材質と描画計画へ追加し、材質の重複判定にも含めました。基本色とMRそれぞれのtexCoordを選び、位置とUVの境界検査、未対応の座標変換拒否を共有します。基本色がなくMRだけを持つ材質にも対応しました。新しい項目を途中へ置いた初回全体ビルドでは、既存のaggregate初期化が崩れたため、材質と描画計画の新項目を末尾へ移し、従来の初期化順を保ちました。
+
+第2のUVはモデル頂点からワールド変換・両clip平面・射影まで保持し、内蔵モデル頂点88byteの末尾からvertex TEXCOORD4/pixel TEXCOORD5へ渡します。近平面の交点でも基本色UVと混同しないことを、異なる2本の線形関係を持つMR UVでCPU検査しました。NaNのMR UVも拒否し、出力を部分的に追加しません。アルファ抜き情報と公開の40byteカスタムshader入力は変更していません。
+
+TextureCacheは画像pointerと色空間をkeyにし、基本色をSRGB、MRをUNORMの線形textureへ転送します。同じImageResourceの両用途は別のGPU資源として保持・byte計上・frame固定します。既存Sprite descriptorは維持し、モデルは基本色t0/MR t1/sampler s2のdescriptorを使います。物理資源と、2画像のdescriptor pairは同じcache ownerが管理し、各128枠です。追い出し時はqueue idleと転送完了を待ち、pair descriptorを物理textureより先に破棄します。Shaderは線形MRのGを粗さ・Bを金属度に読み、既存係数を掛けます。R/AはMR計算へ使いません。MRがない場合はG/B=1の線形白を使い、従来の係数材質を保ちます。
+
+19種類のGLB（有効15、拒否4）で画像参照・色・係数・UV・描画計画を検査しました。GPUはScene15、UI8、132回読み直した後の2画像の計25枚です。単色MRと数値係数だけの参照、R/A無視、係数乗算、同一画像の2色空間、MRのみ、独立UV1、異なるMR画像pair、MASKとMRを比較しました。単色ケースは全画素、mixed pairはモデル領域、UV patternは内部の代表画素が参照と一致しました。MRなしの係数1/1との対照は45,000画素がRGB差2を超え、最大差88でした。照明式をCPU/Pythonへ再実装して期待色を作った結果ではありません。
+
+連続再読込は共有画像モデルを132回LoadModelし、描画登録後にhandleを削除してPresentします。sRGB/線形の264資源が128枠を超えた後のframe130/131でも参照と全画素一致しました。25画像はRelease/Debug間でbyte単位に一致しました。256MiBのbyte上限、GPU性能、全frameのちらつきを測った検査ではありません。
+
+```powershell
+python tools/build_gkcore_shaders.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir build/runtime-windows/gkcore_shaders
+python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0のRuntimeを検証しました。Releaseは全43/43成功、追加GPU検査30.32秒、全体99.12秒です。Debugも全43/43成功、追加GPU検査32.77秒、全体109.17秒です。ログは`build/native-validation/model-material-{release,debug}-final-{build,tests}.log`です。SDK consumerを含む配布物検査も成功、Debugは必須InfoQueue取得を確認し、GPU-based validationは有効化していません。
+
+RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0でDebug・Release各31/31成功、全体2.98秒・2.93秒でした（`model-material-cpu-{debug,release}-{build,tests}.log`）。固定13shaderをコンパイルし、検査用metadata付きモデル2shaderも生成しました。内部のtexture/UV契約を更新し、公開カスタムshader ABIとRuntime SDKのファイル構成は変えません。新規enum/SRT headerはSPDX NOASSERTIONとinclude guardに従います。3ファイルのコメント整理は実装後の機能要素hashと一致しています。
+
+独立レビューでnear-planeの第2UV検査漏れを指摘され、補間と不正値のCPU契約を追加して実行しました。取得RGBを変えずにPNGへ保存し、モデルガイドへ掲載しました。根拠は[glTF metallic-roughness texture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_pbrmetallicroughness_metallicroughnesstexture)です。MRは内蔵モデル照明の機能で、独自pixel shaderの既存非照明経路へMR/PBR入力を追加したものではありません。影、環境マップ、normal map、BLEND、他GPU、異常な転送失敗やdevice loss時のcleanup、全面画質は別の対応・検証範囲です。
+
+最終の書式整理は全変更C++の機能要素hashを変えず、Release・Debugの再ビルドも成功しました（`model-material-{release,debug}-formatted-build.log`）。開発ガイドの現状欄も43/43とMR25画像へ更新しました。

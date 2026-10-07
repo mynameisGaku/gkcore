@@ -1,37 +1,52 @@
-#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_RENDER_WORLDGEOMETRY_H
+#define GKCORE_RENDER_WORLDGEOMETRY_H
 
 #include "Geometry.h"
 
 /**
- * World-space attributes carried through model transforms and camera clipping.
+ * model変換とcamera clippingの間で保持するworld属性。
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
- * One source triangle corner before model and camera transforms.
+ * modelとcameraで変換する前のtriangle頂点属性。
  */
-struct WorldVertex {
+struct WorldVertex
+{
+    // world変換前の位置。
     Vec3 position;
+    // 照明に使う変換前の法線。
     Vec3 normal;
+    // 基本色画像に使うUV。
     float uv[2];
+    // 金属度・粗さの画像座標。
+    float metallicRoughnessUv[2]{};
 };
 
 /**
- * Projected surface and lighting attributes for one clipped world vertex.
+ * clipping後に射影したsurfaceと照明の頂点属性。
  */
-struct ProjectedWorldVertex {
+struct ProjectedWorldVertex
+{
+    // GPUへ渡す射影済みsurface属性。
     Vertex surface;
+    // world空間の単位法線。
     float worldNormal[3];
+    // cameraから頂点へ向かう方向。
     float viewDirection[3];
+    // クリッピング後の金属度・粗さの画像座標。
+    float metallicRoughnessUv[2]{};
 };
 
 /**
- * Clips and projects one world-space triangle, preserving its UV and lighting attributes.
+ * world triangleを切り詰めて射影し、UVと照明属性を保つ。
+ * 不正な入力または数値範囲外ではfalseを返す。
  */
-bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw,
-                          const WorldVertex points[3], bool applyModelTransform,
-                          bool includeLighting, const float* linearColor,
-                          ProjectedWorldVertex output[18], uint32_t& outputCount,
-                          String& error);
+bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw, const WorldVertex points[3], bool applyModelTransform, bool includeLighting, const float* linearColor, ProjectedWorldVertex output[18], uint32_t& outputCount, String& error);
 
-} // namespace gk::render
+// namespace gk::render
+}
+
+#endif

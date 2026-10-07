@@ -40,6 +40,8 @@ struct ModelVertex
     float normal[3];
     // base color imageを参照する座標。
     float uv[2];
+    // 金属度・粗さの画像を読む座標。基本色とは別の座標を保持する。
+    float metallicRoughnessUv[2]{};
 };
 
 /**
@@ -59,6 +61,8 @@ struct ModelMaterial
     bool alphaMask = false;
     // 切り抜く画素の境界値。0以上の有限値を使い、1を超える値も保持する。
     float alphaCutoff = 0.5f;
+    // 金属度・粗さの画像番号。画像がない場合は-1。
+    int32_t metallicRoughnessTextureIndex = -1;
 };
 
 /**

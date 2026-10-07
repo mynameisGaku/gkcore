@@ -19,6 +19,8 @@ STRUCT(VSOutput)
     DATA(float2, MetallicRoughness, TEXCOORD3);
     // 材質ごとのアルファ抜きの有効値と境界値は補間しない。
     DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
+    // 基本色とは別の材質画像座標。
+    DATA(float2, MetallicRoughnessUV, TEXCOORD5);
 };
 
 
@@ -63,9 +65,11 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     // 視線と光の間を向くhalf vector。
     const float3 H = SafeNormalize(V + L, N);
     // 材質の金属度を0から1へ収めた値。
-    const float metallic = saturate(input.MetallicRoughness.x);
+    // 材質画像は線形値として読み、RとAは金属度・粗さに使わない。
+    const float4 materialSample = SampleTex2D(gMetallicRoughnessTexture, gImageSampler, input.MetallicRoughnessUV);
+    const float metallic = saturate(input.MetallicRoughness.x * materialSample.b);
     // 粗さを反射式で使う範囲へ収めた値。
-    const float roughness = clamp(input.MetallicRoughness.y, 0.045, 1.0);
+    const float roughness = clamp(input.MetallicRoughness.y * materialSample.g, 0.045, 1.0);
     // microfacet分布計算に使う粗さ二乗。
     const float alpha = roughness * roughness;
     // 粗さ二乗をさらに二乗した項。

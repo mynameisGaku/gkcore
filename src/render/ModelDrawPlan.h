@@ -33,6 +33,8 @@ struct ModelPartPlan
     bool alphaMask = false;
     // アルファ抜きの境界値。1を超えた場合は全画素を抜く。
     float alphaCutoff = 0.5f;
+    // 金属度・粗さの画像番号。未使用なら-1。
+    int32_t metallicRoughnessTextureIndex = -1;
 };
 
 /**

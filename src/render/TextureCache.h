@@ -1,8 +1,11 @@
-﻿#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_RENDER_TEXTURECACHE_H
+#define GKCORE_RENDER_TEXTURECACHE_H
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
 #include "../resources/Resources.h"
+#include "ETextureColorSpace.h"
 #include "TextureCachePolicy.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
@@ -15,7 +18,7 @@ namespace gk::render
 {
 
 /**
- * GPUへ転送したtextureがcacheにある間、元画像のpixelを保持する。
+ * GPUへ転送したtextureとdescriptorを色空間別に管理する。
  */
 class TextureCache
 {
@@ -33,9 +36,13 @@ class TextureCache
      */
     void BeginFrame();
     /**
-     * 保持中の画像に対応するtextureとdescriptor setを用意する。
+     * 指定色空間の画像textureを用意する。既定はsRGBで、未初期化・不正画像・容量超過では失敗する。
      */
-    bool Prepare(detail::ImageResource* image, String& error);
+    bool Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace = ETextureColorSpace::Srgb);
+    /**
+     * modelのsRGB基本色画像とlinear金属度・粗さ画像の組を用意し、無効画像・容量超過では失敗する。
+     */
+    bool PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error);
     /**
      * The Forgeのresource loaderへ画像転送を記録する。
      */
@@ -64,42 +71,94 @@ class TextureCache
         uploadFence_ = nullptr;
     }
     /**
-     * frame用に準備済みの画像descriptor setをbindする。
+     * frame用に準備済みのsRGB画像descriptor setをbindする。
      */
     bool Bind(Cmd* command, detail::ImageResource* image, String& error) const;
+    /**
+     * frame用に準備済みのモデル画像pair descriptor setをbindし、未準備または無効な指定では失敗する。
+     */
+    bool BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error) const;
 
   private:
     /**
-     * 画像ごとの転送状態、GPU資源、保持byte数を記録する。
+     * 画像と色空間ごとの転送状態、GPU資源、保持byte数を記録する。
      */
     struct Entry
     {
+        // LRU順と現frameの使用状態。
         TextureCacheSlotState state;
+        // 保持参照を持つ元画像。
         detail::ImageResource* image;
+        // GPU上でのRGB解釈。
+        ETextureColorSpace colorSpace;
+        // 色空間別のGPU画像。
         Texture* texture;
+        // 従来画像shader用descriptor。linearでは空。
         DescriptorSet* descriptorSet;
+        // byte上限へ加算する物理画像サイズ。
         uint64_t byteSize;
+        // resource loaderへ転送が必要な状態。
         bool uploadPending;
     };
 
+    /**
+     * 2枚のmodel textureを参照するdescriptorとframe使用状態を記録する。
+     */
+    struct ModelEntry
+    {
+        // LRU順と現frameの使用状態。
+        TextureCacheSlotState state;
+        // sRGB基本色画像のpair key。
+        detail::ImageResource* baseImage;
+        // linear画像のpair key。
+        detail::ImageResource* metallicRoughnessImage;
+        // 物理cacheが所有するsRGB texture。
+        Texture* baseTexture;
+        // 物理cacheが所有するlinear texture。
+        Texture* metallicRoughnessTexture;
+        // model shader用の2画像descriptor。
+        DescriptorSet* descriptorSet;
+    };
+
     static constexpr uint32_t kCapacity = 128;
+    static constexpr uint32_t kModelCapacity = 128;
     static constexpr uint64_t kByteCapacity = 256u * 1024u * 1024u;
     /**
-     * 指定画像のcache記録があれば返す。
+     * 指定画像と色空間のcache記録があれば返す。
      */
-    Entry* Find(detail::ImageResource* image);
+    Entry* Find(detail::ImageResource* image, ETextureColorSpace colorSpace);
+    /**
+     * 指定画像pairのmodel descriptor記録があれば返す。
+     */
+    ModelEntry* FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage);
     /**
      * entry数とbyte上限を守ってslotを確保し、安全な記録だけを追い出す。
      */
     Entry* AcquireSlot(uint64_t imageBytes, String& error);
     /**
-     * 検証済み画像に対応するGPU textureとdescriptorを作る。
+     * model descriptor数を守ってslotを確保し、未使用pairだけを追い出す。
      */
-    bool CreateTexture(Entry& entry, detail::ImageResource* image, String& error);
+    ModelEntry* AcquireModelSlot(String& error);
+    /**
+     * 検証済み画像に対応する色空間別GPU textureを作る。
+     */
+    bool CreateTexture(Entry& entry, detail::ImageResource* image, ETextureColorSpace colorSpace, String& error);
+    /**
+     * 2つの準備済みtextureをmodel shader用descriptorへ登録する。
+     */
+    bool CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, String& error);
+    /**
+     * 物理textureを参照するmodel descriptorを先に解放する。
+     */
+    void InvalidateModelEntries(Texture* texture);
     /**
      * 1件分のdescriptorとtextureを解放してcache記録を初期化する。
      */
     void DestroyEntry(Entry& entry);
+    /**
+     * model descriptorを解放してpair記録を初期化する。
+     */
+    void DestroyModelEntry(ModelEntry& entry);
 
     Renderer* renderer_ = nullptr;
     Queue* queue_ = nullptr;
@@ -110,8 +169,11 @@ class TextureCache
     uint64_t cachedBytes_ = 0;
     bool uploadSubmissionPending_ = false;
     Entry entries_[kCapacity]{};
+    ModelEntry modelEntries_[kModelCapacity]{};
 };
 
 }
+
+#endif
 
 #endif

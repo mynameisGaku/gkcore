@@ -25,8 +25,10 @@ struct ModelRenderVertex
     float metallicRoughness[2];
     // アルファ抜きの有効値（0または1）と境界値。
     float alphaMaskCutoff[2]{};
+    // 金属度・粗さの画像に使う座標。
+    float metallicRoughnessUv[2]{};
 };
-static_assert(sizeof(ModelRenderVertex) == 80, "lit model vertex ABI must remain 80 bytes");
+static_assert(sizeof(ModelRenderVertex) == 88, "lit model vertex ABI must remain 88 bytes");
 
 /**
  * 検証済み材質範囲を照明用頂点へ展開する。失敗時は出力配列を保つ。

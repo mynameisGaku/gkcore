@@ -15,7 +15,7 @@
 namespace gk::render
 {
 
-static_assert(sizeof(ModelRenderVertex) == 80, "PBR model vertices must occupy 80 bytes");
+static_assert(sizeof(ModelRenderVertex) == 88, "PBR model vertices must occupy 88 bytes");
 
 /**
  * 内蔵PBR model pipelineとframe別GPU dataの所有者。

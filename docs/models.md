@@ -76,6 +76,8 @@ int main()
 
 GLB 2.0 の `baseColorTexture` は、`texCoord` が示す `TEXCOORD_n` の UV（画像上のどこを読むかを示す座標）で画像を参照します。`texCoord` を省略した場合は `TEXCOORD_0`、明示した場合は指定番号のUVセットを使います。たとえば `texCoord: 1` は `TEXCOORD_1` を選びます。詳細は [glTF 2.0仕様の Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord) を参照してください。
 
+`baseColorTexture` と `metallicRoughnessTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は両方に共通です。
+
 `texCoord` の省略と明示値0、1、2、および normalized U16 / U8 のUV1を使う6種類のGLBを、Release・Debug構成でGPU画像検査しました。UV0とUV1で模様の左右が切り替わることを確認しています。サポート対象の座標がモデルにない場合、負の番号、対応しない成分型、位置とUVの頂点数不一致は読み込み時に診断付きで拒否します。座標の成分は32bitの浮動小数、または0から1へ正規化する符号なし8bit・16bit整数を使えます。UV sparse accessor（座標の一部だけを差分として格納する形式）と、画像に追加の座標変換を加える `KHR_texture_transform` は未対応です。仕様の拡張内容は [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md) を参照してください。
 
 ![TEXCOORD_0を使ったGLBの画像](images/glb-uv0.png)
@@ -87,6 +89,35 @@ UV0では、画像の赤・緑・青・白の四隅がモデルの各頂点側�
 UV1では左右が反転し、指定されたUVセットが切り替わったことを確認できます。GPU検査の設定と実行範囲は[描画検証](render-validation.md)を参照してください。
 
 GLBの画像は埋め込みPNGに対応します。外部画像、UV sparse、`KHR_texture_transform`は未対応です。GLBの画像のRGBはsRGB、材質の基本色係数は線形値として扱います。画像は端の色で固定して描き、samplerの繰り返し・鏡映指定は反映しません。
+
+## GLB の metallic-roughness 画像
+
+GLBの `metallicRoughnessTexture` は、Gチャンネルから粗さ、Bチャンネルから金属度を読みます。これらの値は線形値として扱い、それぞれ材質の `roughnessFactor` と `metallicFactor` を掛けて使います。RとAは使いません。画像が指定されていない場合はGとBがともに1の白い値を使い、材質係数だけで調整します。基本色画像のRGBはsRGBとして読み、metallic-roughness画像は線形データとして扱うため、同じPNGを両方の役割に指定した場合も読み取り時の色変換は役割ごとに異なります。両方の画像は埋め込みPNGに対応します。
+
+基本色画像とmetallic-roughness画像のUV選択は独立しています。たとえば基本色は `TEXCOORD_0`、metallic-roughnessは `TEXCOORD_1` を使えます。未指定時はそれぞれ `TEXCOORD_0` が選ばれます。対応するUVがない場合や、未対応の成分形式・座標変換が指定された場合は読み込み時に診断します。
+
+![係数から計算したmetallic-roughnessの参照モデル](images/model-material-reference.png)
+
+参照画像はmetallic / roughness係数を設定したモデルです。GPU検査ではshader式をテスト側で再現せず、画像テクスチャを使うモデルと同じ係数の参照モデルを比較しました。
+
+![metallic-roughness画像を使ったモデル](images/model-material-texture.png)
+
+画像のG/B値と材質係数の組み合わせが、同じ値を係数で指定した参照モデルと一致することを確認しました。R/Aを変えた画像、係数を掛けた画像、基本色にも同じPNGを使う例、基本色画像なしの例、MASK材質でalphaが0のmetallic-roughness画像も含みます。
+
+![基本色と異なるUVセットを使うmetallic-roughness画像](images/model-material-uv1.png)
+
+この例では基本色を `TEXCOORD_0`、metallic-roughness画像を `TEXCOORD_1` から読みます。UV1の領域ごとに異なる金属度・粗さを参照画像と比較しました。
+
+MR材質はScene/UIのモデル描画に使う内蔵lighting shaderで処理します。独自pixel shaderを選ぶ公開APIは変更していません。独自pixel shaderは既存の非照明描画経路でモデルを描くため、MR/PBRの材質情報は独自shaderへ渡らず、内蔵shaderのMR計算も行われません。MASKモデルに独自shaderを適用した場合の診断は[GLBの透明部分](#glb-の透明部分)を参照してください。
+
+ReleaseのMR画像検査は2/2成功し、Scene 15枚、UI 8枚、連続再読込のframe 130・131の2枚を確認しました。連続再読込では同じGLBを132回新しく読み込み、各frameのPresent前にモデルを削除してから後半2枚を参照画像と比較します。基本色とMRの画像を各モデルごとに作るため、合計264個のtexture resourceを扱い、128 entryのcacheを越えて検査します。これはtexture cacheのentry evictionをまたぐ画像とモデルの寿命検査であり、GPU性能やtexture memory byte budgetの測定ではありません。個別設定と画像は[描画検証](render-validation.md)を参照してください。
+
+Windows 11 Pro、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0でDebug・Releaseの全43テストが成功し、MRの25画像は構成間でbyte単位に一致しました。再検査は次で実行します。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R gkcore.model_material --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material --output-on-failure
+```
 
 ## GLB の透明部分
 
@@ -101,13 +132,6 @@ SceneとUIの内蔵モデルshaderでMASKを処理します。抜いた画素は
 ![MASKで抜いた部分から背面が見えるdepth検査](images/model-alpha-depth.png)
 
 GPU検査ではScene 11画像、UI 4画像、depth検査1画像を確認しました。有限なcutoff `2` と、負または非有限なcutoffの読み込み拒否も確認しています。`BLEND` は `LoadModel` 時に診断付きで拒否します。MASKモデルを描くときに `gk::SetPixelShader` で独自pixel shaderを選んでいると、alpha情報を独自shaderへ渡すABIがないため `Present` が診断付きで拒否されます。内蔵shaderへ戻すには `gk::SetPixelShader({})` を呼んでください。ここで説明した検査は標準の `OPAQUE` と `MASK` を対象としており、glTF JSON全体のschema検証を保証するものではありません。alpha modeの仕様は[glTF 2.0仕様のAlpha Coverage](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#alpha-coverage)を参照してください。
-
-Windows 11 Pro、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0でDebug・Releaseの全41テストが成功し、16画像は構成間でもbyte単位に一致しました。再検査は次で実行します。
-
-```bat
-ctest --test-dir build/runtime-windows -C Release -R gkcore.model_alpha --output-on-failure
-ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_alpha --output-on-failure
-```
 
 ## ファイルの置き方
 
@@ -138,4 +162,4 @@ FBXのモデルは右手系のY-up、メートル単位へそろえ、階層変�
 
 モデルの材質では基本色係数とGLBのmetallic / roughness係数を使います。OBJとFBXはmetallic `0`、roughness `1` で描画します。方向光と一様な環境光による材質照明を設定できます。使い方は[モデル照明ガイド](lighting.md)を参照してください。
 
-影、環境マップ / IBL、metallic-roughness texture、normal map、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。
+影、環境マップ / IBL、normal map、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。

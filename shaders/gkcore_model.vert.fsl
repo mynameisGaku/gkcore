@@ -17,6 +17,8 @@ STRUCT(VSInput)
     DATA(float2, MetallicRoughness, TEXCOORD2);
     // アルファ抜きの有効値と境界値。
     DATA(float2, AlphaMaskCutoff, TEXCOORD3);
+    // 材質画像の独立した座標。
+    DATA(float2, MetallicRoughnessUV, TEXCOORD4);
 };
 
 /**
@@ -38,6 +40,8 @@ STRUCT(VSOutput)
     DATA(float2, MetallicRoughness, TEXCOORD3);
     // 材質ごとの値を補間せず、画素の切り抜きへ渡す。
     DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
+    // 材質画像へ渡す座標。
+    DATA(float2, MetallicRoughnessUV, TEXCOORD5);
 };
 
 /**
@@ -56,5 +60,6 @@ VSOutput VS_MAIN(VSInput input)
     output.ViewDirection = input.ViewDirection;
     output.MetallicRoughness = input.MetallicRoughness;
     output.AlphaMaskCutoff = input.AlphaMaskCutoff;
+    output.MetallicRoughnessUV = input.MetallicRoughnessUV;
     RETURN(output);
 }
