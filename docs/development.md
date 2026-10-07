@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各43/43件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。今回追加した金属度・粗さの25画像はRelease/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各45/45件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像の29画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。ReleaseとDebugの実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -120,4 +120,4 @@ Runtimeへ配布するFSL出力はbinding名などの照合情報を削ります
 python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
 ```
 
-このツールは既存のFSLビルド機構と固定コンパイラーを使い、開発用buildフォルダーから`gkcore_model.vert`と`gkcore_model.frag`だけを検査用assetsへ保存します。追加された材質データは内部の頂点配置を88byteにし、vertex inputのTEXCOORD3とpixel inputのTEXCOORD4へ2成分のアルファ抜き情報、vertex inputのTEXCOORD4とpixel inputのTEXCOORD5へ材質画像のUVを渡します。公開カスタムshaderの入力は変更していません。
+このツールは既存のFSLビルド機構と固定コンパイラーを使い、開発用buildフォルダーから`gkcore_model.vert`と`gkcore_model.frag`だけを検査用assetsへ保存します。追加された材質データは内部の頂点配置を120byteにし、vertex inputのTEXCOORD3とpixel inputのTEXCOORD4へ2成分のアルファ抜き情報、vertex inputのTEXCOORD4とpixel inputのTEXCOORD5へ材質画像のUVを渡します。法線マップにはvertex inputのTANGENT0、TEXCOORD5/6から接線・独立UV・有効値とscaleを渡し、pixel inputはTEXCOORD6/7/8です。DXCが2成分をregisterのxy/zwへ詰める場合も成分数と使用箇所を照合します。画像bindingは基本色t0、MR t1、法線t2、sampler s3です。公開カスタムshaderの入力は変更していません。

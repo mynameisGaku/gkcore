@@ -762,3 +762,45 @@ RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0でDebug・Release各31/31成�
 独立レビューでnear-planeの第2UV検査漏れを指摘され、補間と不正値のCPU契約を追加して実行しました。取得RGBを変えずにPNGへ保存し、モデルガイドへ掲載しました。根拠は[glTF metallic-roughness texture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_pbrmetallicroughness_metallicroughnesstexture)です。MRは内蔵モデル照明の機能で、独自pixel shaderの既存非照明経路へMR/PBR入力を追加したものではありません。影、環境マップ、normal map、BLEND、他GPU、異常な転送失敗やdevice loss時のcleanup、全面画質は別の対応・検証範囲です。
 
 最終の書式整理は全変更C++の機能要素hashを変えず、Release・Debugの再ビルドも成功しました（`model-material-{release,debug}-formatted-build.log`）。開発ガイドの現状欄も43/43とMR25画像へ更新しました。
+
+
+## GLBの法線画像と接線方向
+
+2026-10-07にnormalTextureの対応を追加しました。先に有効・拒否GLBのCPU契約と、単色normal画像を頂点法線だけの参照と比較するGPU検査を用意しました。初回Releaseでは `gkcore.model_normal` が `uniform-normal.glb` の画像数・材質情報不足で失敗し、`gkcore.model_normal_capture` は参照との45,000画素の差（RGB差2超、最大5）で失敗しました。この時点ではnormal画像がモデルへ登録されず、shaderにも渡されていません。
+
+geometryの先行テストも `normal map keeps its independent UV` で失敗しました。nodeと描画時の変換で法線には逆scale、接線には位置と同じscaleを使い、鏡映の符号を保持します。変換後の接線を法線へ直交させ、clip交点で法線UVと接線を位置と同じ比率で補間します。参照テストは幾何変換だけで法線を作り、照明式は複製しません。
+
+CPU参照fixtureの `normal-reference.glb` に期待法線を割り当てる分岐の抜けがあり、テスト側を修正しました。これはRuntimeのREDとは区別します。GPUの対照条件は斜めの方向光 `(0.7, 0, 1)` と強さ2を使い、画像の有無によるRGB差10超の画素を100以上要求します。ambientは0.1、標準ポスト処理は無効、露出・彩度・コントラストは1です。
+
+内蔵頂点は120byteで、接線TANGENT0、法線UV TEXCOORD5、有効値とscale TEXCOORD6を追加しました。pixel入力はTEXCOORD6/7/8、法線画像t2、sampler s3を使います。新しいreflection契約は古い2shaderで失敗し、新規shader生成後はDXCのxy/zw詰め込みを成分数と使用成分の一致で扱うよう修正し、vertex/pixel両テストが成功しました。公開40byteの独自shader入力は変えません。
+
+画像cacheは基本色sRGB・MR線形・法線線形を組み合わせます。同じtexture indexを使うMR/法線は同じ線形textureを共有し、物理画像を破棄する前にそれを参照する全descriptorを無効にします。normalなしの材質は既存の係数・照明経路を保ちます。
+
+
+読み込みの境界条件は正常19件・拒否10件の29GLBで確認しました。正常なscale 1e-5（行列式1e-15）を特異と誤判定する条件をゼロ/非有限判定へ直し、法線・接線はdoubleで変換・正規化してからfloatへ保存します。同一primitiveでも三角形ごとに接線Wが+1/-1となるモデルを許可し、三角形内だけでWの一致を要求します。元の法線と接線が平行な入力は、非一様変換で偶然別方向になる前に拒否します。
+
+最初のGPU統合検査では共有画像モデルと参照の材質値が不一致でした（26,651画素がRGB差2超、最大14）。共有画像の係数をmetallic=1/roughness=1、参照をmetallic=1/roughness=128/255へ揃え、CPUにも係数検査を追加しました。これはRuntimeの不具合ではなくfixture設定の修正です。
+
+Release全45/45は140.58秒、Debug全45/45は146.91秒で成功しました。normal画像のGPU検査はそれぞれ35.83秒、39.19秒です。ログは `build/native-validation/model-normal-{release,debug}-final-{build,tests}.log` に保存しています。Windows 11 Pro build 26200、RTX 4070 SUPER（選択GPU名をLastTest.logで確認）、driver 610.74、VS 2026 / v142 14.29.30133・MSVC 19.29.30159、SDK 10.0.22621.0で実行しました。インストールSDKだけを使うconsumerのGPU smokeも、配布物検査内で成功しています。
+
+その後、接線Wの誤処理を画像で確実に検出できるよう、単色normalをRGBA=(192,192,255,255)、方向光を(0.7,0.4,1)へ強めました。接線Wを使わないshaderを開発用フォルダーへ生成し、鏡映モデルと参照を描く負例では45,000画素がRGB差2超、最大18となり拒否されました。本体ソースと正規shader artifactは元のbyte列へ必ず復元しています。正規shaderでのRelease再検査（normal CPU/GPU・package 3件）はすべて成功、36.19秒のnormal検査を含む合計39.90秒でした。通常法線だけのモデルとの対照は45,000画素がRGB差10超、最大13です。Sceneの単色/scale/符号/alpha/共有画像/node鏡映とruntime鏡映は参照と全画素一致しています。UI共有画像の比較は差2以下の許容範囲です。
+
+最終fixtureに対するRuntimeOFFはMSVC 19.51.36260 / SDK 10.0.28000.0でDebug・Release各32/32成功（3.05秒・2.60秒）。ログは `model-normal-cpu-{debug,release}-final-{build,tests}.log` です。固定13shaderの生成、metadata付き2shaderとDXC reflection、NoSTL/配布物の既存検査も実行しました。
+
+独立レビューでbatch key/bind、11入力/120byte layout、TBN、cacheの保持・退避・解放順、node変換・型・数値制約を確認しています。別texture indexが同じimageを参照する場合のdecode共有は未実装で、同じtexture indexを複数役割で使う共有とは区別します。接線の自動生成、他GPU、GPU-based validation、device loss復旧、全面画質は今回の検証範囲ではありません。
+
+
+最終設定のDebug再検査（normal CPU/GPU・package 3件）も成功しました。GPU検査38.68秒、合計42.60秒で、ログは `model-normal-debug-strengthened-{build,tests}.log` です。Releaseは `model-normal-release-strengthened-tests.log` に対応します。29枚すべてのPPMがRelease/Debug間でbyte一致し、文書のPNGも最終取得RGBのまま保存したことを検査しました。18個の変更C++は固定clang-format12で書式検査に通り、BOM/CRLFを確認しています。最終のテスト設定変更後もRuntime C++の機能要素hashはレビュー時と一致しました。
+
+全体検証と最終追加検査のコマンドです。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+ctest --test-dir build/runtime-windows -C Release -R "^gkcore.model_normal$|^gkcore.model_normal_capture$|^gkcore.package$" --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R "^gkcore.model_normal$|^gkcore.model_normal_capture$|^gkcore.package$" --output-on-failure
+```
+
+CPU構成は `build/dev-windows` でDebug/Releaseそれぞれをビルドし、全CTestを実行しました。根拠の仕様は [glTF normalTexture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_normaltexture) と、同じ仕様の接線・bitangent定義です。

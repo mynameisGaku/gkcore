@@ -76,7 +76,7 @@ int main()
 
 GLB 2.0 の `baseColorTexture` は、`texCoord` が示す `TEXCOORD_n` の UV（画像上のどこを読むかを示す座標）で画像を参照します。`texCoord` を省略した場合は `TEXCOORD_0`、明示した場合は指定番号のUVセットを使います。たとえば `texCoord: 1` は `TEXCOORD_1` を選びます。詳細は [glTF 2.0仕様の Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord) を参照してください。
 
-`baseColorTexture` と `metallicRoughnessTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は両方に共通です。
+`baseColorTexture`、`metallicRoughnessTexture`、`normalTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は3種類に共通です。
 
 `texCoord` の省略と明示値0、1、2、および normalized U16 / U8 のUV1を使う6種類のGLBを、Release・Debug構成でGPU画像検査しました。UV0とUV1で模様の左右が切り替わることを確認しています。サポート対象の座標がモデルにない場合、負の番号、対応しない成分型、位置とUVの頂点数不一致は読み込み時に診断付きで拒否します。座標の成分は32bitの浮動小数、または0から1へ正規化する符号なし8bit・16bit整数を使えます。UV sparse accessor（座標の一部だけを差分として格納する形式）と、画像に追加の座標変換を加える `KHR_texture_transform` は未対応です。仕様の拡張内容は [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md) を参照してください。
 
@@ -88,7 +88,7 @@ UV0では、画像の赤・緑・青・白の四隅がモデルの各頂点側�
 
 UV1では左右が反転し、指定されたUVセットが切り替わったことを確認できます。GPU検査の設定と実行範囲は[描画検証](render-validation.md)を参照してください。
 
-GLBの画像は埋め込みPNGに対応します。外部画像、UV sparse、`KHR_texture_transform`は未対応です。GLBの画像のRGBはsRGB、材質の基本色係数は線形値として扱います。画像は端の色で固定して描き、samplerの繰り返し・鏡映指定は反映しません。
+GLBの画像は埋め込みPNGに対応します。外部画像、UV sparse、`KHR_texture_transform`は未対応です。GLBの基本色画像のRGBはsRGB、材質係数・MR画像・法線画像は線形値として扱います。画像は端の色で固定して描き、samplerの繰り返し・鏡映指定は反映しません。
 
 ## GLB の metallic-roughness 画像
 
@@ -118,6 +118,33 @@ Windows 11 Pro、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142、Wi
 ctest --test-dir build/runtime-windows -C Release -R gkcore.model_material --output-on-failure
 ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material --output-on-failure
 ```
+
+## GLB の法線マップ
+
+`normalTexture` のRGBを線形値として読み、接線空間の法線へ展開します。Aは使いません。`scale` は横・縦成分に掛ける有限値で、省略時は1、0や負の値にも対応します。基本色・metallic-roughness・法線画像はそれぞれ独立して `texCoord` を選べます。法線画像も埋め込みPNGを使い、UV形式と `KHR_texture_transform` の制約は基本色画像と共通です。
+
+現在はモデルに明示したFLOAT形式の `NORMAL` と `TANGENT` が必要です。`TANGENT` は4成分で、XYZは法線に平行でない有効な方向、Wは+1か-1を指定し、同じ三角形の3頂点で揃えます。接線の自動生成は行いません。属性欠損・不正値・逆変換できないnode行列は読み込み時に診断します。node変換と描画時のモデル変換では法線と接線を別々に変換し、負のscaleによる鏡映も保持します。
+
+内蔵モデル照明で処理するため、SceneとUIの両方で使えます。独自pixel shaderを指定した場合は既存の非照明経路へ切り替わり、法線マップの照明入力は渡されません。基本色・MR・法線に同じtexture indexを指定すると、sRGB用と線形用の2つのGPU画像を使い、MRと法線は線形画像を共有します。
+
+![法線マップを使った描画](images/model-normal-texture.png)
+
+![頂点法線だけで作った参照描画](images/model-normal-reference.png)
+
+単色の法線マップと対応する頂点法線を持つ参照モデルを比較します。テスト側は接線基底の幾何変換だけを使い、照明の計算式を再実装して期待色を作りません。
+
+![独立したUV1で法線模様を読む描画](images/model-normal-uv1.png)
+
+正常19・拒否10のGLBをCPUで検査し、Scene17枚、UI8枚、描画時の鏡映2枚、132回読み直した後の2枚を実GPUで確認しました。法線画像のalpha無視、scaleの0・2・負値、接線Wの符号、UV1、共有画像、nodeと描画時の鏡映を参照モデルと比較しています。Release/Debugの29画像は構成間でbyte単位に一致しました。接線Wを意図的に無視したshaderは45,000画素の差（RGB最大18）で拒否できました。
+
+再検査は次で実行します。実行結果と条件は[描画検証](render-validation.md)へ記録しています。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R gkcore.model_normal --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_normal --output-on-failure
+```
+
+仕様の読み方は [glTF normalTexture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_normaltexture) を参照してください。未対応の接線自動生成を含めたglTF全体への対応を意味するものではありません。
 
 ## GLB の透明部分
 
@@ -162,4 +189,4 @@ FBXのモデルは右手系のY-up、メートル単位へそろえ、階層変�
 
 モデルの材質では基本色係数とGLBのmetallic / roughness係数を使います。OBJとFBXはmetallic `0`、roughness `1` で描画します。方向光と一様な環境光による材質照明を設定できます。使い方は[モデル照明ガイド](lighting.md)を参照してください。
 
-影、環境マップ / IBL、normal map、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。
+影、環境マップ / IBL、接線の自動生成、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。

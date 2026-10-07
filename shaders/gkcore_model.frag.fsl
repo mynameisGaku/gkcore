@@ -21,6 +21,12 @@ STRUCT(VSOutput)
     DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
     // 基本色とは別の材質画像座標。
     DATA(float2, MetallicRoughnessUV, TEXCOORD5);
+    // 補間後に法線と直交させる接線と向きの符号。
+    DATA(float4, WorldTangent, TEXCOORD6);
+    // 法線画像の座標。
+    DATA(float2, NormalUV, TEXCOORD7);
+    // 材質の有効値とXY倍率は補間しない。
+    DATA(FLAT(float2), NormalParameters, TEXCOORD8);
 };
 
 
@@ -29,10 +35,16 @@ STRUCT(VSOutput)
  */
 float3 SafeNormalize(float3 value, float3 fallbackValue)
 {
-    if (!all(isfinite(value))) return fallbackValue;
+    if (!all(isfinite(value)))
+    {
+        return fallbackValue;
+    }
     // 成分を先に縮めるための最大絶対値。
     const float scale = max(abs(value.x), max(abs(value.y), abs(value.z)));
-    if (!(scale > 0.0000000001)) return fallbackValue;
+    if (!(scale > 0.0000000001))
+    {
+        return fallbackValue;
+    }
     // 長さ計算でoverflowしないよう縮小したvector。
     const float3 scaled = value / scale;
     return scaled * rsqrt(max(dot(scaled, scaled), 0.00000001));
@@ -57,7 +69,18 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     // 頂点色を掛けたlinear基本色。
     const float3 baseColor = baseSample.rgb * input.Color.rgb;
     // 正規化したsurface法線。
-    const float3 N = SafeNormalize(input.WorldNormal, float3(0.0, 1.0, 0.0));
+    float3 N = SafeNormalize(input.WorldNormal, float3(0.0, 1.0, 0.0));
+    if (input.NormalParameters.x > 0.5)
+    {
+        // RGBを線形値として接線方向へ展開し、alphaは使わない。
+        float3 tangentNormal = SampleTex2D(gNormalTexture, gImageSampler, input.NormalUV).rgb * 2.0 - 1.0;
+        tangentNormal.xy *= input.NormalParameters.y;
+        tangentNormal = SafeNormalize(tangentNormal, float3(0.0, 0.0, 1.0));
+        // 補間した接線を法線へ直交させ、鏡映を第2の接線へ反映する。
+        const float3 T = SafeNormalize(input.WorldTangent.xyz - N * dot(N, input.WorldTangent.xyz), float3(1.0, 0.0, 0.0));
+        const float3 B = cross(N, T) * input.WorldTangent.w;
+        N = SafeNormalize(T * tangentNormal.x + B * tangentNormal.y + N * tangentNormal.z, N);
+    }
     // 正規化したcamera方向。
     const float3 V = SafeNormalize(input.ViewDirection, N);
     // 正規化した方向光vector。

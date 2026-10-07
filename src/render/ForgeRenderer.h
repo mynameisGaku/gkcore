@@ -65,6 +65,8 @@ struct RenderRun
     bool litModel;
     // 内蔵モデルで使う金属度・粗さの画像。
     detail::ImageResource* metallicRoughnessImage = nullptr;
+    // 内蔵モデルで使う法線画像。
+    detail::ImageResource* normalImage = nullptr;
 };
 
 /**

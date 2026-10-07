@@ -42,6 +42,10 @@ struct ModelVertex
     float uv[2];
     // 金属度・粗さの画像を読む座標。基本色とは別の座標を保持する。
     float metallicRoughnessUv[2]{};
+    // 法線マップに使う独立した画像座標。
+    float normalUv[2]{};
+    // 画像の横方向の接線と、縦方向を決める符号。
+    float tangent[4]{};
 };
 
 /**
@@ -63,6 +67,10 @@ struct ModelMaterial
     float alphaCutoff = 0.5f;
     // 金属度・粗さの画像番号。画像がない場合は-1。
     int32_t metallicRoughnessTextureIndex = -1;
+    // 法線マップ画像の番号。使用しない場合は-1。
+    int32_t normalTextureIndex = -1;
+    // 接線座標の横・縦成分に掛ける倍率。有限値を使う。
+    float normalScale = 1.0f;
 };
 
 /**

@@ -87,7 +87,7 @@ bool Near(float a, float b, float tolerance = 0.0002f)
 bool TestVertexContractAndBasicLightingPayload()
 {
     static_assert(sizeof(Vertex) == 40, "legacy vertex ABI remains unchanged");
-    static_assert(sizeof(ModelRenderVertex) == 88, "lit model vertex ABI is 88 bytes");
+    static_assert(sizeof(ModelRenderVertex) == 120, "lit model vertex ABI is 120 bytes");
     const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
     const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
     detail::ModelResource model{};
@@ -112,6 +112,8 @@ bool TestVertexContractAndBasicLightingPayload()
     if (!Check(Near(vertex.viewDirection[0], 0.5f) && Near(vertex.viewDirection[1], 0.5f) && Near(vertex.viewDirection[2], -5.0f), "view direction carries raw camera-minus-world coordinates"))
         return false;
     if (!Check(Near(vertex.metallicRoughness[0], 0.35f) && Near(vertex.metallicRoughness[1], 0.65f), "metallic and roughness are carried to the vertex"))
+        return false;
+    if (!Check(Near(vertex.worldTangent[0], 0.0f) && Near(vertex.worldTangent[1], 0.0f) && Near(vertex.worldTangent[2], 0.0f) && Near(vertex.worldTangent[3], 0.0f) && Near(vertex.normalUv[0], 0.0f) && Near(vertex.normalUv[1], 0.0f) && Near(vertex.normalParameters[0], 0.0f) && Near(vertex.normalParameters[1], 0.0f), "models without a normal map keep the legacy lighting payload"))
         return false;
     const float expectedUv[3][2] = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
     for (uint32_t i = 0; i < 3; ++i)
@@ -255,6 +257,244 @@ bool TestClippingInterpolatesLightingAndRejectsNonFiniteInputs()
     return Check(vertices.Count() == 0, "invalid metallic-roughness UV leaves output unchanged");
 }
 
+/**
+ * normal mapのUV、倍率、変換後の接線基底を出力へ保持する。
+ */
+bool TestNormalMapPayloadAndTransformedTangentFrame()
+{
+    const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource normalImage{};
+    model.textures.Append(&normalImage);
+    // 各頂点へ基本色とは異なる法線UVと同一の接線基底を設定する。
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 画像座標とモデル空間接線を持つ頂点。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.normalUv[0] = 2.0f + 3.0f * vertex.uv[0] - 2.0f * vertex.uv[1];
+        vertex.normalUv[1] = -1.0f + vertex.uv[0] + 4.0f * vertex.uv[1];
+        vertex.tangent[0] = 1.0f;
+        vertex.tangent[3] = 1.0f;
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    part.normalTextureIndex = 0;
+    part.normalScale = 0.75f;
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "valid normal map payload is projected"))
+        return false;
+    if (!Check(vertices.Count() == 3, "one normal-mapped triangle emits three vertices"))
+        return false;
+    for (uint32_t index = 0; index < vertices.Count(); ++index)
+    {
+        // 出力頂点のnormal画像座標と変換後接線。
+        const ModelRenderVertex& vertex = vertices.At(index);
+        const detail::ModelVertex& source = model.vertices.At(index);
+        if (!Check(Near(vertex.normalUv[0], source.normalUv[0]) && Near(vertex.normalUv[1], source.normalUv[1]), "normal map keeps its independent UV"))
+            return false;
+        if (!Check(Near(vertex.normalParameters[0], 1.0f) && Near(vertex.normalParameters[1], 0.75f), "normal map enabled flag and scale reach the vertex"))
+            return false;
+        if (!Check(Near(vertex.worldTangent[0], 1.0f) && Near(vertex.worldTangent[1], 0.0f) && Near(vertex.worldTangent[2], 0.0f) && Near(vertex.worldTangent[3], 1.0f), "identity transform keeps the tangent frame"))
+            return false;
+    }
+    part.normalScale = 0.0f;
+    vertices.Clear();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error) && Near(vertices.At(0).normalParameters[1], 0.0f), "zero normal scale remains valid"))
+        return false;
+    part.normalScale = -1.0f;
+    vertices.Clear();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error) && Near(vertices.At(0).normalParameters[1], -1.0f), "negative normal scale remains valid"))
+        return false;
+    part.normalScale = 0.75f;
+
+    // 非一様scale後も接線は位置と同じ直接変換で求める。
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        // N=(1,1,0)と、その法線へ直交するモデル空間接線。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.normal[0] = 1.0f;
+        vertex.normal[1] = 1.0f;
+        vertex.normal[2] = 0.0f;
+        vertex.tangent[0] = 1.0f;
+        vertex.tangent[1] = -1.0f;
+        vertex.tangent[2] = 0.0f;
+        vertex.tangent[3] = 1.0f;
+    }
+    draw.modelScale = { 2.0f, 1.0f, 1.0f };
+    draw.modelRotation.z = 1.57079632679f;
+    vertices.Clear();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "nonuniform scale and Euler rotation transform a normal map basis"))
+        return false;
+    const float inverseSqrtFive = 0.4472135955f;
+    const ModelRenderVertex& rotated = vertices.At(0);
+    if (!Check(Near(rotated.worldNormal[0], -2.0f * inverseSqrtFive) && Near(rotated.worldNormal[1], inverseSqrtFive) && Near(rotated.worldNormal[2], 0.0f), "normal uses inverse scale before model rotation"))
+        return false;
+    if (!Check(Near(rotated.worldTangent[0], inverseSqrtFive) && Near(rotated.worldTangent[1], 2.0f * inverseSqrtFive) && Near(rotated.worldTangent[2], 0.0f), "tangent uses direct scale, rotation, and Gram-Schmidt"))
+        return false;
+    if (!Check(Near(rotated.worldNormal[0] * rotated.worldTangent[0] + rotated.worldNormal[1] * rotated.worldTangent[1] + rotated.worldNormal[2] * rotated.worldTangent[2], 0.0f), "transformed tangent is perpendicular to transformed normal"))
+        return false;
+
+    // 鏡映scaleはTを反転し、bitangent handednessにも符号を反映する。
+    draw.modelScale = { -1.0f, 1.0f, 1.0f };
+    draw.modelRotation = { 0.0f, 0.0f, 0.0f };
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        // 鏡映を調べるため法線をZ軸、接線をX軸へ戻す。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.normal[0] = 0.0f;
+        vertex.normal[1] = 0.0f;
+        vertex.normal[2] = 1.0f;
+        vertex.tangent[0] = 1.0f;
+        vertex.tangent[1] = 0.0f;
+        vertex.tangent[2] = 0.0f;
+        vertex.tangent[3] = 1.0f;
+    }
+    vertices.Clear();
+    ModelPartPlan mirroredPart = Part(0, 3);
+    mirroredPart.normalTextureIndex = 0;
+    if (!Check(AppendLitModelPart(frame, draw, mirroredPart, vertices, 32, error), "negative runtime scale transforms a normal map basis"))
+        return false;
+    const ModelRenderVertex& mirrored = vertices.At(0);
+    return Check(Near(mirrored.worldTangent[0], -1.0f) && Near(mirrored.worldTangent[1], 0.0f) && Near(mirrored.worldTangent[2], 0.0f) && Near(mirrored.worldTangent[3], -1.0f), "runtime reflection changes tangent handedness");
+}
+
+/**
+ * near clippingでnormal UVと接線を他属性と同じ交点比率で補間する。
+ */
+bool TestNormalMapAttributesInterpolateThroughClipping()
+{
+    const Vec3 points[3] = { { -1, 0, -4.95f }, { 1, 0, 0 }, { 0, 1, 0 } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource normalImage{};
+    model.textures.Append(&normalImage);
+    // UVと接線成分の異なる線形関係を切り詰め前の3頂点へ設定する。
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 基本色UVから独立した法線UVと、Z法線に直交する単位接線。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.normalUv[0] = 2.0f + 3.0f * vertex.uv[0] - 2.0f * vertex.uv[1];
+        vertex.normalUv[1] = -1.0f + vertex.uv[0] + 4.0f * vertex.uv[1];
+        vertex.tangent[0] = 1.0f - vertex.uv[0] - vertex.uv[1];
+        vertex.tangent[1] = vertex.uv[0] - vertex.uv[1];
+        vertex.tangent[3] = 1.0f;
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    part.normalTextureIndex = 0;
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "normal map attributes survive near clipping"))
+        return false;
+    if (!Check(vertices.Count() == 6, "near clipping emits a quad as six vertices"))
+        return false;
+    for (uint32_t index = 0; index < vertices.Count(); ++index)
+    {
+        // clipping後の独立UVと補間後の接線。
+        const ModelRenderVertex& vertex = vertices.At(index);
+        const float u = vertex.surface.uv[0];
+        const float v = vertex.surface.uv[1];
+        if (!Check(Near(vertex.normalUv[0], 2.0f + 3.0f * u - 2.0f * v) && Near(vertex.normalUv[1], -1.0f + u + 4.0f * v), "clipped normal UV uses the position edge intersection"))
+            return false;
+        if (!Check(Near(vertex.worldTangent[0], 1.0f - u - v) && Near(vertex.worldTangent[1], u - v) && Near(vertex.worldTangent[3], 1.0f), "clipped tangent uses the same edge intersection"))
+            return false;
+    }
+    return true;
+}
+
+/**
+ * 不正なnormal map基底や倍率では出力配列を変更しない。
+ */
+bool TestInvalidNormalMapBasisPreservesOutput()
+{
+    const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource normalImage{};
+    model.textures.Append(&normalImage);
+    // 検証対象全頂点に正しい基底を与えるloop。
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 既定の有効なnormal map頂点。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.tangent[0] = 1.0f;
+        vertex.tangent[3] = 1.0f;
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    ModelPartPlan part = Part();
+    part.normalTextureIndex = 0;
+    Array<ModelRenderVertex> vertices;
+    ModelRenderVertex sentinel{};
+    sentinel.surface.position[0] = 91.0f;
+    vertices.Append(sentinel);
+    String error;
+
+    // 不正な入力でも呼び出し側の既存頂点を保持する。
+    const auto expectRejected = [&](const char* label) -> bool
+    {
+        const bool rejected = !AppendLitModelPart(frame, draw, part, vertices, 32, error);
+        return Check(rejected && vertices.Count() == 1 && Near(vertices.At(0).surface.position[0], 91.0f) && !error.Empty(), label);
+    };
+    model.vertices.At(0).tangent[3] = 0.999f;
+    if (!expectRejected("tangent handedness must be exactly plus or minus one"))
+        return false;
+    model.vertices.At(0).tangent[3] = 1.0f;
+    model.vertices.At(1).tangent[3] = -1.0f;
+    if (!expectRejected("a triangle requires consistent tangent handedness"))
+        return false;
+    model.vertices.At(1).tangent[3] = 1.0f;
+    model.vertices.At(0).tangent[0] = 0.0f;
+    if (!expectRejected("zero tangent is rejected"))
+        return false;
+    model.vertices.At(0).tangent[0] = 0.0f;
+    model.vertices.At(0).tangent[2] = 1.0f;
+    if (!expectRejected("tangent parallel to the normal is rejected"))
+        return false;
+    model.vertices.At(0).normal[0] = 1.0f;
+    model.vertices.At(0).normal[1] = 1.0f;
+    model.vertices.At(0).normal[2] = 0.0f;
+    model.vertices.At(0).tangent[0] = 1.0f;
+    model.vertices.At(0).tangent[1] = 1.0f;
+    model.vertices.At(0).tangent[2] = 0.0f;
+    draw.modelScale = { 2.0f, 1.0f, 1.0f };
+    if (!expectRejected("source-parallel tangent remains invalid under nonuniform scale"))
+        return false;
+    model.vertices.At(0).normal[0] = 0.0f;
+    model.vertices.At(0).normal[1] = 0.0f;
+    model.vertices.At(0).normal[2] = 1.0f;
+    model.vertices.At(0).tangent[0] = 1.0f;
+    model.vertices.At(0).tangent[1] = 0.0f;
+    model.vertices.At(0).tangent[2] = 0.0f;
+    draw.modelScale = { 1.0f, 1.0f, 1.0f };
+    model.vertices.At(0).normalUv[0] = std::numeric_limits<float>::quiet_NaN();
+    if (!expectRejected("non-finite normal UV is rejected"))
+        return false;
+    model.vertices.At(0).normalUv[0] = 0.0f;
+    part.normalScale = std::numeric_limits<float>::infinity();
+    if (!expectRejected("non-finite normal scale is rejected"))
+        return false;
+    part.normalScale = 1.0f;
+    part.normalTextureIndex = 1;
+    if (!expectRejected("normal texture slot must exist"))
+        return false;
+    part.normalTextureIndex = 0;
+    model.vertices.At(0).tangent[1] = std::numeric_limits<float>::quiet_NaN();
+    if (!expectRejected("non-finite tangent is rejected"))
+        return false;
+    return true;
+}
+
 bool TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping()
 {
     const float large = 0.75f * 3.402823466e+38f;
@@ -331,5 +571,5 @@ bool TestCapacityAndAllocationFailuresPreserveOutput()
 
 int main()
 {
-    return TestVertexContractAndBasicLightingPayload() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
+    return TestVertexContractAndBasicLightingPayload() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
 }

@@ -27,8 +27,14 @@ struct ModelRenderVertex
     float alphaMaskCutoff[2]{};
     // 金属度・粗さの画像に使う座標。
     float metallicRoughnessUv[2]{};
+    // ワールド空間の接線と、縦方向を決める符号。
+    float worldTangent[4]{};
+    // 法線マップの画像座標。
+    float normalUv[2]{};
+    // 法線マップの有効値（0または1）と倍率。
+    float normalParameters[2]{};
 };
-static_assert(sizeof(ModelRenderVertex) == 88, "lit model vertex ABI must remain 88 bytes");
+static_assert(sizeof(ModelRenderVertex) == 120, "lit model vertex ABI must remain 120 bytes");
 
 /**
  * 検証済み材質範囲を照明用頂点へ展開する。失敗時は出力配列を保つ。

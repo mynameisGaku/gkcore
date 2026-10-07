@@ -309,6 +309,25 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_material_tests)
     add_dependencies(gkcore_model_material_tests gkcore_model_material_fixtures)
     add_test(NAME gkcore.model_material COMMAND gkcore_model_material_tests "${_gkcore_model_material_fixture_dir}")
+
+    set(_gkcore_model_normal_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-normal-fixtures")
+    set(_gkcore_model_normal_fixture_files)
+    foreach(_fixture_name IN ITEMS no-normal uniform-normal normal-reference alpha-ignored scale-zero scale-two scale-two-reference scale-negative scale-negative-reference mirrored-tangent mirrored-reference uv1-pattern uv1-reference shared-image shared-reference node-mirror-normal node-mirror-reference tiny-node-scale mixed-sign-triangles missing-tangent missing-normal missing-normal-uv bad-tangent-w tangent-w-mismatch parallel-tangent zero-tangent singular-node bad-normal-scale transform-normal)
+        list(APPEND _gkcore_model_normal_fixture_files "${_gkcore_model_normal_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_normal_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_normal_fixtures.py
+            --output-dir "${_gkcore_model_normal_fixture_dir}"
+        DEPENDS tests/support/model_normal_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_normal_fixtures DEPENDS ${_gkcore_model_normal_fixture_files})
+    add_executable(gkcore_model_normal_tests tests/model_normal_tests.cpp ${_gkcore_resource_test_sources}
+        src/render/ModelDrawPlan.cpp src/render/ModelGeometry.cpp src/render/WorldGeometry.cpp src/render/PostProcess.cpp)
+    target_compile_features(gkcore_model_normal_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_normal_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_model_normal_tests)
+    add_dependencies(gkcore_model_normal_tests gkcore_model_normal_fixtures)
+    add_test(NAME gkcore.model_normal COMMAND gkcore_model_normal_tests "${_gkcore_model_normal_fixture_dir}")
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
         src/model/FbxGeometry.cpp
@@ -674,6 +693,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_material_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_material_capture_tests)
             add_dependencies(gkcore_model_material_capture_tests gkcore_model_material_fixtures)
+            add_executable(gkcore_model_normal_capture_tests tests/model_normal_capture_tests.cpp)
+            target_compile_features(gkcore_model_normal_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_normal_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_normal_capture_tests)
+            add_dependencies(gkcore_model_normal_capture_tests gkcore_model_normal_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -722,6 +746,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --fixture-dir "${_gkcore_model_material_fixture_dir}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-material-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_material_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_normal_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_normal_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_normal_capture_tests>
+                    --fixture-dir "${_gkcore_model_normal_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-normal-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_normal_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -780,6 +810,9 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(TARGET gkcore_model_material_capture_tests)
         add_dependencies(gkcore_model_material_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_normal_capture_tests)
+        add_dependencies(gkcore_model_normal_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

@@ -19,6 +19,12 @@ STRUCT(VSInput)
     DATA(float2, AlphaMaskCutoff, TEXCOORD3);
     // 材質画像の独立した座標。
     DATA(float2, MetallicRoughnessUV, TEXCOORD4);
+    // 法線画像の横方向と鏡映の符号。
+    DATA(float4, WorldTangent, TANGENT);
+    // 法線画像の独立した座標。
+    DATA(float2, NormalUV, TEXCOORD5);
+    // 法線画像の有効値とXYの倍率。
+    DATA(float2, NormalParameters, TEXCOORD6);
 };
 
 /**
@@ -42,6 +48,12 @@ STRUCT(VSOutput)
     DATA(FLAT(float2), AlphaMaskCutoff, TEXCOORD4);
     // 材質画像へ渡す座標。
     DATA(float2, MetallicRoughnessUV, TEXCOORD5);
+    // 補間後に法線と直交させる接線と向きの符号。
+    DATA(float4, WorldTangent, TEXCOORD6);
+    // 法線画像の座標。
+    DATA(float2, NormalUV, TEXCOORD7);
+    // 材質の有効値とXY倍率は補間しない。
+    DATA(FLAT(float2), NormalParameters, TEXCOORD8);
 };
 
 /**
@@ -61,5 +73,8 @@ VSOutput VS_MAIN(VSInput input)
     output.MetallicRoughness = input.MetallicRoughness;
     output.AlphaMaskCutoff = input.AlphaMaskCutoff;
     output.MetallicRoughnessUV = input.MetallicRoughnessUV;
+    output.WorldTangent = input.WorldTangent;
+    output.NormalUV = input.NormalUV;
+    output.NormalParameters = input.NormalParameters;
     RETURN(output);
 }

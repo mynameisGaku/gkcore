@@ -27,9 +27,15 @@ bool IsFactor(float value)
 bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error)
 {
     error.Clear();
-    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f)
+    const bool normalMapping = part.normalTextureIndex >= 0;
+    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f || part.normalTextureIndex < -1)
     {
         error.Assign("The model part, material factors, or frame bounds are invalid");
+        return false;
+    }
+    if (normalMapping && (static_cast<uint32_t>(part.normalTextureIndex) >= draw.model->textures.Count() || !draw.model->textures.At(static_cast<uint32_t>(part.normalTextureIndex)) || !isfinite(part.normalScale)))
+    {
+        error.Assign("The model normal texture slot or scale is invalid");
         return false;
     }
     // 基本色RGBAが描画可能な範囲か調べるloop。
@@ -67,12 +73,20 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             source[corner].uv[1] = vertex.uv[1];
             source[corner].metallicRoughnessUv[0] = vertex.metallicRoughnessUv[0];
             source[corner].metallicRoughnessUv[1] = vertex.metallicRoughnessUv[1];
+            if (normalMapping)
+            {
+                // 法線画像用の座標と、モデル空間の接線基底。
+                source[corner].normalUv[0] = vertex.normalUv[0];
+                source[corner].normalUv[1] = vertex.normalUv[1];
+                for (uint32_t component = 0; component < 4; ++component)
+                    source[corner].tangent[component] = vertex.tangent[component];
+            }
         }
         // camera clipping後の頂点を受け取る固定配列。
         ProjectedWorldVertex projected[18]{};
         // clipping後に使うprojected要素数。
         uint32_t projectedCount = 0;
-        if (!ProjectWorldTriangle(frame, draw, source, true, true, part.baseColorFactor, projected, projectedCount, error))
+        if (!ProjectWorldTriangle(frame, draw, source, true, true, part.baseColorFactor, projected, projectedCount, error, normalMapping))
             return false;
         if (vertices.Count() > vertexLimit || candidate.Count() > vertexLimit - vertices.Count() || projectedCount > vertexLimit - vertices.Count() - candidate.Count())
         {
@@ -102,6 +116,16 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             vertex.alphaMaskCutoff[1] = part.alphaCutoff;
             vertex.metallicRoughnessUv[0] = projected[i].metallicRoughnessUv[0];
             vertex.metallicRoughnessUv[1] = projected[i].metallicRoughnessUv[1];
+            if (normalMapping)
+            {
+                // 接線基底、法線UV、有効値と倍率をまとめるloop。
+                for (uint32_t component = 0; component < 4; ++component)
+                    vertex.worldTangent[component] = projected[i].worldTangent[component];
+                vertex.normalUv[0] = projected[i].normalUv[0];
+                vertex.normalUv[1] = projected[i].normalUv[1];
+                vertex.normalParameters[0] = 1.0f;
+                vertex.normalParameters[1] = part.normalScale;
+            }
             if (!candidate.Append(vertex))
             {
                 error.Assign("The model vertex allocation failed");

@@ -43,6 +43,10 @@ struct ClipVertex
     double viewDirection[3];
     // 基本色とは独立して切り詰める金属度・粗さの画像座標。
     double metallicRoughnessUv[2]{};
+    // 法線画像の座標。
+    double normalUv[2]{};
+    // clipping中に補間するワールド空間の接線とhandedness。
+    double worldTangent[4]{};
 };
 
 /**
@@ -66,7 +70,11 @@ ClipVertex IntersectClipEdge(const ClipVertex& a, const ClipVertex& b, double pl
     for (uint32_t coordinate = 0; coordinate < 2; ++coordinate)
     {
         vertex.metallicRoughnessUv[coordinate] = a.metallicRoughnessUv[coordinate] + (b.metallicRoughnessUv[coordinate] - a.metallicRoughnessUv[coordinate]) * t;
+        vertex.normalUv[coordinate] = a.normalUv[coordinate] + (b.normalUv[coordinate] - a.normalUv[coordinate]) * t;
     }
+    // 法線画像用の接線基底も同じ交点比率で補間する。
+    for (uint32_t component = 0; component < 4; ++component)
+        vertex.worldTangent[component] = a.worldTangent[component] + (b.worldTangent[component] - a.worldTangent[component]) * t;
     return vertex;
 }
 
@@ -285,7 +293,95 @@ void BuildFaceFallback(const double worldPositions[3][3], float output[3])
 /**
  * clippingに使うworld法線とcameraから頂点への方向を準備する。
  */
-bool PrepareLighting(const WorldVertex points[3], const double worldPositions[3][3], const detail::DrawPacket& draw, bool applyModelTransform, ClipVertex output[3], String& error)
+bool TransformTangent(const WorldVertex& source, const float normal[3], const detail::DrawPacket& draw, bool applyModelTransform, double output[4], String& error)
+{
+    // モデル空間の接線とbitangent向きを決める値。
+    const double tangentX = source.tangent[0];
+    const double tangentY = source.tangent[1];
+    const double tangentZ = source.tangent[2];
+    const double handedness = source.tangent[3];
+    if (!isfinite(tangentX) || !isfinite(tangentY) || !isfinite(tangentZ) || (handedness != 1.0 && handedness != -1.0))
+    {
+        error.Assign("The model contains an invalid normal-map tangent");
+        return false;
+    }
+    // モデル空間で法線と接線が平行でないことを確かめる。
+    const double sourceNormal[3] = { source.normal.x, source.normal.y, source.normal.z };
+    const double sourceTangent[3] = { tangentX, tangentY, tangentZ };
+    float unitSourceNormal[3]{};
+    float unitSourceTangent[3]{};
+    if (!NormalizeVector(sourceNormal, unitSourceNormal) || !NormalizeVector(sourceTangent, unitSourceTangent))
+    {
+        error.Assign("The model normal-map basis contains a zero vector");
+        return false;
+    }
+    // 単位化した2 vectorの外積で平行・反平行を検出する。
+    const double cross[3] = { static_cast<double>(unitSourceNormal[1]) * unitSourceTangent[2] - static_cast<double>(unitSourceNormal[2]) * unitSourceTangent[1], static_cast<double>(unitSourceNormal[2]) * unitSourceTangent[0] - static_cast<double>(unitSourceNormal[0]) * unitSourceTangent[2], static_cast<double>(unitSourceNormal[0]) * unitSourceTangent[1] - static_cast<double>(unitSourceNormal[1]) * unitSourceTangent[0] };
+    const double crossLengthSquared = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+    if (!(crossLengthSquared > 1e-12))
+    {
+        error.Assign("The model tangent is parallel to its source normal");
+        return false;
+    }
+
+    // 接線へ位置と同じscale・Z/Y/X回転を適用する成分。
+    double x = tangentX;
+    double y = tangentY;
+    double z = tangentZ;
+    double determinantSign = 1.0;
+    if (applyModelTransform)
+    {
+        // 位置変換と共有するモデルscale。
+        const double sx = draw.modelScale.x, sy = draw.modelScale.y, sz = draw.modelScale.z;
+        // 位置変換と共有するモデル回転。
+        const double rx = draw.modelRotation.x, ry = draw.modelRotation.y, rz = draw.modelRotation.z;
+        if (!isfinite(sx) || !isfinite(sy) || !isfinite(sz) || sx == 0.0 || sy == 0.0 || sz == 0.0 || !isfinite(rx) || !isfinite(ry) || !isfinite(rz))
+        {
+            error.Assign("The model transform cannot transform a normal-map tangent");
+            return false;
+        }
+        x *= sx;
+        y *= sy;
+        z *= sz;
+        determinantSign = sx * sy * sz < 0.0 ? -1.0 : 1.0;
+        // Z回転後の接線成分。
+        const double x1 = x * cos(rz) - y * sin(rz);
+        // Z回転後の縦成分とY回転後の横・奥行き成分。
+        const double y1 = x * sin(rz) + y * cos(rz);
+        // Y回転後の横位置と奥行き。
+        const double x2 = x1 * cos(ry) + z * sin(ry);
+        // Y回転後の奥行き。
+        const double z2 = -x1 * sin(ry) + z * cos(ry);
+        x = x2;
+        y = y1 * cos(rx) - z2 * sin(rx);
+        z = y1 * sin(rx) + z2 * cos(rx);
+    }
+    if (!isfinite(x) || !isfinite(y) || !isfinite(z))
+    {
+        error.Assign("The transformed normal-map tangent is outside the renderer's numeric range");
+        return false;
+    }
+
+    // 逆転置で変換し正規化した法線へGram-Schmidt直交化する。
+    const double dot = x * normal[0] + y * normal[1] + z * normal[2];
+    const double orthogonal[3] = { x - dot * normal[0], y - dot * normal[1], z - dot * normal[2] };
+    float unitTangent[3]{};
+    if (!NormalizeVector(orthogonal, unitTangent))
+    {
+        error.Assign("The model tangent is zero or parallel to its normal");
+        return false;
+    }
+    output[0] = unitTangent[0];
+    output[1] = unitTangent[1];
+    output[2] = unitTangent[2];
+    output[3] = handedness * determinantSign;
+    return true;
+}
+
+/**
+ * clippingに使うworld法線とcameraから頂点への方向を準備する。
+ */
+bool PrepareLighting(const WorldVertex points[3], const double worldPositions[3][3], const detail::DrawPacket& draw, bool applyModelTransform, bool normalMapping, ClipVertex output[3], String& error)
 {
     // 入力法線が欠けて面法線で補う必要があるか。
     bool hasMissingNormal = false;
@@ -296,8 +392,22 @@ bool PrepareLighting(const WorldVertex points[3], const double worldPositions[3]
     {
         if (!TransformNormal(points[i].normal, draw, applyModelTransform, output[i].normal, error))
             return false;
+        if (normalMapping && i > 0 && points[i].tangent[3] != points[0].tangent[3])
+        {
+            error.Assign("The model triangle has inconsistent normal-map tangent handedness");
+            return false;
+        }
         if (output[i].normal[0] == 0.0f && output[i].normal[1] == 0.0f && output[i].normal[2] == 0.0f)
+        {
+            if (normalMapping)
+            {
+                error.Assign("A normal map requires a nonzero vertex normal");
+                return false;
+            }
             hasMissingNormal = true;
+        }
+        if (normalMapping && !TransformTangent(points[i], output[i].normal, draw, applyModelTransform, output[i].worldTangent, error))
+            return false;
         // cameraから頂点への方向を各軸で求めるloop。
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
@@ -434,7 +544,7 @@ bool ProjectView(const ViewPoint& point, uint32_t width, uint32_t height, uint32
 /**
  * UVと任意の照明属性を補間しながらtriangleを切り詰めて射影する。
  */
-bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw, const WorldVertex points[3], bool applyModelTransform, bool includeLighting, const float* linearColor, ProjectedWorldVertex output[18], uint32_t& outputCount, String& error)
+bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw, const WorldVertex points[3], bool applyModelTransform, bool includeLighting, const float* linearColor, ProjectedWorldVertex output[18], uint32_t& outputCount, String& error, bool normalMapping)
 {
     // camera空間へ変換した入力頂点を保持する領域。
     ClipVertex first[8]{};
@@ -477,10 +587,17 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
                 return false;
             }
             first[i].metallicRoughnessUv[coordinate] = source.metallicRoughnessUv[coordinate];
+            if (normalMapping && !isfinite(source.normalUv[coordinate]))
+            {
+                error.Assign("The model contains non-finite normal texture coordinates");
+                return false;
+            }
+            if (normalMapping)
+                first[i].normalUv[coordinate] = source.normalUv[coordinate];
         }
     }
 
-    if (includeLighting && !PrepareLighting(points, worldPositions, draw, applyModelTransform, first, error))
+    if (includeLighting && !PrepareLighting(points, worldPositions, draw, applyModelTransform, normalMapping, first, error))
         return false;
 
     // 位置と基本色UVに使う交点で全属性を同じpolygon clippingへ通す。
@@ -515,6 +632,17 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
             if (!StoreFloat(polygonA[i].metallicRoughnessUv[coordinate], projectedPolygon[i].metallicRoughnessUv[coordinate], error))
             {
                 return false;
+            }
+            if (normalMapping && !StoreFloat(polygonA[i].normalUv[coordinate], projectedPolygon[i].normalUv[coordinate], error))
+                return false;
+        }
+        if (normalMapping)
+        {
+            // 接線のxyzとhandednessをGPU頂点へ渡すloop。
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                if (!StoreFloat(polygonA[i].worldTangent[component], projectedPolygon[i].worldTangent[component], error))
+                    return false;
             }
         }
         // 法線とview方向を出力属性へ複写するloop。

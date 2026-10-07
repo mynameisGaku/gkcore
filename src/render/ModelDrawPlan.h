@@ -35,6 +35,10 @@ struct ModelPartPlan
     float alphaCutoff = 0.5f;
     // 金属度・粗さの画像番号。未使用なら-1。
     int32_t metallicRoughnessTextureIndex = -1;
+    // 法線マップの画像番号。未使用は-1。
+    int32_t normalTextureIndex = -1;
+    // 法線マップの横・縦方向の倍率。
+    float normalScale = 1.0f;
 };
 
 /**

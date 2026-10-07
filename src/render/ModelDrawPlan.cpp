@@ -39,6 +39,14 @@ bool IsAlphaCutoff(float value)
 }
 
 /**
+ * normal scaleが有限値であることを調べる。glTFで許される負値と0も保持する。
+ */
+bool IsFiniteNormalScale(float value)
+{
+    return value == value && value >= -FLT_MAX && value <= FLT_MAX;
+}
+
+/**
  * 描画計画へ渡す材質の係数とalpha cutoffを検証する。
  */
 bool IsMaterialValid(const detail::ModelMaterial& material)
@@ -49,7 +57,7 @@ bool IsMaterialValid(const detail::ModelMaterial& material)
         if (!IsUnitFactor(material.baseColorFactor[i]))
             return false;
     }
-    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff);
+    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale);
 }
 
 // namespace
@@ -93,12 +101,14 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
         part.materialIndex = primitive.materialIndex;
         part.textureIndex = -1;
         part.metallicRoughnessTextureIndex = -1;
+        part.normalTextureIndex = -1;
         part.baseColorFactor[0] = 1.0f;
         part.baseColorFactor[1] = 1.0f;
         part.baseColorFactor[2] = 1.0f;
         part.baseColorFactor[3] = 1.0f;
         part.metallicFactor = 0.0f;
         part.roughnessFactor = 1.0f;
+        part.normalScale = 1.0f;
 
         if (primitive.materialIndex != -1)
         {
@@ -115,6 +125,7 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
             part.roughnessFactor = material.roughnessFactor;
             part.alphaMask = material.alphaMask;
             part.alphaCutoff = material.alphaCutoff;
+            part.normalScale = material.normalScale;
             if (material.metallicRoughnessTextureIndex != -1)
             {
                 if (material.metallicRoughnessTextureIndex < 0 || static_cast<uint32_t>(material.metallicRoughnessTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.metallicRoughnessTextureIndex)))
@@ -126,6 +137,12 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
                 if (material.baseColorTextureIndex < 0 || static_cast<uint32_t>(material.baseColorTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.baseColorTextureIndex)))
                     return Fail(error, "The model material texture index is invalid");
                 part.textureIndex = material.baseColorTextureIndex;
+            }
+            if (material.normalTextureIndex != -1)
+            {
+                if (material.normalTextureIndex < 0 || static_cast<uint32_t>(material.normalTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.normalTextureIndex)))
+                    return Fail(error, "The model material normal texture index is invalid");
+                part.normalTextureIndex = material.normalTextureIndex;
             }
         }
         if (!candidate.parts.Append(part))

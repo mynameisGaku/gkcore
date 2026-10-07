@@ -51,11 +51,11 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
         return Fail(error, "The Forge could not load the built-in PBR model shaders");
     }
 
-    // 80byte頂点payloadの属性位置と形式。
+    // 120byte頂点payloadの属性位置と形式。
     VertexLayout layout{};
     layout.mBindingCount = 1;
     layout.mBindings[0].mStride = sizeof(ModelRenderVertex);
-    layout.mAttribCount = 8;
+    layout.mAttribCount = 11;
     layout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
     layout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
     layout.mAttribs[0].mBinding = 0;
@@ -98,6 +98,24 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
     layout.mAttribs[7].mBinding = 0;
     layout.mAttribs[7].mLocation = 7;
     layout.mAttribs[7].mOffset = offsetof(ModelRenderVertex, metallicRoughnessUv);
+    // 法線画像の横方向と鏡映の符号。
+    layout.mAttribs[8].mSemantic = SEMANTIC_TANGENT;
+    layout.mAttribs[8].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
+    layout.mAttribs[8].mBinding = 0;
+    layout.mAttribs[8].mLocation = 8;
+    layout.mAttribs[8].mOffset = offsetof(ModelRenderVertex, worldTangent);
+    // 法線画像だけが使うUVの入力。
+    layout.mAttribs[9].mSemantic = SEMANTIC_TEXCOORD5;
+    layout.mAttribs[9].mFormat = TinyImageFormat_R32G32_SFLOAT;
+    layout.mAttribs[9].mBinding = 0;
+    layout.mAttribs[9].mLocation = 9;
+    layout.mAttribs[9].mOffset = offsetof(ModelRenderVertex, normalUv);
+    // 法線画像の有効値とXYの倍率。
+    layout.mAttribs[10].mSemantic = SEMANTIC_TEXCOORD6;
+    layout.mAttribs[10].mFormat = TinyImageFormat_R32G32_SFLOAT;
+    layout.mAttribs[10].mBinding = 0;
+    layout.mAttribs[10].mLocation = 10;
+    layout.mAttribs[10].mOffset = offsetof(ModelRenderVertex, normalParameters);
 
     // scene/UIで共通利用するrasterizer設定。
     RasterizerStateDesc rasterizer{};

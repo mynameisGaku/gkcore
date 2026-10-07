@@ -23,6 +23,10 @@ struct WorldVertex
     float uv[2];
     // 金属度・粗さの画像座標。
     float metallicRoughnessUv[2]{};
+    // 法線マップの画像座標。
+    float normalUv[2]{};
+    // モデル空間の接線と縦方向の符号。
+    float tangent[4]{};
 };
 
 /**
@@ -38,13 +42,17 @@ struct ProjectedWorldVertex
     float viewDirection[3];
     // クリッピング後の金属度・粗さの画像座標。
     float metallicRoughnessUv[2]{};
+    // 切り詰めた法線マップの座標。
+    float normalUv[2]{};
+    // ワールド空間の接線と縦方向の符号。
+    float worldTangent[4]{};
 };
 
 /**
  * world triangleを切り詰めて射影し、UVと照明属性を保つ。
  * 不正な入力または数値範囲外ではfalseを返す。
  */
-bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw, const WorldVertex points[3], bool applyModelTransform, bool includeLighting, const float* linearColor, ProjectedWorldVertex output[18], uint32_t& outputCount, String& error);
+bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPacket& draw, const WorldVertex points[3], bool applyModelTransform, bool includeLighting, const float* linearColor, ProjectedWorldVertex output[18], uint32_t& outputCount, String& error, bool normalMapping = false);
 
 // namespace gk::render
 }

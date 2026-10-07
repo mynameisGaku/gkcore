@@ -34,6 +34,93 @@ bool IsFinite(float value)
 }
 
 /**
+ * node world行列の線形部分から行列式を求める。
+ */
+double LinearDeterminant(const float matrix[16])
+{
+    // 列優先行列から取り出す線形部分の行成分。
+    const double a = matrix[0], b = matrix[4], c = matrix[8], d = matrix[1], e = matrix[5], f = matrix[9], g = matrix[2], h = matrix[6], i = matrix[10];
+    return a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+}
+
+/**
+ * double精度の方向を安定して単位長へ揃え、floatへ保存する。
+ */
+bool NormalizeDoubleDirection(const double source[3], float output[3])
+{
+    // 二乗計算のoverflowを避けるための最大成分。
+    const double maximum = fmax(fabs(source[0]), fmax(fabs(source[1]), fabs(source[2])));
+    if (!(maximum > 0.0) || !isfinite(maximum))
+        return false;
+    // 最大成分で割った方向と、その安全な長さ。
+    const double x = source[0] / maximum, y = source[1] / maximum, z = source[2] / maximum;
+    const double length = sqrt(x * x + y * y + z * z);
+    if (!(length > 0.0) || !isfinite(length))
+        return false;
+    output[0] = static_cast<float>(x / length);
+    output[1] = static_cast<float>(y / length);
+    output[2] = static_cast<float>(z / length);
+    return IsFinite(output[0]) && IsFinite(output[1]) && IsFinite(output[2]);
+}
+
+/**
+ * 元の法線と接線が同じ方向を指していないことを確かめる。
+ */
+bool HasIndependentNormalTangent(const float normal[3], const float tangent[3])
+{
+    // 入力方向をdoubleへ広げ、長さの計算を安定させる。
+    const double nx = normal[0], ny = normal[1], nz = normal[2];
+    const double tx = tangent[0], ty = tangent[1], tz = tangent[2];
+    const double normalScale = fmax(fabs(nx), fmax(fabs(ny), fabs(nz)));
+    const double tangentScale = fmax(fabs(tx), fmax(fabs(ty), fabs(tz)));
+    if (!(normalScale > 0.0) || !(tangentScale > 0.0) || !isfinite(normalScale) || !isfinite(tangentScale))
+        return false;
+    // 最大成分で割った単位長計算用の方向。
+    const double n0 = nx / normalScale, n1 = ny / normalScale, n2 = nz / normalScale;
+    const double t0 = tx / tangentScale, t1 = ty / tangentScale, t2 = tz / tangentScale;
+    const double nLength = sqrt(n0 * n0 + n1 * n1 + n2 * n2);
+    const double tLength = sqrt(t0 * t0 + t1 * t1 + t2 * t2);
+    // 正規化した方向同士の外積長は、平行ならゼロになる。
+    const double c0 = (n1 / nLength) * (t2 / tLength) - (n2 / nLength) * (t1 / tLength);
+    const double c1 = (n2 / nLength) * (t0 / tLength) - (n0 / nLength) * (t2 / tLength);
+    const double c2 = (n0 / nLength) * (t1 / tLength) - (n1 / nLength) * (t0 / tLength);
+    return sqrt(c0 * c0 + c1 * c1 + c2 * c2) > 1.0e-12;
+}
+
+/**
+ * 法線へnode world行列の逆転置を適用し、float保存前に正規化する。
+ */
+bool TransformMappedNormal(const float matrix[16], double determinant, const float source[3], float output[3])
+{
+    // 線形部分の逆転置行列を作るcofactor成分。
+    const double a = matrix[0], b = matrix[4], c = matrix[8], d = matrix[1], e = matrix[5], f = matrix[9], g = matrix[2], h = matrix[6], i = matrix[10];
+    const double n00 = e * i - f * h, n01 = f * g - d * i, n02 = d * h - e * g;
+    const double n10 = c * h - b * i, n11 = a * i - c * g, n12 = b * g - a * h;
+    const double n20 = b * f - c * e, n21 = c * d - a * f, n22 = a * e - b * d;
+    // detで割った逆転置方向を単位長に整える。
+    const double transformed[3] = { (n00 * source[0] + n01 * source[1] + n02 * source[2]) / determinant, (n10 * source[0] + n11 * source[1] + n12 * source[2]) / determinant, (n20 * source[0] + n21 * source[1] + n22 * source[2]) / determinant };
+    return isfinite(transformed[0]) && isfinite(transformed[1]) && isfinite(transformed[2]) && NormalizeDoubleDirection(transformed, output);
+}
+
+/**
+ * 接線をdouble精度でnode変換し、法線面へ正規化してhandednessを保つ。
+ */
+bool TransformMappedTangent(const float matrix[16], const float source[4], const float normal[3], float determinantSign, float output[4])
+{
+    // node変換後の接線をfloatへ狭める前のdouble方向。
+    const double transformed[3] = { static_cast<double>(matrix[0]) * source[0] + static_cast<double>(matrix[4]) * source[1] + static_cast<double>(matrix[8]) * source[2], static_cast<double>(matrix[1]) * source[0] + static_cast<double>(matrix[5]) * source[1] + static_cast<double>(matrix[9]) * source[2], static_cast<double>(matrix[2]) * source[0] + static_cast<double>(matrix[6]) * source[1] + static_cast<double>(matrix[10]) * source[2] };
+    if (!isfinite(transformed[0]) || !isfinite(transformed[1]) || !isfinite(transformed[2]))
+        return false;
+    // 接線から法線方向の成分を取り除いたdouble方向。
+    const double projection = transformed[0] * normal[0] + transformed[1] * normal[1] + transformed[2] * normal[2];
+    const double orthogonal[3] = { transformed[0] - projection * normal[0], transformed[1] - projection * normal[1], transformed[2] - projection * normal[2] };
+    if (!NormalizeDoubleDirection(orthogonal, output))
+        return false;
+    output[3] = source[3] * determinantSign;
+    return IsFinite(output[3]);
+}
+
+/**
  * glTF textureを画像resourceへ登録し、共有済みslotを返す。
  * 参照外、未対応画像、読み込みや確保の失敗では-1を返す。
  */
@@ -133,6 +220,8 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
     material.roughnessFactor = 1.0f;
     material.baseColorTextureIndex = -1;
     material.metallicRoughnessTextureIndex = -1;
+    material.normalTextureIndex = -1;
+    material.normalScale = 1.0f;
     if (source)
     {
         // source材質がdata内にあることを確かめるindex。
@@ -180,13 +269,26 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
                 return -1;
         }
     }
+    if (source && source->normal_texture.texture)
+    {
+        // normal textureへ掛ける有限scale値。
+        if (!IsFinite(source->normal_texture.scale))
+        {
+            error.Assign("GLB normal texture scale must be finite");
+            return -1;
+        }
+        material.normalTextureIndex = AddTexture(data, source->normal_texture, "GLB normal", model, textureMap, error);
+        if (material.normalTextureIndex < 0)
+            return -1;
+        material.normalScale = source->normal_texture.scale;
+    }
     // 既存材質と等しければ同じslotを再利用するloop。
     for (uint32_t i = 0; i < model.materials.Count(); ++i)
     {
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];
@@ -269,6 +371,12 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     const cgltf_accessor* baseColorUv = cgltf_find_accessor(primitive, cgltf_attribute_type_texcoord, 0);
     // 金属度・粗さ画像へ渡す独立した座標accessor。
     const cgltf_accessor* metallicRoughnessUv = nullptr;
+    // normal textureの有無でのみ必要となる属性と変換条件。
+    const bool hasNormalTexture = primitive->material && primitive->material->normal_texture.texture;
+    const cgltf_accessor* tangent = hasNormalTexture ? cgltf_find_accessor(primitive, cgltf_attribute_type_tangent, 0) : nullptr;
+    const cgltf_accessor* normalUv = nullptr;
+    double normalMapDeterminant = 1.0;
+    float normalMapDeterminantSign = 1.0f;
     const cgltf_pbr_metallic_roughness* pbr = primitive->material && primitive->material->has_pbr_metallic_roughness ? &primitive->material->pbr_metallic_roughness : nullptr;
     if (pbr && pbr->base_color_texture.texture && !SelectTextureUv(*primitive, pbr->base_color_texture, "base-color", baseColorUv, error))
     {
@@ -278,6 +386,19 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     {
         return false;
     }
+    if (hasNormalTexture)
+    {
+        if (!SelectTextureUv(*primitive, primitive->material->normal_texture, "normal", normalUv, error))
+            return false;
+        // normalと接線を一意に変換できるnode行列の向きと可逆性。
+        normalMapDeterminant = LinearDeterminant(matrix);
+        if (!isfinite(normalMapDeterminant) || normalMapDeterminant == 0.0)
+        {
+            error.Assign("GLB normal mapping cannot use a singular node transform");
+            return false;
+        }
+        normalMapDeterminantSign = normalMapDeterminant < 0.0 ? -1.0f : 1.0f;
+    }
     if (!position || position->type != cgltf_type_vec3 || position->component_type != cgltf_component_type_r_32f || position->is_sparse || !position->buffer_view || position->count == 0 || position->count > maxOutputVertices - model.vertices.Count())
     {
         error.Assign("GLB primitive has invalid or excessive positions");
@@ -286,6 +407,16 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (baseColorUv && (baseColorUv->type != cgltf_type_vec2 || baseColorUv->count != position->count || baseColorUv->is_sparse || !baseColorUv->buffer_view)) || (metallicRoughnessUv && (metallicRoughnessUv->type != cgltf_type_vec2 || metallicRoughnessUv->count != position->count || metallicRoughnessUv->is_sparse || !metallicRoughnessUv->buffer_view)))
     {
         error.Assign("GLB primitive has incompatible normals or texture coordinates");
+        return false;
+    }
+    if (normalUv && (normalUv->type != cgltf_type_vec2 || normalUv->count != position->count || normalUv->is_sparse || !normalUv->buffer_view))
+    {
+        error.Assign("GLB normal texture coordinates are incompatible with primitive positions");
+        return false;
+    }
+    if (hasNormalTexture && (!normal || normal->type != cgltf_type_vec3 || normal->component_type != cgltf_component_type_r_32f || normal->normalized || normal->count != position->count || normal->is_sparse || !normal->buffer_view || !tangent || tangent->type != cgltf_type_vec4 || tangent->component_type != cgltf_component_type_r_32f || tangent->normalized || tangent->count != position->count || tangent->is_sparse || !tangent->buffer_view))
+    {
+        error.Assign("GLB normal mapping requires matching FLOAT NORMAL and TANGENT attributes");
         return false;
     }
     // このprimitiveで追加を始める頂点位置。
@@ -310,7 +441,35 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
                 error.Assign("GLB normal accessor could not be read");
                 return false;
             }
-            TransformNormal(matrix, value, vertex.normal);
+            if (hasNormalTexture)
+            {
+                if (!TransformMappedNormal(matrix, normalMapDeterminant, value, vertex.normal))
+                {
+                    error.Assign("GLB normal mapping contains a zero or non-finite normal");
+                    return false;
+                }
+                // tangent accessorから読むFLOAT vec4。
+                float tangentValue[4]{};
+                if (!cgltf_accessor_read_float(tangent, i, tangentValue, 4) || !IsFinite(tangentValue[0]) || !IsFinite(tangentValue[1]) || !IsFinite(tangentValue[2]) || (tangentValue[3] != -1.0f && tangentValue[3] != 1.0f))
+                {
+                    error.Assign("GLB normal mapping tangent must be finite with handedness -1 or 1");
+                    return false;
+                }
+                if (!HasIndependentNormalTangent(value, tangentValue))
+                {
+                    error.Assign("GLB normal mapping source tangent is zero or parallel to its normal");
+                    return false;
+                }
+                if (!TransformMappedTangent(matrix, tangentValue, vertex.normal, normalMapDeterminantSign, vertex.tangent))
+                {
+                    error.Assign("GLB normal mapping tangent is zero, parallel, or outside the numeric range");
+                    return false;
+                }
+            }
+            else
+            {
+                TransformNormal(matrix, value, vertex.normal);
+            }
         }
         if (baseColorUv)
         {
@@ -332,7 +491,17 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             vertex.metallicRoughnessUv[0] = value[0];
             vertex.metallicRoughnessUv[1] = value[1];
         }
-        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !model.vertices.Append(vertex))
+        if (normalUv)
+        {
+            if (!cgltf_accessor_read_float(normalUv, i, value, 2))
+            {
+                error.Assign("GLB normal texture accessor could not be read");
+                return false;
+            }
+            vertex.normalUv[0] = value[0];
+            vertex.normalUv[1] = value[1];
+        }
+        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !IsFinite(vertex.normalUv[0]) || !IsFinite(vertex.normalUv[1]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]) || !model.vertices.Append(vertex))
         {
             error.Assign("GLB vertex values or allocation are invalid");
             return false;
@@ -356,6 +525,23 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         {
             error.Assign("GLB primitive contains an invalid index or could not allocate indices");
             return false;
+        }
+    }
+    if (hasNormalTexture)
+    {
+        // 各三角形の3頂点で接線handednessが揃うか確認するloop。
+        for (uint32_t offset = 0; offset < static_cast<uint32_t>(indexCount); offset += 3)
+        {
+            // 三角形の先頭頂点と残り2頂点。
+            const uint32_t first = model.indices.At(firstIndex + offset);
+            const uint32_t second = model.indices.At(firstIndex + offset + 1);
+            const uint32_t third = model.indices.At(firstIndex + offset + 2);
+            const float sign = model.vertices.At(first).tangent[3];
+            if (sign != model.vertices.At(second).tangent[3] || sign != model.vertices.At(third).tangent[3])
+            {
+                error.Assign("GLB normal mapping tangent handedness must match within each triangle");
+                return false;
+            }
         }
     }
     // primitiveが参照する重複除去済み材質slot。
