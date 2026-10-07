@@ -26,6 +26,48 @@ bool SetCaptureError(String& error, const char* message)
     return false;
 }
 
+/**
+ * capture枚数の環境設定を読み、1から16の範囲で検証する。
+ */
+bool ReadRequestedFrameCount(uint32_t& frameCount, String& error)
+{
+    SetLastError(ERROR_SUCCESS);
+    const DWORD requiredSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_FRAMES", nullptr, 0);
+    const DWORD environmentError = GetLastError();
+    if (requiredSize == 0)
+    {
+        if (environmentError == ERROR_ENVVAR_NOT_FOUND)
+        {
+            frameCount = 1;
+            return true;
+        }
+        if (environmentError == ERROR_SUCCESS)
+            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
+        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES could not be read");
+    }
+
+    std::vector<char> value(requiredSize);
+    const DWORD copiedSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_FRAMES", value.data(), requiredSize);
+    if (copiedSize == 0 || copiedSize >= requiredSize)
+        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES could not be read completely");
+
+    uint32_t parsedFrameCount = 0;
+    for (DWORD index = 0; index < copiedSize; ++index)
+    {
+        const char digit = value[index];
+        if (digit < '0' || digit > '9')
+            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
+        parsedFrameCount = parsedFrameCount * 10u + static_cast<uint32_t>(digit - '0');
+        if (parsedFrameCount > 16u)
+            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
+    }
+    if (parsedFrameCount == 0)
+        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
+
+    frameCount = parsedFrameCount;
+    return true;
+}
+
 }
 
 /**
@@ -37,18 +79,26 @@ FFrameCapture::~FFrameCapture()
 }
 
 /**
- * 環境変数から一回分の出力先を取得する。
+ * 初回に取得枚数と出力先を読み、次のフレームを取得するか判定する。
  */
 bool FFrameCapture::ReadRequest(String& error)
 {
     if (requestChecked_)
-        return !outputPath_.Empty();
-    requestChecked_ = true;
+        return completedFrames_ < requestedFrames_ && !outputPath_.Empty();
+
+    if (!ReadRequestedFrameCount(requestedFrames_, error))
+    {
+        requestChecked_ = true;
+        return false;
+    }
 
     // 終端NULを含む環境変数の必要bufferサイズ。
     const DWORD requiredSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_PATH", nullptr, 0);
     if (requiredSize == 0)
+    {
+        requestChecked_ = true;
         return false;
+    }
 
     // 環境変数を一時保持するbuffer。
     std::vector<char> path(requiredSize);
@@ -58,6 +108,7 @@ bool FFrameCapture::ReadRequest(String& error)
         return SetCaptureError(error, "GKCORE_TEST_CAPTURE_PATH could not be read completely");
     if (!outputPath_.Assign(path.data(), copiedSize))
         return SetCaptureError(error, "The GPU capture output path could not be copied");
+    requestChecked_ = true;
     return true;
 }
 
@@ -146,6 +197,13 @@ bool FFrameCapture::Complete(Renderer* renderer, Fence* fence, String& error)
         return SetCaptureError(error, "The GPU capture was not recorded before completion");
     waitForFences(renderer, 1, &fence);
 
+    // 2枚目以降は基準pathへ連番suffixを付ける。
+    String frameOutputPath;
+    if (!frameOutputPath.Assign(outputPath_.CStr()))
+        return SetCaptureError(error, "The GPU capture output path could not be copied");
+    if (completedFrames_ != 0 && (!frameOutputPath.Append(".frame") || !frameOutputPath.AppendUnsigned(completedFrames_) || !frameOutputPath.Append(".ppm")))
+        return SetCaptureError(error, "The GPU capture output path could not be extended");
+
     // GPUが書いたreadback領域をCPUから読む。
     const D3D12_RANGE readRange{ 0, static_cast<SIZE_T>(readbackSize_) };
     void* mapped = nullptr;
@@ -155,7 +213,7 @@ bool FFrameCapture::Complete(Renderer* renderer, Fence* fence, String& error)
         return SetCaptureError(error, "The Direct3D 12 readback buffer could not be mapped");
 
     // PPMを書き込む出力stream。
-    FILE* output = std::fopen(outputPath_.CStr(), "wb");
+    FILE* output = std::fopen(frameOutputPath.CStr(), "wb");
     if (!output)
     {
         const D3D12_RANGE writtenRange{ 0, 0 };
@@ -191,7 +249,9 @@ bool FFrameCapture::Complete(Renderer* renderer, Fence* fence, String& error)
         return SetCaptureError(error, "The GPU capture image could not be written completely");
 
     Reset();
-    outputPath_.Clear();
+    ++completedFrames_;
+    if (completedFrames_ >= requestedFrames_)
+        outputPath_.Clear();
     return true;
 }
 

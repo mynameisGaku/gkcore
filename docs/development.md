@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeとCTest 32/32が成功しました。GPU画素検査はdefault/direct/tint/model/model_rotatedの5 modeを固定領域・色・照明変化で確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeとCTest 32/32が成功しました。GPU画素検査は基本描画・モデル照明に加え、同じアプリの6フレームで効果切り替えとUIの色維持を確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。今回のRelease実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -43,7 +43,7 @@ PRE_SETUP.bat --gpu-check
 
 2026-10-05に`PRE_SETUP.bat --gpu-check`を再実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプル、全CTest 32/32が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。GPU smokeは2.46秒、5 modeの画素検査は5.95秒、SDK consumer GPU smokeは3.77秒、全体は15.05秒でした。最終ログは`build/native-validation/pre-setup-render-final.log`です。
 
-`gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
+`gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。2026-10-07の追加検証では、同一アプリ内の6フレームを取得してポスト効果の有効・無効切り替えとUIの色維持も確認しました。更新後のRelease全CTestは32/32件成功しています。ログは`build/native-validation/sequence-final-{build,tests}.log`です。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
 
 色の変化を目で確かめるには、同じ build が作る `build\runtime-windows\Release\gkcore_custom_post_effect.exe` を起動します。ウィンドウを 960×540 以上に保ち、Space キーでポスト効果を切り替えてください。有効時には Scene の三角形と矩形の色が変わり、無効時には元の色に戻ります。緑の UI 矩形と画面下部の ON/OFF 表示は Scene の効果に影響されず、ウィンドウをリサイズしても表示されることを目で確認します。Escape キーで終了します。
 

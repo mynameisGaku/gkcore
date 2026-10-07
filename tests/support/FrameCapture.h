@@ -23,7 +23,7 @@ class FFrameCapture
     ~FFrameCapture();
 
     /**
-     * GKCORE_TEST_CAPTURE_PATHを一度読み、出力先を保持する。
+     * 出力pathと任意のcapture枚数を読み取り、未指定の枚数は1にする。
      */
     bool ReadRequest(String& error);
 
@@ -33,23 +33,25 @@ class FFrameCapture
     bool Record(Renderer* renderer, Cmd* command, RenderTarget* target, String& error);
 
     /**
-     * fence完了後にRGB画素をP6 PPMへ保存する。
+     * fence完了後にRGB画素をP6 PPMへ保存し、指定枚数まで次のcaptureを許可する。
      */
     bool Complete(Renderer* renderer, Fence* fence, String& error);
 
     /**
-     * renderer破棄前に所有resourceを解放する。
+     * readback resourceと一時状態を解放する。
      */
     void Reset();
 
   private:
     ID3D12Resource* readback_ = nullptr; // GPUから読み戻すresource。
-    String outputPath_;                  // 一回だけ使う出力先。
+    String outputPath_;                  // 連続captureの基準出力先。
     uint64_t readbackSize_ = 0;          // 行paddingを含む読み戻し領域の大きさ。
     uint32_t width_ = 0;                 // キャプチャ画像の幅。
     uint32_t height_ = 0;                // キャプチャ画像の高さ。
     uint32_t rowPitch_ = 0;              // GPU readback buffer上の1行のbyte数。
     bool blueFirst_ = false;             // BGRA resourceならRGB出力時に赤と青を入れ替える。
+    uint32_t requestedFrames_ = 1;       // 要求されたcapture枚数。
+    uint32_t completedFrames_ = 0;       // 保存済みcapture枚数。
     bool requestChecked_ = false;        // 環境変数の読み取りを済ませたか。
 };
 

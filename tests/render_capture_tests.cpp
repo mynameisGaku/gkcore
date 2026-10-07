@@ -73,7 +73,8 @@ int main(int argc, char** argv)
         return RunModelCapture(argv[2], std::strcmp(argv[1], "model_rotated") == 0);
     }
     // 効果と画像はテスト側から指定し、作業フォルダーに依存させない。
-    const bool tint = std::strcmp(argv[1], "tint") == 0;
+    const bool sequence = std::strcmp(argv[1], "sequence") == 0;
+    const bool tint = std::strcmp(argv[1], "tint") == 0 || sequence;
     const bool fxaa = std::strcmp(argv[1], "direct") != 0;
     if (!Check(gk::SetWindowSize(640, 480), "SetWindowSize") || !Check(gk::Init(), "Init"))
     {
@@ -100,6 +101,15 @@ int main(int argc, char** argv)
     // 両方のフレーム用bufferを繰り返し使い、更新と終了まで通す。
     for (int frame = 0; passed && frame < 6; ++frame)
     {
+        // 同じアプリで効果を切り替え、前フレームの設定が残らないことを検査する。
+        if (sequence)
+        {
+            passed = Check(gk::SetPostEffectShader(frame % 2 != 0 ? shader : gk::ShaderHandle{}), "SetPostEffectShader per frame");
+        }
+        if (!passed)
+        {
+            break;
+        }
         passed = Check(gk::BeginFrame(), "BeginFrame") && Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "Scene") && Check(gk::DrawRect(32.0f, 32.0f, 128.0f, 96.0f, gk::ColorRGB(255, 0, 0), true), "Scene rectangle") && Check(gk::DrawTriangle3D(gk::Vec3{ -1.0f, -0.9f, 0.0f }, gk::Vec3{ 1.0f, -0.9f, 0.0f }, gk::Vec3{ 0.0f, 1.0f, 0.0f }, gk::ColorRGB(0, 0, 255), true), "Triangle") && Check(gk::DrawImage(image, 480.0f, 150.0f, false), "Scene image") && Check(gk::SetDrawLayer(gk::DrawLayer::UI), "UI") && Check(gk::DrawRect(480.0f, 32.0f, 96.0f, 64.0f, gk::ColorRGB(0, 255, 0), true), "UI rectangle") && Check(gk::DrawString(32.0f, 410.0f, "描画テスト", gk::ColorRGB(255, 255, 255)), "UI text") && Check(gk::Present(), "Present");
     }
     if (image)

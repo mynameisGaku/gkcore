@@ -90,14 +90,50 @@ def main():
     results = {}
     for name in ("default", "direct", "tint"):
         capture = output / (name + ".ppm")
-        if capture.exists():
-            capture.unlink()
+        extra_capture = Path(str(capture) + ".frame1.ppm")
+        for path in (capture, extra_capture):
+            if path.exists():
+                path.unlink()
         environment = os.environ.copy()
         environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
+        if name == "default":
+            environment.pop("GKCORE_TEST_CAPTURE_FRAMES", None)
+        else:
+            environment["GKCORE_TEST_CAPTURE_FRAMES"] = "1"
         subprocess.run([str(args.executable.resolve()), name, str(fixture), str(shader)], env=environment, check=True, timeout=45)
         results[name] = inspect(read_image(capture), name)
+        assert not extra_capture.exists(), (name, "single capture continued beyond its limit")
     assert results["default"]["scene"][0] - results["tint"]["scene"][0] > 35, "custom post effect did not change Scene color"
     assert results["default"]["ui"] == results["tint"]["ui"], "custom post effect changed UI color"
+    # 各Presentで取得し、同じアプリ内の有効・無効切り替えを独立して判定する。
+    capture = output / "sequence.ppm"
+    sequence_paths = [capture] + [Path(str(capture) + f".frame{frame}.ppm") for frame in range(1, 6)]
+    for path in sequence_paths:
+        if path.exists():
+            path.unlink()
+    environment = os.environ.copy()
+    environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
+    environment["GKCORE_TEST_CAPTURE_FRAMES"] = "6"
+    subprocess.run([str(args.executable.resolve()), "sequence", str(fixture), str(shader)], env=environment, check=True, timeout=45)
+    results["sequence"] = []
+    for frame, path in enumerate(sequence_paths):
+        observed = inspect(read_image(path), f"sequence frame {frame}")
+        expected = results["tint" if frame % 2 else "default"]
+        assert abs(observed["scene"][0] - expected["scene"][0]) <= 2, (frame, "post effect did not follow frame setting", observed["scene"])
+        assert observed["ui"] == results["default"]["ui"], (frame, "UI changed during effect switching", observed["ui"])
+        results["sequence"].append(observed)
+    # 誤った取得回数は描画テストを成功扱いせず、診断付きで失敗させる。
+    for value in ("0", "17", "invalid"):
+        invalid_capture = output / "invalid-count.ppm"
+        if invalid_capture.exists():
+            invalid_capture.unlink()
+        environment = os.environ.copy()
+        environment["GKCORE_TEST_CAPTURE_PATH"] = str(invalid_capture)
+        environment["GKCORE_TEST_CAPTURE_FRAMES"] = value
+        rejected = subprocess.run([str(args.executable.resolve()), "default", str(fixture), str(shader)], env=environment, capture_output=True, timeout=45)
+        assert rejected.returncode == 1, (value, "invalid capture count was accepted", rejected.returncode)
+        assert b"GKCORE_TEST_CAPTURE_FRAMES" in rejected.stderr, (value, "missing capture count diagnostic")
+        assert not invalid_capture.exists(), (value, "invalid count created an image")
     model = args.source_dir.resolve() / "examples/assets/model_lighting.glb"
     model_images = {}
     for name in ("model", "model_rotated"):
@@ -106,6 +142,7 @@ def main():
             capture.unlink()
         environment = os.environ.copy()
         environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
+        environment["GKCORE_TEST_CAPTURE_FRAMES"] = "1"
         subprocess.run([str(args.executable.resolve()), name, str(model), str(shader)], env=environment, check=True, timeout=45)
         model_images[name] = read_image(capture)
         results[name] = inspect_model(model_images[name], name)

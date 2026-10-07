@@ -520,3 +520,22 @@ RED調査では、白の1x1 fallback imageを作るTextureCacheに`TEXTURE_CREAT
 同じWindows PCでmixed_sceneを通常表示と最大化表示で確認し、カスタムポストエフェクト、輪郭矩形、Bloomを有効にした描画を目視しました。通常Runtime DLLでモデル照明サンプルも再起動し、左右の球の色・明暗・反射を確認しました。Alt+F4による終了を確認しました。画素判定は固定画像の領域・色優勢・差分画素数による回帰検査であり、全画面の基準画像比較や全GPUに対する画質acceptanceではありません。Spaceによる照明切り替えとEscape終了の自動操作も未確認です。
 
 画素capture用Runtime DLLは開発テスト専用で、通常の配布SDKに含みません。install済みSDK consumerには`GKCORE_PACKAGE_GPU_SMOKE`のopt-in経路があり、Init、Scene/UI描画、Present、Shutdownを呼びます。従来の通常consumer検査はGPUを使わない構成です。最終の`PRE_SETUP.bat --gpu-check`は`BUILD READY`となり、Release全CTestが32/32件成功しました。GPU smokeは2.46秒、5 modeの画像検査は5.95秒、インストールSDK consumerは3.77秒、全体は15.05秒でした。ログは`build/native-validation/pre-setup-render-final.log`です。通常の`gkcore.dll`には画像取得用の環境変数文字列がなく、検査用DLLだけに含まれることも確認しました。RuntimeOFFのWindows CPU構成はMSVC 19.51 / SDK 10.0.28000.0でDebug/Release各27/27件成功し、ログは`build/native-validation/cpu-{build,test}-{debug,release}-capture.log`にあります。
+
+## 2026-10-07: 同一アプリの連続フレームと効果切り替え
+
+同じアプリ内で6回のPresentを行い、ポスト効果を無効・有効へ交互に変更するGPU画像テストを先に追加しました。既存の画像取得は最初の1枚で終了するため、2枚目の`sequence.ppm.frame1.ppm`がないことでREDとなりました。ログは`build/native-validation/sequence-red.log`です。
+
+開発テスト専用の画像取得に`GKCORE_TEST_CAPTURE_FRAMES`を追加しました。省略時は1枚、指定時はASCII数字の1〜16を受理し、0、17、数値でない値を診断付きで拒否します。各画像は対応するframe fenceの完了後に保存し、読み戻しresourceを解放してから次の画像を取得します。要求枚数へ到達すると取得を止めます。通常Runtimeの公開APIや配布ファイルは変更していません。
+
+focused画像テストが成功し、Sceneの赤成分が232、149、232、149、232、149となり、UIは全フレームで `(0, 255, 0)`を保ちました。各フレームの3D三角形、PNG画像、日本語文字も判定しました。枚数を省略した場合と明示的な1枚指定が途中で取得を止めること、不正枚数で終了コード1と変数名入りの診断を返し画像を作らないことも確認しています。独立レビューで同期・resource寿命・枚数上限を確認しました。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0のRelease構成で、次を実行しました。
+
+```powershell
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+```
+
+全targetのビルドとCTest 32/32件が成功しました。GPU smokeは2.52秒、画像検査は10.18秒、配布SDK consumerは4.82秒、全体は21.37秒です。ログは`build/native-validation/sequence-final-build.log`と`sequence-final-tests.log`です。変更したC++/PythonはUTF-8 BOM付き・CRLFで、C++はclang-format 12で確認しています。
+
+この検査は各フレームの画像取得時にGPUの完了を待ちます。高負荷時のちらつき、複数フレームがGPU上で同時に処理される状況の競合、入力キー操作を検証した結果ではありません。画像取得の設定はプロセス内で一度読み取り、同じ取得用DLLインスタンスをShutdown後に再Initして取得し直す用途は未対応です。
