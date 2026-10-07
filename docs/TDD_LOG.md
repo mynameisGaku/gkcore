@@ -632,3 +632,29 @@ Runtime本体のソースは変更せず、取得用DLLとfixtureはSDKのinstal
 Releaseは全36/36件成功、画像寿命検査4.03秒、全体39.89秒でした。Debugも全36/36件成功、画像寿命検査4.36秒、全体42.61秒でした。SDK consumerを含む配布物検査も両構成で成功しています。
 
 画像ガイドのC++サンプルはv142で構文検査し、成功しました。イベント処理の失敗と通常のウィンドウ終了を区別し、API失敗を終了コードへ反映します。
+
+
+## 2026-10-07: 独自ピクセルシェーダーの定数と画像のGPU確認
+
+描画命令用shaderは従来API戻り値とPresentまでのGPU smokeを実行していました。今回、開発用の画像検査を追加し、定数slot 0と63、画像とUV座標、描画色、登録時の値の保持、shaderの削除条件を最終描画先の画素とAPI診断で確認しました。Runtimeの実装は変更していません。
+
+検査用HLSLは公開Shader.hlslを使い、描画色・画像sample・slot 0・slot 63を掛けます。最初の矩形だけslot 63が未設定で黒になり、以降はslot 0でSceneの赤と緑、slot 63でUIの青と黄を交互に指定しました。最後に両slotを0へ変更してからPresentしても、登録済みの矩形は登録時の色を保ちました。2種類の64×32 PNGをSceneとUIへ各1枚ずつ描き、各四象限の内部4画素を固定した期待RGBで検査しています。画像を指定しないcyan矩形は、白い代替画像と描画命令の色で描けました。
+
+6フレームすべてで個別の期待色を確認し、偶数フレーム同士と奇数フレーム同士は画像全体が一致しました。4枚の画像領域、cyan矩形、未設定または0の定数を使う黒矩形の計6領域は全フレームで一致しました。使用中のshader削除はframe 0で診断付き-1、6回のPresent後は成功、削除済みhandleのSetPixelShaderも診断付き-1でした。
+
+検査の対照として、slot 0・slot 63・texture・input.colorの参照をそれぞれ省いたHLSLを開発用出力先に生成してコンパイルしました。4つとも実GPU描画は完了した後、画素のassertionで失敗しました。slot 0を省くと赤いScene矩形が白、slot 63を省くと青いUI矩形が白、textureを省くとPNGの赤象限が白、input.colorを省くとcyanの代替画像矩形が白でした。ログは`build/native-validation/shader-binding-negative-controls/{ignore-slot0,ignore-slot63,ignore-texture,ignore-color}.log`です。これは既存機能の検査能力を確認するための失敗実行で、Runtimeの不具合によるREDを記録したものではありません。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0で両構成をビルドし、全CTestを実行しました。
+
+```powershell
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+```
+
+Releaseは全37/37件成功、追加画像検査1.29秒、全体41.30秒でした。Debugも全37/37件成功、追加画像検査1.43秒、全体44.33秒でした。SDK consumerを含む配布物検査も両構成で成功しています。ログは`build/native-validation/shader-binding-{release,debug}-final-{build,tests}.log`です。Debugの画像取得はInfoQueue取得成功を必須とする既存経路で行っています。GPU-based validationは有効化していません。取得6画像はRelease/Debug間でbyte単位に一致しました。
+
+独立レビュー後にコメントだけを整え、両構成の検査用targetを再ビルドして画像検査を再実行しました。Release 1.30秒、Debug 1.40秒で成功し、ログは`shader-binding-{release,debug}-{comments-build,focused-final}.log`です。ガイドのC++サンプルもv142の構文検査が成功しました。ROADMAPの検証状況は最新結果へ整理し、過去の各実行の詳細は本ログへ残しています。
+
+検査用HLSLのartifactはCMakeがbuildフォルダーに生成し、取得用DLL・実行fixture・Python・入力PNGとともにRuntime SDKへinstallしません。ユーザー向け文書には取得RGBを変更せずPNGとして掲載しました。全64slot・4096件上限、独自shaderの半透明と3D深度検査、モデル描画、GPU負荷、全面画像の画質、他GPUは別の検証範囲です。

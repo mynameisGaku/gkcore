@@ -48,7 +48,7 @@ PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めま�
 
 ## カスタムシェーダー
 
-HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で shader を使う GPU smoke を確認しています。smoke は API 戻り値と Present を検査し、画素出力や見た目は判定していません。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
+HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で shader を使う GPU smoke を確認しています。smokeはAPI戻り値とPresentを検査します。別の実GPU画像テストでは、定数slot 0と63、描画ごとの値の保持、PNGのScene/UI描画と6フレームの更新を確認しました。全面画像の画質判定ではありません。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
 
 ## 開発環境
 

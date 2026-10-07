@@ -585,6 +585,22 @@ if(GKCORE_BUILD_RUNTIME)
             target_compile_features(gkcore_image_lifetime_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_image_lifetime_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_image_lifetime_capture_tests)
+            # 定数と画像の検査用shaderは開発用buildにだけ出力する。
+            set(_gkcore_binding_shader "${CMAKE_CURRENT_BINARY_DIR}/shader-binding-fixture/gkcore_binding_capture.frag")
+            add_custom_command(OUTPUT "${_gkcore_binding_shader}"
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_pixel_shader.py
+                    --dxc-root "${GKCORE_DXC_ROOT}"
+                    --input ${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/shaders/gkcore_binding_capture.hlsl
+                    --output "${_gkcore_binding_shader}"
+                DEPENDS tests/assets/shaders/gkcore_binding_capture.hlsl include/gkcore/Shader.hlsl
+                    tools/compile_pixel_shader.py tools/verify_dxc.py cmake/dxc-lock.json
+                VERBATIM)
+            add_custom_target(gkcore_shader_binding_fixture DEPENDS "${_gkcore_binding_shader}")
+            add_executable(gkcore_shader_binding_capture_tests tests/shader_binding_capture_tests.cpp)
+            target_compile_features(gkcore_shader_binding_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_shader_binding_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_shader_binding_capture_tests)
+            add_dependencies(gkcore_shader_binding_capture_tests gkcore_shader_binding_fixture)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -608,6 +624,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --executable $<TARGET_FILE:gkcore_image_lifetime_capture_tests>
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/image-lifetime-captures/$<CONFIG>)
             set_tests_properties(gkcore.image_lifetime_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.shader_binding_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/shader_binding_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_shader_binding_capture_tests>
+                    --shader "${_gkcore_binding_shader}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/shader-binding-captures/$<CONFIG>)
+            set_tests_properties(gkcore.shader_binding_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -650,6 +672,10 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     if(TARGET gkcore_image_lifetime_capture_tests)
         add_dependencies(gkcore_image_lifetime_capture_tests gkcore_stage_runtime_payload)
+    endif()
+
+    if(TARGET gkcore_shader_binding_capture_tests)
+        add_dependencies(gkcore_shader_binding_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

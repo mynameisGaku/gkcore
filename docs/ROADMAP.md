@@ -15,23 +15,19 @@
 
 ## テストと再現性
 
-2026-10-05、Windows 11 Pro x64 (build 26200)、Visual Studio 18 2026 / v142 14.29 (MSVC 19.29.30159)、Windows SDK 10.0.22621.0、CMake 4.3.1、GeForce RTX 4070 SUPERで、最終`PRE_SETUP.bat --gpu-check`が成功しRelease RuntimeとCTest 32/32を確認しました。GPU smokeは2.46秒、5 mode画素検査は5.95秒、install済みSDK consumer GPU smokeは3.77秒、合計15.05秒です。CPU RuntimeOFFのDebug/Release CTestは同じPCで各27/27成功しましたが、MSVC 19.51.36260.0とWindows SDK 10.0.28000.0を使った別toolchainでの検証です。標準consumer GPU smokeはInit、描画、Present、Shutdownまで成功しました。詳細は[TDD 検証ログ](TDD_LOG.md)と[GPU描画検証](render-validation.md)を参照してください。
+2026-10-07、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各37/37件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
 
-FSL artifact の検査テストは `python3 tests/shader_contract_tests.py` で実行します。固定した The Forge の D3D12 adapter 検索はsoftware adapterを除外するため、WARPは利用できません。GPU画素読み戻しとサンプルの目視は実施済みですが、検査は固定位置・色・領域閾値による回帰判定です。全面画像の画質acceptance、すべてのモデル形式の実機表示、他GPU、全入力操作の網羅、GPU-based validation、再配布条件の最終確認は未実施です。
+RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各28/28件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
 
-見た目の回帰検査では Windows GPU ごとに基準画像を用意する方針です。同じ GPU、driver、画像で、RGB のいずれかが 2/255 を超えて異なる画素の割合を 1% 以下、RGB 全 channel の平均絶対誤差を 2/255 以下にします。GPU が異なる画像同士は比較しません。
+GPU画像検査は基本描画・モデル照明、6フレームの効果切り替え、多数の矩形を123フレーム描いた後の出力、各ポストエフェクトの個別設定を扱います。[効果の実画像](effects.md)も掲載しています。透明画像の合成・拡大・回転と、描画登録後のhandle削除も確認し、132フレームで396画像を読み直してcacheの128枠を超えた後の表示を検査しました。[画像ガイド](images.md)を参照してください。256MiBのbyte上限や転送失敗時のcleanupは未検証です。
 
-初学者向け導入の確認は未実施です。C++ の基礎があり Visual Studio を導入済みの学生 3 名のうち 2 名以上が、日本語 1 ページの手引きを使い、30 分以内に最初の画像付きサンプルを起動できることを出荷時の目標とします。確認結果は出荷前に記録します。
+独自shaderは定数slot 0と63、登録時の値の保持、2種類のPNGのScene/UI描画、画像なしの描画色、6フレームの更新、使用中shaderの削除拒否を画像とAPIの両方で検査しました。取得6画像はRelease/Debug間でbyte単位に一致しました。[カスタムシェーダー](custom-shader.md)に実画像を掲載しています。全64slotや4096件上限、独自shaderの半透明・3D深度検査はGPUで確認していません。
 
-2026-10-07には、同じアプリで6フレームのポスト効果切り替えとUIの色維持を確認しました。取得枚数の既定値と上限、不正値の拒否も検査し、更新後のRelease全CTestは32/32件成功しています。フレームごとにGPUの完了を待って取得するため、高負荷時のちらつきや同時実行の競合は別に検証します。
+FSL artifactは`python tests/shader_contract_tests.py`で検査します。固定したThe ForgeのD3D12 adapter検索はsoftware adapterを除外するため、WARPは利用できません。GPU画像は固定位置・色・領域による回帰判定です。全面画像の画質、連続フレームすべてのちらつき、GPU負荷と目標FPS、全モデル形式、全入力操作、他GPU、GPU-based validation、再配布条件の最終確認は未実施です。実行手順は[描画検証](render-validation.md)、詳しい結果は[TDD検証ログ](TDD_LOG.md)を参照してください。
 
-2026-10-07の追加確認で、Release全CTestは34/34、RuntimeOFFのCPU Debug/Releaseは各28/28成功しました。キー押下の保持を追加し、輪郭サンプルのSpace切り替えとEscape終了を実際に確認しました。連続描画テストは123フレームを実行し、フレーム119・120の画像を読み戻します。詳細は[キー入力](input.md)と[描画検証](render-validation.md)を参照してください。
+見た目の回帰検査ではWindows GPUごとに基準画像を用意する方針です。同じGPU、driver、画像で、RGBのいずれかが2/255を超えて異なる画素の割合を1%以下、RGB全channelの平均絶対誤差を2/255以下にします。GPUが異なる画像同士は比較しません。
 
-公開47キーの固定した期待値と、仮想キー256個すべての押下・反復・消去をCPUテストで確認しました。RuntimeのDebug構成も標準セットアップからビルドし、Debug LayerのInfoQueueが有効な状態で全34テストが成功しました。Releaseも全34テストが成功し、同じGPU・driverで取得した11枚の画像はbyte単位で一致しました。DebugとReleaseのForgeライブラリ・Runtime出力は別フォルダーへ保存します。GPU-based validationと全キーの実操作は未確認です。
-
-効果別の追加GPUテストで、露出・トーンマッピング・彩度・コントラスト・Bloom・FXAAの個別設定、2つの不透明なUI領域の維持、BeginFrame時の設定保持を確認しました。Release/Debugの全CTestは各35/35件成功し、効果別の計14画像は同じGPUとdriverでbyte単位で一致しました。[実際の効果画像](effects.md)を参照してください。
-
-画像の追加GPU検査で、透明度0・64・128・255のUI合成、1×1画像の拡大、90度回転、描画登録後のhandle削除と古いhandle拒否を確認しました。132フレームで396個の画像を順次読み直し、cacheの128枠を超えた後の2画像も保持されました。Release/Debugの全CTestは各36/36件成功し、取得4画像はbyte単位で一致しています。[画像の使い方と実際の画像](images.md)を参照してください。これはcache枠の入れ替え確認で、256MiBのbyte上限や転送失敗時のcleanupを検証した結果ではありません。
+初学者向け導入の確認は未実施です。C++の基礎がありVisual Studioを導入済みの学生3名のうち2名以上が、日本語1ページの手引きを使い、30分以内に最初の画像付きサンプルを起動できることを出荷時の目標とします。
 
 ## 次に進める内容
 
