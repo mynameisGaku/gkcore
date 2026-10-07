@@ -166,6 +166,10 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
         missing.append("gNormalTexture at t2")
     if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs3\b", resource_section, re.IGNORECASE):
         missing.append("gImageSampler in the ModelTextureResources persistent set")
+    if not re.search(r"\bgMetallicRoughnessSampler\s+sampler\b[^\n]*\bs4\b", resource_section, re.IGNORECASE):
+        missing.append("gMetallicRoughnessSampler at s4")
+    if not re.search(r"\bgNormalSampler\s+sampler\b[^\n]*\bs5\b", resource_section, re.IGNORECASE):
+        missing.append("gNormalSampler at s5")
     if not re.search(r"\bgModelLighting\s+cbuffer\b[^\n]*\bcb0,space1\b", resource_section, re.IGNORECASE):
         missing.append("LightingConstants at b0, space1")
     buffer_section = _section(dump, "Buffer Definitions:", "Resource Bindings:")
@@ -345,6 +349,8 @@ class ShaderReflectionTests(unittest.TestCase):
 ; gMetallicRoughnessTexture texture f32 2d 1 T1 t1 1
 ; gNormalTexture texture f32 2d 2 T2 t2 1
 ; gImageSampler sampler NA NA 0 S0 s3 1
+; gMetallicRoughnessSampler sampler NA NA 1 S1 s4 1
+; gNormalSampler sampler NA NA 2 S2 s5 1
 ; gModelLighting cbuffer NA NA NA CB0 cb0,space1 1
 """
         validate_model_pixel_shader_reflection(good, "gkcore_model.frag")
@@ -359,6 +365,12 @@ class ShaderReflectionTests(unittest.TestCase):
             validate_model_pixel_shader_reflection(good.replace("; TEXCOORD 6 xyzw 8 NONE float xyzw\n", ""), "no-tangent.frag")
         with self.assertRaisesRegex(ShaderContractError, "gNormalTexture"):
             validate_model_pixel_shader_reflection(good.replace("; gNormalTexture texture f32 2d 2 T2 t2 1\n", ""), "no-normal.frag")
+
+        # 役割別samplerを共用bindingに退行させない。
+        with self.assertRaisesRegex(ShaderContractError, "gMetallicRoughnessSampler"):
+            validate_model_pixel_shader_reflection(good.replace("; gMetallicRoughnessSampler sampler NA NA 1 S1 s4 1\n", ""), "shared-sampler.frag")
+        with self.assertRaisesRegex(ShaderContractError, "gNormalSampler"):
+            validate_model_pixel_shader_reflection(good.replace("; gNormalSampler sampler NA NA 2 S2 s5 1\n", ""), "shared-sampler.frag")
 
     def test_rejects_model_reflection_without_lighting_abi(self):
         with self.assertRaisesRegex(ShaderContractError, "LightingConstants at b0, space1"):

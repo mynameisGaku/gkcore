@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各45/45件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像と画像共有の38画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各47/47件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像と画像共有の38画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。ReleaseとDebugの実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -49,7 +49,7 @@ PRE_SETUP.bat --configuration Debug --gpu-check
 
 Visual Studio用CMakeを直接実行する場合も、Debug rootは`CMAKE_CONFIGURATION_TYPES=Debug`だけ、Release rootは`CMAKE_CONFIGURATION_TYPES=Release`だけにし、同じ構成のThe Forge buildを`GKCORE_FORGE_BUILD_DIR`へ指定します。DebugとReleaseを同じrootへ混在させると、Debug専用のSDK Layers配置条件が成立しません。`PRE_SETUP.bat`は構成ごとにrootと依存buildを分けてこの条件を設定します。
 
-2026-10-05に`PRE_SETUP.bat --gpu-check`を再実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプル、全CTest 32/32が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。GPU smokeは2.46秒、5 modeの画素検査は5.95秒、SDK consumer GPU smokeは3.77秒、全体は15.05秒でした。最終ログは`build/native-validation/pre-setup-render-final.log`です。
+2026-10-05に`PRE_SETUP.bat --gpu-check`を再実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプル、全CTest 33/33が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。GPU smokeは2.46秒、5 modeの画素検査は5.95秒、SDK consumer GPU smokeは3.77秒、全体は15.05秒でした。最終ログは`build/native-validation/pre-setup-render-final.log`です。
 
 `gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。2026-10-07の追加検証では、同一アプリ内の6フレームを取得してポスト効果の有効・無効切り替えとUIの色維持も確認しました。Release全CTestは34/34件成功しています。ログは`build/native-validation/input-stress-final-{build,tests}.log`です。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
 
@@ -120,4 +120,4 @@ Runtimeへ配布するFSL出力はbinding名などの照合情報を削ります
 python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
 ```
 
-このツールは既存のFSLビルド機構と固定コンパイラーを使い、開発用buildフォルダーから`gkcore_model.vert`と`gkcore_model.frag`だけを検査用assetsへ保存します。追加された材質データは内部の頂点配置を120byteにし、vertex inputのTEXCOORD3とpixel inputのTEXCOORD4へ2成分のアルファ抜き情報、vertex inputのTEXCOORD4とpixel inputのTEXCOORD5へ材質画像のUVを渡します。法線マップにはvertex inputのTANGENT0、TEXCOORD5/6から接線・独立UV・有効値とscaleを渡し、pixel inputはTEXCOORD6/7/8です。DXCが2成分をregisterのxy/zwへ詰める場合も成分数と使用箇所を照合します。画像bindingは基本色t0、MR t1、法線t2、sampler s3です。公開カスタムshaderの入力は変更していません。
+このツールは既存のFSLビルド機構と固定コンパイラーを使い、開発用buildフォルダーから`gkcore_model.vert`と`gkcore_model.frag`だけを検査用assetsへ保存します。追加された材質データは内部の頂点配置を120byteにし、vertex inputのTEXCOORD3とpixel inputのTEXCOORD4へ2成分のアルファ抜き情報、vertex inputのTEXCOORD4とpixel inputのTEXCOORD5へ材質画像のUVを渡します。法線マップにはvertex inputのTANGENT0、TEXCOORD5/6から接線・独立UV・有効値とscaleを渡し、pixel inputはTEXCOORD6/7/8です。DXCが2成分をregisterのxy/zwへ詰める場合も成分数と使用箇所を照合します。画像bindingは基本色t0、MR t1、法線t2、基本色sampler s3、MR sampler s4、法線sampler s5です。公開カスタムshaderの入力は変更していません。

@@ -838,3 +838,36 @@ textureがsource imageとsamplerを参照する定義は [glTF Texture Data](htt
 
 
 Debugも全45/45成功（158.93秒、normal GPU画像50.83秒、package3.99秒）しました。ログは `model-image-alias-debug-{build,tests}.log` です。最終38枚のPPMはRelease/Debug間でbyte単位に一致し、文書の画像は取得RGBのままPNGへ保存しました。固定clang-format12による変更C++3ファイルの書式検査、BOM/CRLF、ローカル文書リンクと差分検査も通りました。最終の文書整理後もC++の機能要素hashはレビュー時と同じです。
+
+
+## GLBの役割別samplerと縮小・拡大filter
+
+2026-10-08に、GLBのsampler指定を標準のモデル描画へ反映しました。先行CPU契約は36状態の一意なindexと不正enumの出力維持でREDになり、純関数実装後は旧loaderの省略samplerがRepeatにならないmetadata契約でREDを確認しました。GPUの変更前は `sampler-wrap-repeat` の45,000画素が参照からRGB差2超・最大128で失敗しました。旧pixel reflectionも追加sampler s4/s5不足で失敗しました。ログは `build/native-validation/model-sampler-value-red-*`、`model-sampler-gpu-red-*`、`model-sampler-reflection-red-tests.log` です。
+
+画像共有はimage recordと色形式のまま保ち、基本色・MR・法線のsamplerを独立して材質、描画計画、run、descriptorへ渡します。材質の重複除去、runの結合、model descriptorのcache key/Bind検索は全3設定を含みます。36状態のGPU samplerは既存TextureCacheが遅延生成し、画像descriptorを解放した後にcache終了時だけ解放します。別subsystemやRuntime用の独自containerは追加しません。
+
+新しいmin fixtureの平面中心UVはpixel(320.5,240.5)に一致していなかったため、camera・60度視野・viewportから逆投影してUVを補償しました。これはテストの座標誤りの修正です。minは約16 texel/pixelの縮小、magは一定UVの拡大として、min/magの値を互いに反対に指定します。期待色はPNGの画素を線形RGBで補間して材質係数へ焼き込む参照で、照明shader式は複製しません。
+
+最初の統合GPU検査ではmin=NEAREST/mag=LINEARでも中心画素が(125,118,255)となり、期待(128,64,255)に一致しませんでした。固定ForgeのDirect3D12実装はMipMapMode NEARESTかつ明示範囲なしではmaxLOD=0とするため、縮小が拡大filterで処理されていました。gkcore側でmSetLodRange=true/minLOD=0/maxLOD=FLT_MAXを指定し、画像の1 mipを維持したままfilter選択を分離しました。修正後の4ケースはmag nearest/linearが全モデル領域一致、min nearest中心(128,64,255)、min linear中心(125,118,255)が参照と一致しました。`model-sampler-focused-tests.log`がRED、`model-sampler-lod/results.json`が修正後の根拠です。依存ソースには変更していません。
+
+sampler省略時のGLBはRepeat/Linear、非GLBの既存値型とnullptr引数はClamp/Linearを維持します。minの9984〜9987はミップ生成がない場合のglTF推奨fallbackへ変換します。独自pixel shader、Sprite/2D画像の既存sampler ABIは変更せず、標準モデルの内部bindingだけを3texture/3samplerへ拡張しました。内部vertexは120byteのままです。
+
+
+最終検証はRelease全47/47（196.05秒、sampler GPU39.85秒）とDebug全47/47（204.14秒、sampler GPU43.94秒）が成功しました。SDKだけでビルドしたconsumerのInit・描画・Present・Shutdownを含むpackage検査も両構成で成功（3.77秒・3.93秒）。ログは `build/native-validation/model-sampler-{release,debug}-{build,tests}.log` です。Windows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026 / v142 14.29.30133 (MSVC19.29.30159)、SDK10.0.22621.0、CMake4.3.1で実行しています。Debug取得はD3D12 InfoQueue必須の経路です。
+
+RuntimeOFFはMSVC19.51 / SDK10.0.28000.0のDebug・Releaseで各33/33成功（3.36秒・3.18秒）、`model-sampler-cpu-{debug,release}-{build,tests}.log` に記録しました。固定13shaderと検査用metadata付き2shaderを生成し、vertex/pixel reflectionが成功しました。新規CPU sampler契約は36状態全ての一意性、役割別metadata、同一画像と違うsamplerの材質保持、6 min-filter値のfallback、不正値/参照とplan出力保持を確認しています。
+
+samplerの34画像はRelease/Debug間でbyte単位一致し、既存normal/画像共有38画像も一致しました。wrapの8actual/referenceはモデル領域一致、同じ画像/別sampler材質のScene/UIとstress2枚は全モデル領域一致、3役割のPBR samplerはRGB最大差1、mag2設定は全モデル領域一致、min2設定は中心画素一致です。別設定間の明確な画素差も要求し、samplerの設定を無視してテストを通せない条件にしています。文書のPNGは取得RGBを変えずに保存しました。
+
+独立レビューでsource samplerの参照範囲と値・既定値、材質統合/planの原子的更新、sampler別run/cache/Bind key、3texture+3samplerのSRTとshader、36 sampler資源のownerと終了順、fixture座標・期待値を確認しました。LOD修正は固定Forgeの実装とGPU REDの両方から確認し、依存物にパッチを当てていません。ミップ生成、他GPU、GPU-based validation、device loss復旧、全面画質は未対応・未検証の範囲として扱います。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```

@@ -1,6 +1,7 @@
 ﻿#include "ModelDrawPlan.h"
 
 #include <float.h>
+#include "../resources/TextureSampler.h"
 
 /**
  * 静的modelのprimitiveを検証し、材質を描画用記録へ変換する。
@@ -57,7 +58,7 @@ bool IsMaterialValid(const detail::ModelMaterial& material)
         if (!IsUnitFactor(material.baseColorFactor[i]))
             return false;
     }
-    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale);
+    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler);
 }
 
 // namespace
@@ -126,6 +127,9 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
             part.alphaMask = material.alphaMask;
             part.alphaCutoff = material.alphaCutoff;
             part.normalScale = material.normalScale;
+            part.baseColorSampler = material.baseColorSampler;
+            part.metallicRoughnessSampler = material.metallicRoughnessSampler;
+            part.normalSampler = material.normalSampler;
             if (material.metallicRoughnessTextureIndex != -1)
             {
                 if (material.metallicRoughnessTextureIndex < 0 || static_cast<uint32_t>(material.metallicRoughnessTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.metallicRoughnessTextureIndex)))

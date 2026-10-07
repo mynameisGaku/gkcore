@@ -1,6 +1,7 @@
 ﻿#include "GlbLoader.h"
 #include "../image/ImageLoader.h"
 #include "../foundation/Memory.h"
+#include "../resources/TextureSampler.h"
 #include "../../third_party/cgltf/cgltf.h"
 #include <math.h>
 #include <stdint.h>
@@ -52,6 +53,95 @@ bool FindArrayIndex(const void* array, cgltf_size count, size_t elementSize, con
         return false;
     if (index)
         *index = (elementAddress - arrayStart) / elementSize;
+    return true;
+}
+
+/**
+ * glTFのfilter値を固定36状態で使うnearest/linearへ変換する。
+ * 未対応値では出力を変えず失敗する。
+ */
+bool ReadSamplerFilter(cgltf_filter_type source, bool minification, ETextureFilter& output)
+{
+    // sampler省略時と同じ線形補間を初期値にする。
+    ETextureFilter filter = ETextureFilter::Linear;
+    if (source == cgltf_filter_type_undefined)
+    {
+        output = filter;
+        return true;
+    }
+    if (source == cgltf_filter_type_nearest || (minification && (source == cgltf_filter_type_nearest_mipmap_nearest || source == cgltf_filter_type_nearest_mipmap_linear)))
+        filter = ETextureFilter::Nearest;
+    else if (source != cgltf_filter_type_linear && !(minification && (source == cgltf_filter_type_linear_mipmap_nearest || source == cgltf_filter_type_linear_mipmap_linear)))
+        return false;
+    output = filter;
+    return true;
+}
+
+/**
+ * texture viewが参照するaddress/filter値を材質用samplerへ読み込む。
+ * 配列外参照や未対応enumでは診断を返し、出力を維持する。
+ */
+bool ReadTextureSampler(cgltf_data* data, const cgltf_texture_view& view, const char* role, FTextureSampler& output, String& error)
+{
+    if (!FindArrayIndex(data->textures, data->textures_count, sizeof(cgltf_texture), view.texture, nullptr))
+    {
+        error.Assign(role);
+        error.Append(" texture reference is invalid");
+        return false;
+    }
+    // glTFでsamplerが省略されたtexture viewの標準値。
+    FTextureSampler sampler{};
+    sampler.addressU = ETextureAddressMode::Repeat;
+    sampler.addressV = ETextureAddressMode::Repeat;
+    if (view.texture->sampler)
+    {
+        // textureが参照するsampler recordを配列内で検証する。
+        const cgltf_sampler* source = view.texture->sampler;
+        if (!FindArrayIndex(data->samplers, data->samplers_count, sizeof(cgltf_sampler), source, nullptr))
+        {
+            error.Assign(role);
+            error.Append(" sampler reference is invalid");
+            return false;
+        }
+        // S/Tのwrap値を固定address modeへ変換する。
+        if (source->wrap_s == cgltf_wrap_mode_clamp_to_edge)
+            sampler.addressU = ETextureAddressMode::ClampToEdge;
+        else if (source->wrap_s == cgltf_wrap_mode_repeat)
+            sampler.addressU = ETextureAddressMode::Repeat;
+        else if (source->wrap_s == cgltf_wrap_mode_mirrored_repeat)
+            sampler.addressU = ETextureAddressMode::MirroredRepeat;
+        else
+        {
+            error.Assign(role);
+            error.Append(" sampler wrapS value is unsupported");
+            return false;
+        }
+        if (source->wrap_t == cgltf_wrap_mode_clamp_to_edge)
+            sampler.addressV = ETextureAddressMode::ClampToEdge;
+        else if (source->wrap_t == cgltf_wrap_mode_repeat)
+            sampler.addressV = ETextureAddressMode::Repeat;
+        else if (source->wrap_t == cgltf_wrap_mode_mirrored_repeat)
+            sampler.addressV = ETextureAddressMode::MirroredRepeat;
+        else
+        {
+            error.Assign(role);
+            error.Append(" sampler wrapT value is unsupported");
+            return false;
+        }
+        if (!ReadSamplerFilter(source->min_filter, true, sampler.minFilter))
+        {
+            error.Assign(role);
+            error.Append(" sampler minFilter value is unsupported");
+            return false;
+        }
+        if (!ReadSamplerFilter(source->mag_filter, false, sampler.magFilter))
+        {
+            error.Assign(role);
+            error.Append(" sampler magFilter value is unsupported");
+            return false;
+        }
+    }
+    output = sampler;
     return true;
 }
 
@@ -292,12 +382,16 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         material.roughnessFactor = pbr.roughness_factor;
         if (pbr.base_color_texture.texture)
         {
+            if (!ReadTextureSampler(data, pbr.base_color_texture, "GLB base-color", material.baseColorSampler, error))
+                return -1;
             material.baseColorTextureIndex = AddTexture(data, pbr.base_color_texture, "GLB base-color", model, imageMap, error);
             if (material.baseColorTextureIndex < 0)
                 return -1;
         }
         if (pbr.metallic_roughness_texture.texture)
         {
+            if (!ReadTextureSampler(data, pbr.metallic_roughness_texture, "GLB metallic-roughness", material.metallicRoughnessSampler, error))
+                return -1;
             material.metallicRoughnessTextureIndex = AddTexture(data, pbr.metallic_roughness_texture, "GLB metallic-roughness", model, imageMap, error);
             if (material.metallicRoughnessTextureIndex < 0)
                 return -1;
@@ -305,6 +399,8 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
     }
     if (source && source->normal_texture.texture)
     {
+        if (!ReadTextureSampler(data, source->normal_texture, "GLB normal", material.normalSampler, error))
+            return -1;
         // normal textureへ掛ける有限scale値。
         if (!IsFinite(source->normal_texture.scale))
         {
@@ -322,7 +418,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff;
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff && AreTextureSamplersEqual(existing.baseColorSampler, material.baseColorSampler) && AreTextureSamplersEqual(existing.metallicRoughnessSampler, material.metallicRoughnessSampler) && AreTextureSamplersEqual(existing.normalSampler, material.normalSampler);
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];
@@ -744,9 +840,9 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
             error.Assign("GLB must be valid version 2.0 with one embedded static buffer");
         goto finish;
     }
-    if (data->textures_count > maxSourceValues || data->images_count > maxSourceValues || data->nodes_count > maxSourceValues || data->meshes_count > maxSourceValues)
+    if (data->textures_count > maxSourceValues || data->samplers_count > maxSourceValues || data->images_count > maxSourceValues || data->nodes_count > maxSourceValues || data->meshes_count > maxSourceValues)
     {
-        error.Assign("GLB contains too many textures, images, nodes, or meshes");
+        error.Assign("GLB contains too many textures, samplers, images, nodes, or meshes");
         goto finish;
     }
     if (data->images_count)

@@ -73,7 +73,7 @@ int main() {
 - 一様な環境光とワールド空間の方向光を簡単な設定で調整できる。初期値でも GLB モデルの面の向きと丸みを認識できる。
 - `SetAmbientLight(float)` は有限な `[0, 4]` を受け付け、初期値を `0.2` とする。`SetDirectionalLight(Vec3, float)` は有限な非ゼロ方向と有限な `[0, 16]` 強度を受け付け、方向を内部で正規化し、既定強度を `3.0` とする。方向は光がワールド空間を進む向きを表す。
 - 照明値は `BeginFrame()` ごとに取り込まれ、`Shutdown()` 後に初期値へ戻る。無効値で以前の有効値を変更しない。
-- モデル専用材質shaderはGLBの基本色係数・画像と、metallic / roughnessの係数・画像を使う。基本色はsRGB、金属度・粗さの画像は線形値で扱い、Gの粗さ・Bの金属度へ材質係数を掛ける。各画像のUV指定は独立して保持する。明示NORMAL/TANGENTを持つモデルのnormalTextureはRGBを線形接線法線へ展開し、scaleをXYへ掛け、node/runtime鏡映の向きを保持する。拡散反射は Lambert、直接光の鏡面反射は GGX 分布、Fresnel、Smith masking-shadowing を使う。均一な環境光は簡易な Lambert 寄与とし、環境マップとは区別する。
+- モデル専用材質shaderはGLBの基本色係数・画像と、metallic / roughnessの係数・画像を使う。基本色はsRGB、金属度・粗さの画像は線形値で扱い、Gの粗さ・Bの金属度へ材質係数を掛ける。各画像のUV指定とsamplerを独立して保持する。標準GLBモデルはRepeat/MirroredRepeat/ClampToEdgeとNearest/Linearの拡大・縮小補間に対応し、ミップ指定は1段画像用のfallbackへ変換する。明示NORMAL/TANGENTを持つモデルのnormalTextureはRGBを線形接線法線へ展開し、scaleをXYへ掛け、node/runtime鏡映の向きを保持する。拡散反射は Lambert、直接光の鏡面反射は GGX 分布、Fresnel、Smith masking-shadowing を使う。均一な環境光は簡易な Lambert 寄与とし、環境マップとは区別する。
 - 頂点法線はワールド変換の逆転置で変換し正規化する。法線がない三角形には面法線を使い、退化面には不正な法線を生成しない。
 - 2D 図形・画像・文字と公開カスタム pixel shader は従来どおり unlit で描画する。モデルは UI 層でも材質照明を使い、UI 合成位置に従う。モデル材質用公開 shader ABI は別途固定する。
 - GLBの標準材質はOPAQUEとMASKに対応する。MASKでは画像のアルファと基本色のアルファ係数を掛け、alphaCutoff未満の画素を破棄して色と深度を更新しない。境界値と等しい画素は残す。BLENDは未対応として読み込み時に診断を返す。

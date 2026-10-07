@@ -88,7 +88,7 @@ UV0では、画像の赤・緑・青・白の四隅がモデルの各頂点側�
 
 UV1では左右が反転し、指定されたUVセットが切り替わったことを確認できます。GPU検査の設定と実行範囲は[描画検証](render-validation.md)を参照してください。
 
-GLBの画像は埋め込みPNGに対応します。外部画像、UV sparse、`KHR_texture_transform`は未対応です。GLBの基本色画像のRGBはsRGB、材質係数・MR画像・法線画像は線形値として扱います。画像は端の色で固定して描き、samplerの繰り返し・鏡映指定は反映しません。
+GLBの画像は埋め込みPNGに対応します。外部画像、UV sparse、`KHR_texture_transform`は未対応です。GLBの基本色画像のRGBはsRGB、材質係数・MR画像・法線画像は線形値として扱います。標準のモデル描画では、textureごとのsamplerで繰り返し・鏡映・端で固定する指定を反映します。
 
 ## GLB の metallic-roughness 画像
 
@@ -119,11 +119,42 @@ ctest --test-dir build/runtime-windows -C Release -R gkcore.model_material --out
 ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material --output-on-failure
 ```
 
+## GLBのsampler設定
+
+標準のモデル描画は、基本色・金属度/粗さ・法線の画像をそれぞれのsamplerで参照します。`wrapS` は横方向、`wrapT` は縦方向のUVが範囲外に出たときの扱いです。
+
+| 指定 | 値 | 範囲外の座標 |
+|---|---|---|
+| REPEAT | 10497 | 同じ画像を繰り返す |
+| MIRRORED_REPEAT | 33648 | 1区間ごとに向きを反転して繰り返す |
+| CLAMP_TO_EDGE | 33071 | 画像の端の色で固定する |
+
+samplerまたはwrap指定を省略したGLBは、両方向ともREPEATになります。たとえば `(-0.25, 1.75)` はREPEATでは `(0.75, 0.75)`、MIRRORED_REPEATでは `(0.25, 0.25)` を読みます。横と縦へ別々の設定も使えます。
+
+`magFilter` は拡大、`minFilter` は縮小の補間方法です。NEAREST（9728）は近い画素をそのまま読み、LINEAR（9729）は隣接画素を混ぜます。未指定時はLINEARを使います。現在の画像は1段だけで、ミップマップ（縮小画像を段階的に用意したもの）は生成しません。ミップ指定のminFilterはNEAREST_MIPMAP_NEAREST / NEAREST_MIPMAP_LINEARをNEARESTへ、LINEAR_MIPMAP_NEAREST / LINEAR_MIPMAP_LINEARをLINEARへ置き換えます。これは [glTFのミップ未生成時の推奨](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_samplers) に従います。
+
+同じ画像でも、samplerが違う材質は別々に描きます。画像のGPU資源は画像と色形式で共有し、samplerが違うためにPNGを複製することはありません。公開の独自pixel shaderを選んだモデル、FBX/OBJ、2D画像は従来の固定samplerを使います。独自shaderの入力形式は変更していません。
+
+![REPEATで範囲外UVから参照した画像](images/model-sampler-repeat.png)
+
+![MIRRORED_REPEATで同じUVから参照した画像](images/model-sampler-mirror.png)
+
+![同じ画像を左右で異なるsamplerから参照した描画](images/model-sampler-mixed.png)
+
+sampler検査はRelease/Debugでbyte一致した34画像を取得し、wrapの8設定と正負の整数端、指定省略時のREPEAT、同じ画像を異なる設定で描く左右の材質、基本色/MR/法線の個別sampler、拡大・縮小の補間を確認します。縮小は中心画素、拡大はモデル領域を参照と比較しています。132回の読み直しとPresent前削除を経た最後の2画像も参照と一致しました。詳しい結果は[描画検証](render-validation.md)を参照してください。
+
+再検査は次で実行します。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R gkcore.model_sampler --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_sampler --output-on-failure
+```
+
 ## 同じ画像を使う材質
 
 GLBの `textures[].source` が同じ `images` 項目を指す場合、別々のtexture indexでもPNGを1回だけ読み込んで共有します。共有範囲は1モデルの読み込み内です。別々に `LoadModel` したモデル間で共有するものではありません。基本色はsRGB、MRと法線は線形値として扱い、必要な色形式だけをGPUへ転送します。
 
-画像の共有はUVの選択とは別に扱います。たとえば基本色・MRはUV0、法線はUV1を選べます。選択先のUV欠損や未対応の座標変換は、画像を再利用できる場合も診断します。別の `images` 項目は、PNGの内容が同じでも別画像として保持します。samplerの繰り返し・鏡映指定に関する現在の制約は変わりません。
+画像の共有はUVの選択とは別に扱います。たとえば基本色・MRはUV0、法線はUV1を選べます。選択先のUV欠損や未対応の座標変換は、画像を再利用できる場合も診断します。別の `images` 項目は、PNGの内容が同じでも別画像として保持します。同じ画像を違うsamplerで参照する場合も、画像は共有し、材質のsamplerは別に保持します。
 
 同じ画像を3種類のtextureから参照するGLBを50回新しく読み込み、同じ位置に重ねて1frameへ描画してから全モデルのhandleをPresent前に削除するケースを検査しています。旧実装は重複したGPU画像が128 entryのcache上限へ達してPresentに失敗しましたが、画像共有後は描画でき、参照画像と全画素一致しました。描画資源の保持とGLB内の画像参照共有を検査するもので、GPU性能は測定していません。
 

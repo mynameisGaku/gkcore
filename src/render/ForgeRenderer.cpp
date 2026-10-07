@@ -1,4 +1,5 @@
 ﻿#include "ForgeRenderer.h"
+#include "../resources/TextureSampler.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
@@ -435,17 +436,21 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
-    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr) -> bool
+    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* materialSampler = nullptr, const detail::FTextureSampler* surfaceNormalSampler = nullptr) -> bool
     {
         if (count == 0)
             return true;
-        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage;
+        // 各画像のsamplerを値で保持し、描画登録元の寿命から切り離す。
+        const detail::FTextureSampler baseValue = baseSampler ? *baseSampler : detail::FTextureSampler{};
+        const detail::FTextureSampler materialValue = materialSampler ? *materialSampler : detail::FTextureSampler{};
+        const detail::FTextureSampler normalValue = surfaceNormalSampler ? *surfaceNormalSampler : detail::FTextureSampler{};
+        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).baseColorSampler, baseValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).metallicRoughnessSampler, materialValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).normalSampler, normalValue);
         if (canBatch)
         {
             runs_.At(runs_.Count() - 1).count += count;
             return true;
         }
-        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage };
+        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage, baseValue, materialValue, normalValue };
         return runs_.Append(run);
     };
     for (uint32_t layer = 0; layer < 2; ++layer)
@@ -530,7 +535,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                             return SetError(error, "The model texture fallback is unavailable");
                         if (litModel)
                         {
-                            if (!metallicRoughnessImage || !normalImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error, normalImage))
+                            if (!metallicRoughnessImage || !normalImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error, normalImage, &part.baseColorSampler, &part.metallicRoughnessSampler, &part.normalSampler))
                                 return false;
                         }
                         else if (!textureCache_.Prepare(image, error))
@@ -538,7 +543,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     }
                     const bool alphaBlend = customShader && (draw.flags & detail::DrawAlphaBlend) != 0;
                     const bool depthTest = layer == 0;
-                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex, metallicRoughnessImage, normalImage))
+                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex, metallicRoughnessImage, normalImage, litModel ? &part.baseColorSampler : nullptr, litModel ? &part.metallicRoughnessSampler : nullptr, litModel ? &part.normalSampler : nullptr))
                         return SetError(error, "The frame draw-run allocation failed");
                 }
                 if (customShader)
@@ -693,7 +698,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             if (run.textured)
             {
                 // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
-                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage) : textureCache_.Bind(command, run.image, error);
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler) : textureCache_.Bind(command, run.image, error);
                 if (!bound)
                 {
                     endCmd(command);
@@ -770,7 +775,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             if (run.textured)
             {
                 // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
-                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage) : textureCache_.Bind(command, run.image, error);
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler) : textureCache_.Bind(command, run.image, error);
                 if (!bound)
                 {
                     endCmd(command);

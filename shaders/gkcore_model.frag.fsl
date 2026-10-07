@@ -73,7 +73,7 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     if (input.NormalParameters.x > 0.5)
     {
         // RGBを線形値として接線方向へ展開し、alphaは使わない。
-        float3 tangentNormal = SampleTex2D(gNormalTexture, gImageSampler, input.NormalUV).rgb * 2.0 - 1.0;
+        float3 tangentNormal = SampleTex2D(gNormalTexture, gNormalSampler, input.NormalUV).rgb * 2.0 - 1.0;
         tangentNormal.xy *= input.NormalParameters.y;
         tangentNormal = SafeNormalize(tangentNormal, float3(0.0, 0.0, 1.0));
         // 補間した接線を法線へ直交させ、鏡映を第2の接線へ反映する。
@@ -89,7 +89,7 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     const float3 H = SafeNormalize(V + L, N);
     // 材質の金属度を0から1へ収めた値。
     // 材質画像は線形値として読み、RとAは金属度・粗さに使わない。
-    const float4 materialSample = SampleTex2D(gMetallicRoughnessTexture, gImageSampler, input.MetallicRoughnessUV);
+    const float4 materialSample = SampleTex2D(gMetallicRoughnessTexture, gMetallicRoughnessSampler, input.MetallicRoughnessUV);
     const float metallic = saturate(input.MetallicRoughness.x * materialSample.b);
     // 粗さを反射式で使う範囲へ収めた値。
     const float roughness = clamp(input.MetallicRoughness.y * materialSample.g, 0.045, 1.0);

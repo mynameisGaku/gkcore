@@ -67,6 +67,12 @@ struct RenderRun
     detail::ImageResource* metallicRoughnessImage = nullptr;
     // 内蔵モデルで使う法線画像。
     detail::ImageResource* normalImage = nullptr;
+    // 基本色画像の繰り返しと補間方法。
+    detail::FTextureSampler baseColorSampler{};
+    // 金属度・粗さ画像の繰り返しと補間方法。
+    detail::FTextureSampler metallicRoughnessSampler{};
+    // 法線画像の繰り返しと補間方法。
+    detail::FTextureSampler normalSampler{};
 };
 
 /**

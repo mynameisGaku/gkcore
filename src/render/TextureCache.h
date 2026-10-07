@@ -5,6 +5,7 @@
 #if defined(_WIN32) && defined(DIRECT3D12)
 
 #include "../resources/Resources.h"
+#include "../resources/TextureSampler.h"
 #include "ETextureColorSpace.h"
 #include "TextureCachePolicy.h"
 
@@ -18,7 +19,7 @@ namespace gk::render
 {
 
 /**
- * GPUへ転送したtextureとdescriptorを色空間別に管理する。
+ * GPUへ転送したtextureとrole別sampler descriptorを管理する。
  */
 class TextureCache
 {
@@ -40,9 +41,9 @@ class TextureCache
      */
     bool Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace = ETextureColorSpace::Srgb);
     /**
-     * modelの画像tripleを用意する。法線省略時はMR画像を共有し、無効画像・容量超過では失敗する。
+     * model画像とsamplerを用意する。法線省略時はMR画像、sampler省略時はClampLinearを使い、不正指定や容量超過で失敗する。
      */
-    bool PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr);
+    bool PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr);
     /**
      * The Forgeのresource loaderへ画像転送を記録する。
      */
@@ -75,9 +76,9 @@ class TextureCache
      */
     bool Bind(Cmd* command, detail::ImageResource* image, String& error) const;
     /**
-     * frame用に準備済みのモデル画像triple descriptor setをbindし、未準備または無効な指定では失敗する。
+     * frame用に準備済みのモデルdescriptorをbindする。sampler省略時はPrepareModelと同じ値を使い、未準備や不正指定で失敗する。
      */
-    bool BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr) const;
+    bool BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr) const;
 
   private:
     /**
@@ -122,19 +123,28 @@ class TextureCache
         detail::ImageResource* normalImage;
         // 物理cacheが所有するlinear texture。
         Texture* normalTexture;
+        // 3 roleごとのsampler設定。
+        detail::FTextureSampler baseSampler;
+        detail::FTextureSampler metallicRoughnessSampler;
+        detail::FTextureSampler normalSampler;
+        // sampler cacheが所有するrole別descriptor資源。
+        Sampler* baseSamplerResource;
+        Sampler* metallicRoughnessSamplerResource;
+        Sampler* normalSamplerResource;
     };
 
     static constexpr uint32_t kCapacity = 128;
     static constexpr uint32_t kModelCapacity = 128;
+    static constexpr uint32_t kSamplerCapacity = 36;
     static constexpr uint64_t kByteCapacity = 256u * 1024u * 1024u;
     /**
      * 指定画像と色空間のcache記録があれば返す。
      */
     Entry* Find(detail::ImageResource* image, ETextureColorSpace colorSpace);
     /**
-     * 指定画像tripleのmodel descriptor記録があれば返す。
+     * 指定画像とsampler値のmodel descriptor記録があれば返す。
      */
-    ModelEntry* FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage);
+    ModelEntry* FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler);
     /**
      * entry数とbyte上限を守ってslotを確保し、安全な記録だけを追い出す。
      */
@@ -148,9 +158,13 @@ class TextureCache
      */
     bool CreateTexture(Entry& entry, detail::ImageResource* image, ETextureColorSpace colorSpace, String& error);
     /**
-     * 3つの準備済みtextureをmodel shader用descriptorへ登録する。
+     * 準備済みtextureとrole別samplerをmodel shader用descriptorへ登録する。
      */
     bool CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, Entry& normalEntry, String& error);
+    /**
+     * sampler設定に対応する固定cache資源を作るか返す。
+     */
+    bool GetOrCreateModelSampler(const detail::FTextureSampler& settings, Sampler*& sampler, String& error);
     /**
      * 物理textureを参照するmodel descriptorを先に解放する。
      */
@@ -167,6 +181,8 @@ class TextureCache
     Renderer* renderer_ = nullptr;
     Queue* queue_ = nullptr;
     Sampler* sampler_ = nullptr;
+    // GLB model sampler値ごとのGPU資源。
+    Sampler* modelSamplers_[kSamplerCapacity]{};
     Fence* uploadFence_ = nullptr;
     uint64_t clock_ = 0;
     uint64_t frame_ = 0;

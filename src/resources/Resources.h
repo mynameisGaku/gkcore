@@ -6,6 +6,7 @@
 #include "../foundation/Array.h"
 #include "../foundation/RefCount.h"
 #include "../foundation/String.h"
+#include "FTextureSampler.h"
 #include <stdint.h>
 
 /**
@@ -71,6 +72,12 @@ struct ModelMaterial
     int32_t normalTextureIndex = -1;
     // 接線座標の横・縦成分に掛ける倍率。有限値を使う。
     float normalScale = 1.0f;
+    // base color画像の座標処理と補間方法。
+    FTextureSampler baseColorSampler{};
+    // 金属度・粗さ画像の座標処理と補間方法。
+    FTextureSampler metallicRoughnessSampler{};
+    // 法線マップ画像の座標処理と補間方法。
+    FTextureSampler normalSampler{};
 };
 
 /**

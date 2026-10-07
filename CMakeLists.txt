@@ -30,6 +30,7 @@ set(GKCORE_CORE_SOURCES
     src/foundation/String.cpp
     src/foundation/RefCount.cpp
     src/resources/Resources.cpp
+    src/resources/TextureSampler.cpp
     src/resources/ResourceIO.cpp
     src/image/Image.cpp
     src/image/ImageLoader.cpp
@@ -155,6 +156,7 @@ if(GKCORE_BUILD_TESTS)
     add_test(NAME gkcore.fxaa COMMAND gkcore_fxaa_tests)
     add_executable(gkcore_model_draw_plan_tests
         tests/model_draw_plan_tests.cpp
+        src/resources/TextureSampler.cpp
         src/render/ModelDrawPlan.cpp
         src/foundation/Memory.cpp
         src/foundation/Array.cpp
@@ -233,6 +235,7 @@ if(GKCORE_BUILD_TESTS)
         src/foundation/String.cpp
         src/foundation/RefCount.cpp
         src/resources/Resources.cpp
+        src/resources/TextureSampler.cpp
         src/resources/ResourceIO.cpp
         src/image/Image.cpp
         src/image/ImageLoader.cpp
@@ -328,6 +331,25 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_normal_tests)
     add_dependencies(gkcore_model_normal_tests gkcore_model_normal_fixtures)
     add_test(NAME gkcore.model_normal COMMAND gkcore_model_normal_tests "${_gkcore_model_normal_fixture_dir}")
+
+    set(_gkcore_model_sampler_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-sampler-fixtures")
+    set(_gkcore_model_sampler_fixture_files)
+    foreach(_fixture_name IN ITEMS sampler-defaults sampler-explicit sampler-min-fallbacks-a sampler-min-fallbacks-b bad-sampler-wrap bad-sampler-mag bad-sampler-min bad-sampler-reference sampler-wrap-repeat sampler-wrap-repeat-reference sampler-wrap-mirror sampler-wrap-mirror-reference sampler-wrap-clamp sampler-wrap-clamp-reference sampler-wrap-u-repeat-v-clamp sampler-wrap-u-repeat-v-clamp-reference sampler-wrap-u-clamp-v-repeat sampler-wrap-u-clamp-v-repeat-reference sampler-wrap-default-repeat sampler-wrap-default-repeat-reference sampler-wrap-negative-integer sampler-wrap-negative-integer-reference sampler-wrap-positive-integer sampler-wrap-positive-integer-reference sampler-batch-mixed sampler-batch-mixed-reference sampler-role-mixed sampler-role-mixed-reference sampler-mag-nearest sampler-mag-nearest-reference sampler-mag-linear sampler-mag-linear-reference sampler-min-nearest sampler-min-nearest-reference sampler-min-linear sampler-min-linear-reference)
+        list(APPEND _gkcore_model_sampler_fixture_files "${_gkcore_model_sampler_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_sampler_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_sampler_fixtures.py
+            --output-dir "${_gkcore_model_sampler_fixture_dir}"
+        DEPENDS tests/support/model_sampler_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_sampler_fixtures DEPENDS ${_gkcore_model_sampler_fixture_files})
+    add_executable(gkcore_model_sampler_tests tests/model_sampler_tests.cpp ${_gkcore_resource_test_sources}
+        src/render/ModelDrawPlan.cpp src/render/ModelGeometry.cpp src/render/WorldGeometry.cpp src/render/PostProcess.cpp)
+    target_compile_features(gkcore_model_sampler_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_sampler_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_model_sampler_tests)
+    add_dependencies(gkcore_model_sampler_tests gkcore_model_sampler_fixtures)
+    add_test(NAME gkcore.model_sampler COMMAND gkcore_model_sampler_tests "${_gkcore_model_sampler_fixture_dir}")
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
         src/model/FbxGeometry.cpp
@@ -355,7 +377,8 @@ if(GKCORE_BUILD_TESTS)
     target_sources(gkcore_geometry_tests PRIVATE
         src/render/PostProcess.cpp
         src/render/WorldGeometry.cpp
-        src/render/ModelDrawPlan.cpp)
+        src/render/ModelDrawPlan.cpp
+        src/resources/TextureSampler.cpp)
     add_executable(gkcore_texture_cache_policy_tests
         tests/texture_cache_policy_tests.cpp
         src/render/TextureCachePolicy.cpp)
@@ -698,6 +721,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_normal_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_normal_capture_tests)
             add_dependencies(gkcore_model_normal_capture_tests gkcore_model_normal_fixtures)
+            add_executable(gkcore_model_sampler_capture_tests tests/model_sampler_capture_tests.cpp)
+            target_compile_features(gkcore_model_sampler_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_sampler_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_sampler_capture_tests)
+            add_dependencies(gkcore_model_sampler_capture_tests gkcore_model_sampler_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -752,6 +780,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --fixture-dir "${_gkcore_model_normal_fixture_dir}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-normal-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_normal_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_sampler_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_sampler_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_sampler_capture_tests>
+                    --fixture-dir "${_gkcore_model_sampler_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-sampler-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_sampler_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -813,6 +847,9 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     if(TARGET gkcore_model_normal_capture_tests)
         add_dependencies(gkcore_model_normal_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_sampler_capture_tests)
+        add_dependencies(gkcore_model_sampler_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

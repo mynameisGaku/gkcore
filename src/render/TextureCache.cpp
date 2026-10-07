@@ -7,6 +7,7 @@
 #include "../../shaders/gkcore_sprite.srt.h"
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
 
+#include <float.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -75,6 +76,8 @@ void TextureCache::Shutdown()
         renderer_ = nullptr;
         queue_ = nullptr;
         sampler_ = nullptr;
+        for (uint32_t i = 0; i < kSamplerCapacity; ++i)
+            modelSamplers_[i] = nullptr;
         clock_ = 0;
         frame_ = 0;
         cachedBytes_ = 0;
@@ -87,6 +90,12 @@ void TextureCache::Shutdown()
         DestroyModelEntry(modelEntries_[i]);
     for (uint32_t i = 0; i < kCapacity; ++i)
         DestroyEntry(entries_[i]);
+    for (uint32_t i = 0; i < kSamplerCapacity; ++i)
+    {
+        if (renderer_ && modelSamplers_[i])
+            removeSampler(renderer_, modelSamplers_[i]);
+        modelSamplers_[i] = nullptr;
+    }
     if (renderer_ && sampler_)
     {
         removeSampler(renderer_, sampler_);
@@ -133,13 +142,13 @@ TextureCache::Entry* TextureCache::Find(detail::ImageResource* image, ETextureCo
 /**
  * sRGB基本色とlinear金属度・粗さ・法線画像のtripleを検索する。
  */
-TextureCache::ModelEntry* TextureCache::FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage)
+TextureCache::ModelEntry* TextureCache::FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler)
 {
     for (uint32_t i = 0; i < kModelCapacity; ++i)
     {
         // 検索対象の画像triple descriptor。
         ModelEntry& entry = modelEntries_[i];
-        if (entry.baseImage == baseImage && entry.metallicRoughnessImage == metallicRoughnessImage && entry.normalImage == normalImage)
+        if (entry.baseImage == baseImage && entry.metallicRoughnessImage == metallicRoughnessImage && entry.normalImage == normalImage && detail::AreTextureSamplersEqual(entry.baseSampler, baseSampler) && detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, metallicRoughnessSampler) && detail::AreTextureSamplersEqual(entry.normalSampler, normalSampler))
             return &entry;
     }
     return nullptr;
@@ -342,12 +351,20 @@ bool TextureCache::Prepare(detail::ImageResource* image, String& error, ETexture
 /**
  * model画像tripleを登録し、両色空間textureとdescriptorを用意する。
  */
-bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage)
+bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler)
 {
-    if (!baseImage || !metallicRoughnessImage)
+    if (!renderer_ || !queue_ || !baseImage || !metallicRoughnessImage)
         return SetError(error, "The model texture set is invalid");
     // 法線画像がなければlinear MR画像をdescriptor用fallbackとして共有する。
     detail::ImageResource* resolvedNormalImage = normalImage ? normalImage : metallicRoughnessImage;
+    // nullptrは既存caller向けのClampLinear設定へ解決する。
+    const detail::FTextureSampler resolvedBaseSampler = baseSampler ? *baseSampler : detail::FTextureSampler{};
+    const detail::FTextureSampler resolvedMetallicRoughnessSampler = metallicRoughnessSampler ? *metallicRoughnessSampler : detail::FTextureSampler{};
+    const detail::FTextureSampler resolvedNormalSampler = normalSampler ? *normalSampler : detail::FTextureSampler{};
+    // 全roleを検証してからtextureやsamplerのresourceを作る。
+    uint32_t samplerIndex = 0;
+    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex))
+        return SetError(error, "The model texture sampler settings are invalid");
     if (!Prepare(baseImage, error, ETextureColorSpace::Srgb) || !Prepare(metallicRoughnessImage, error, ETextureColorSpace::Linear) || !Prepare(resolvedNormalImage, error, ETextureColorSpace::Linear))
         return false;
     // 色空間別に登録された基本色、金属度・粗さ、法線texture。
@@ -358,7 +375,7 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
         return SetError(error, "The prepared model texture set is unavailable");
 
     // 画像tripleに対応するdescriptor cache entry。
-    ModelEntry* modelEntry = FindModel(baseImage, metallicRoughnessImage, resolvedNormalImage);
+    ModelEntry* modelEntry = FindModel(baseImage, metallicRoughnessImage, resolvedNormalImage, resolvedBaseSampler, resolvedMetallicRoughnessSampler, resolvedNormalSampler);
     if (modelEntry)
     {
         modelEntry->state.lastUsed = ++clock_;
@@ -366,6 +383,12 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
         error.Clear();
         return true;
     }
+    // roleごとに固定sampler cacheからdescriptor資源を得る。
+    Sampler* baseSamplerResource = nullptr;
+    Sampler* metallicRoughnessSamplerResource = nullptr;
+    Sampler* normalSamplerResource = nullptr;
+    if (!GetOrCreateModelSampler(resolvedBaseSampler, baseSamplerResource, error) || !GetOrCreateModelSampler(resolvedMetallicRoughnessSampler, metallicRoughnessSamplerResource, error) || !GetOrCreateModelSampler(resolvedNormalSampler, normalSamplerResource, error))
+        return false;
     modelEntry = AcquireModelSlot(error);
     if (!modelEntry)
         return false;
@@ -375,6 +398,12 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     modelEntry->baseTexture = baseEntry->texture;
     modelEntry->metallicRoughnessTexture = metallicRoughnessEntry->texture;
     modelEntry->normalTexture = normalEntry->texture;
+    modelEntry->baseSampler = resolvedBaseSampler;
+    modelEntry->metallicRoughnessSampler = resolvedMetallicRoughnessSampler;
+    modelEntry->normalSampler = resolvedNormalSampler;
+    modelEntry->baseSamplerResource = baseSamplerResource;
+    modelEntry->metallicRoughnessSamplerResource = metallicRoughnessSamplerResource;
+    modelEntry->normalSamplerResource = normalSamplerResource;
     if (!CreateModelDescriptor(*modelEntry, *baseEntry, *metallicRoughnessEntry, *normalEntry, error))
     {
         DestroyModelEntry(*modelEntry);
@@ -383,6 +412,42 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     modelEntry->state.lastUsed = ++clock_;
     modelEntry->state.frameUsed = frame_;
     modelEntry->state.occupied = true;
+    error.Clear();
+    return true;
+}
+
+/**
+ * 有効なsampler値に対応する共有GPU resourceを得る。
+ */
+bool TextureCache::GetOrCreateModelSampler(const detail::FTextureSampler& settings, Sampler*& sampler, String& error)
+{
+    // 36状態の固定table内でsampler値の位置を得る。
+    uint32_t samplerIndex = 0;
+    if (!detail::GetTextureSamplerIndex(settings, samplerIndex))
+        return SetError(error, "The model texture sampler settings are invalid");
+    if (!modelSamplers_[samplerIndex])
+    {
+        // glTFの一段texture向けfilterと座標範囲をGPU設定へ変換する。
+        SamplerDesc samplerDesc{};
+        samplerDesc.mMinFilter = settings.minFilter == detail::ETextureFilter::Linear ? FILTER_LINEAR : FILTER_NEAREST;
+        samplerDesc.mMagFilter = settings.magFilter == detail::ETextureFilter::Linear ? FILTER_LINEAR : FILTER_NEAREST;
+        samplerDesc.mMipMapMode = MIPMAP_MODE_NEAREST;
+        samplerDesc.mAddressU = settings.addressU == detail::ETextureAddressMode::ClampToEdge ? ADDRESS_MODE_CLAMP_TO_EDGE : settings.addressU == detail::ETextureAddressMode::Repeat ? ADDRESS_MODE_REPEAT : ADDRESS_MODE_MIRROR;
+        samplerDesc.mAddressV = settings.addressV == detail::ETextureAddressMode::ClampToEdge ? ADDRESS_MODE_CLAMP_TO_EDGE : settings.addressV == detail::ETextureAddressMode::Repeat ? ADDRESS_MODE_REPEAT : ADDRESS_MODE_MIRROR;
+        samplerDesc.mAddressW = ADDRESS_MODE_CLAMP_TO_EDGE;
+        samplerDesc.mMipLodBias = 0.0f;
+        // 参照段数の上限を0にすると縮小filterが拡大filterとして選ばれるため、sampler側の範囲を開ける。
+        // 実際の画像は1段だけを持ち、画像側の有効範囲へ収まる。
+        samplerDesc.mSetLodRange = true;
+        samplerDesc.mMinLod = 0.0f;
+        samplerDesc.mMaxLod = FLT_MAX;
+        samplerDesc.mMaxAnisotropy = 0.0f;
+        samplerDesc.mCompareFunc = CMP_NEVER;
+        addSampler(renderer_, &samplerDesc, &modelSamplers_[samplerIndex]);
+        if (!modelSamplers_[samplerIndex])
+            return SetError(error, "The Forge could not create a model texture sampler");
+    }
+    sampler = modelSamplers_[samplerIndex];
     error.Clear();
     return true;
 }
@@ -398,8 +463,8 @@ bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntr
     if (!modelEntry.descriptorSet)
         return SetError(error, "The Forge could not allocate a model texture descriptor set");
 
-    // 基本色、金属度・粗さ、法線、共用samplerのdescriptor値。
-    DescriptorData descriptors[4]{};
+    // 画像3枚とrole別sampler3個のdescriptor値。
+    DescriptorData descriptors[6]{};
     descriptors[0].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gImageTexture);
     descriptors[0].ppTextures = &baseEntry.texture;
     descriptors[0].mCount = 1;
@@ -410,9 +475,15 @@ bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntr
     descriptors[2].ppTextures = &normalEntry.texture;
     descriptors[2].mCount = 1;
     descriptors[3].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gImageSampler);
-    descriptors[3].ppSamplers = &sampler_;
+    descriptors[3].ppSamplers = &modelEntry.baseSamplerResource;
     descriptors[3].mCount = 1;
-    updateDescriptorSet(renderer_, 0, modelEntry.descriptorSet, 4, descriptors);
+    descriptors[4].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gMetallicRoughnessSampler);
+    descriptors[4].ppSamplers = &modelEntry.metallicRoughnessSamplerResource;
+    descriptors[4].mCount = 1;
+    descriptors[5].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gNormalSampler);
+    descriptors[5].ppSamplers = &modelEntry.normalSamplerResource;
+    descriptors[5].mCount = 1;
+    updateDescriptorSet(renderer_, 0, modelEntry.descriptorSet, 6, descriptors);
     error.Clear();
     return true;
 }
@@ -526,17 +597,25 @@ bool TextureCache::Bind(Cmd* command, detail::ImageResource* image, String& erro
 /**
  * frame用に準備済みのmodel画像triple descriptor setをbindする。
  */
-bool TextureCache::BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage) const
+bool TextureCache::BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler) const
 {
     if (!command || !baseImage || !metallicRoughnessImage)
         return SetError(error, "The model texture set binding is invalid");
     // 法線画像がなければPrepareModelと同じMR画像を検索keyにする。
     const detail::ImageResource* resolvedNormalImage = normalImage ? normalImage : metallicRoughnessImage;
+    // nullptrはPrepareModelと同じClampLinear設定へ解決する。
+    const detail::FTextureSampler resolvedBaseSampler = baseSampler ? *baseSampler : detail::FTextureSampler{};
+    const detail::FTextureSampler resolvedMetallicRoughnessSampler = metallicRoughnessSampler ? *metallicRoughnessSampler : detail::FTextureSampler{};
+    const detail::FTextureSampler resolvedNormalSampler = normalSampler ? *normalSampler : detail::FTextureSampler{};
+    // 不正samplerはcache検索前に拒否する。
+    uint32_t samplerIndex = 0;
+    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex))
+        return SetError(error, "The model texture sampler settings are invalid");
     for (uint32_t i = 0; i < kModelCapacity; ++i)
     {
         // 現frameに準備された画像triple。
         const ModelEntry& entry = modelEntries_[i];
-        if (entry.baseImage != baseImage || entry.metallicRoughnessImage != metallicRoughnessImage || entry.normalImage != resolvedNormalImage || entry.state.frameUsed != frame_)
+        if (entry.baseImage != baseImage || entry.metallicRoughnessImage != metallicRoughnessImage || entry.normalImage != resolvedNormalImage || !detail::AreTextureSamplersEqual(entry.baseSampler, resolvedBaseSampler) || !detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, resolvedMetallicRoughnessSampler) || !detail::AreTextureSamplersEqual(entry.normalSampler, resolvedNormalSampler) || entry.state.frameUsed != frame_)
             continue;
         if (!entry.descriptorSet)
             return SetError(error, "The model texture descriptor set is unavailable");

@@ -39,6 +39,12 @@ struct ModelPartPlan
     int32_t normalTextureIndex = -1;
     // 法線マップの横・縦方向の倍率。
     float normalScale = 1.0f;
+    // base color画像の座標処理と補間方法。
+    detail::FTextureSampler baseColorSampler{};
+    // 金属度・粗さ画像の座標処理と補間方法。
+    detail::FTextureSampler metallicRoughnessSampler{};
+    // 法線マップ画像の座標処理と補間方法。
+    detail::FTextureSampler normalSampler{};
 };
 
 /**
