@@ -658,3 +658,35 @@ Releaseは全37/37件成功、追加画像検査1.29秒、全体41.30秒でし�
 独立レビュー後にコメントだけを整え、両構成の検査用targetを再ビルドして画像検査を再実行しました。Release 1.30秒、Debug 1.40秒で成功し、ログは`shader-binding-{release,debug}-{comments-build,focused-final}.log`です。ガイドのC++サンプルもv142の構文検査が成功しました。ROADMAPの検証状況は最新結果へ整理し、過去の各実行の詳細は本ログへ残しています。
 
 検査用HLSLのartifactはCMakeがbuildフォルダーに生成し、取得用DLL・実行fixture・Python・入力PNGとともにRuntime SDKへinstallしません。ユーザー向け文書には取得RGBを変更せずPNGとして掲載しました。全64slot・4096件上限、独自shaderの半透明と3D深度検査、モデル描画、GPU負荷、全面画像の画質、他GPUは別の検証範囲です。
+
+
+## 2026-10-07: GLB材質が選ぶ画像座標の修正
+
+基本色の画像があるGLB材質でも、ローダーはTEXCOORD_0を固定で読み込んでいました。材質のbaseColorTexture.texCoordに従うテストを先に追加し、変更前のReleaseでCPU検査は『uv1.glbの座標が不正』、GPU検査は『UV1とUV0の画像が同じ』と失敗しました。ログは`build/native-validation/glb-uv-release-red-tests.log`です。
+
+材質に基本色画像がある場合は、指定された番号の座標を選ぶSelectBaseColorUvを追加しました。指定省略は0、画像がない材質は従来のUV0保持と、座標がないときの0初期値を維持します。画像があるのに指定先がない場合や負の番号は診断付きで失敗します。成分型はFLOATか、0から1へ正規化するUNSIGNED_BYTE / UNSIGNED_SHORTを許可します。座標の頂点数・VEC2・bufferView・sparse制約は既存の検証経路を使います。KHR_texture_transformは未対応として明示拒否し、UVの上書き指定や変換を黙って誤描画しないようにしました。
+
+開発用スクリプトは13種類のGLBを生成します。6種類はtexCoord省略・UV0・UV1・UV2・正規化U16・正規化U8で、7種類は指定先欠損・負数・頂点数不一致・未正規化U16・符号付き整数・normalized FLOAT・UV変換です。C++テストは読み込み前にファイルの存在とGLB2のmagic・宣言サイズを検査し、ファイル欠落を不正形式の拒否と誤認しないようにします。頂点数不一致はcgltf_validateが先に拒否します。
+
+検査の初稿ではC++の診断変数の宣言順を修正しました。実装修正後の最初の確認では、正規化U16の入力が誤ってFLOAT + normalizedで生成されていることを発見しました。仕様で許可されないFLOATの正規化を拒否する実装は維持し、正規化U16の生成をcomponentType 5123へ修正しました。normalized FLOATは別の拒否テストとして残しています。U8のVEC2には2byteの余白を入れ、頂点属性を4byte strideで配置しました。
+
+実GPUでは同じ形状と画像を使い、環境光1・方向光0、Bloom・tone mapping・FXAA無効で色を比較しました。UV0の四象限は赤・緑／青・白、UV1は緑・赤／白・青で、画像全体では45,000画素が変わりました。省略指定はUV0と、UV2・正規化U16・U8はUV1と全画素一致しました。背景と緑のUI領域も保持され、Release/Debugで取得した6画像はbyte単位に一致しました。材質の照明品質や全モデル形式を評価する結果ではありません。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0で両Runtime構成をビルドしました。
+
+```powershell
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Releaseは全39/39件成功、追加GPU検査7.40秒、全体48.37秒でした。Debugも全39/39件成功、追加GPU検査7.76秒、全体52.78秒でした。SDK consumerを含む配布物検査も成功しています。ログは`build/native-validation/glb-uv-{release,debug}-final-{build,tests}.log`です。Debug画像取得では既存の必須InfoQueue確認を通し、GPU-based validationは有効化していません。
+
+RuntimeOFFはMSVC 19.51 / Windows SDK 10.0.28000.0の別toolchainで各29/29件成功し、全体はDebug 2.80秒、Release 2.69秒でした。ログは`glb-uv-cpu-{debug,release}-{build,tests}.log`です。コメントを日本語に整えた後、元のソースに今回の実装変更を加えた内容と、最終ソースのコメント・空白を除いた要素が一致することを確認しました。Releaseの追加2テストも再ビルド後に成功し、GPU検査7.16秒、全体7.21秒でした（`glb-uv-release-focused-final.log`）。モデルガイドのC++サンプルもv142で構文検査が成功しています。
+
+検査用モデル・画像・生成スクリプト・画像取得DLLはRuntime SDKへinstallしません。公開APIと描画shaderのABIは変更していません。GPU画像はRGBを変更せずPNGに保存してモデルガイドへ掲載しました。仕様根拠は[glTF 2.0 Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord)と[Accessor normalized](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_accessor_normalized)です。

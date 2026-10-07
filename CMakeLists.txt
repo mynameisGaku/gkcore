@@ -251,6 +251,26 @@ if(GKCORE_BUILD_TESTS)
         GKCORE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     gkcore_enable_warnings(gkcore_fbx_tests)
     add_test(NAME gkcore.fbx COMMAND gkcore_fbx_tests)
+    # GLBの材質が選んだ画像座標を、描画部を使わずに検査する。
+    set(_gkcore_glb_texture_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/glb-texture-fixtures")
+    set(_gkcore_glb_texture_fixture_files)
+    foreach(_fixture_name IN ITEMS default uv0 uv1 uv2 normalized-uv1 normalized-byte-uv1 missing-selected negative-selected wrong-selected-count unnormalized-uv1 signed-uv1 float-normalized-uv1 transformed-selected)
+        list(APPEND _gkcore_glb_texture_fixture_files "${_gkcore_glb_texture_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_glb_texture_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/glb_texture_fixtures.py
+            --output-dir "${_gkcore_glb_texture_fixture_dir}"
+        DEPENDS tests/support/glb_texture_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_glb_texture_fixtures DEPENDS ${_gkcore_glb_texture_fixture_files})
+    get_target_property(_gkcore_resource_test_sources gkcore_fbx_tests SOURCES)
+    list(REMOVE_ITEM _gkcore_resource_test_sources tests/fbx_tests.cpp)
+    add_executable(gkcore_glb_texture_coordinate_tests tests/glb_texture_coordinate_tests.cpp ${_gkcore_resource_test_sources})
+    target_compile_features(gkcore_glb_texture_coordinate_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_glb_texture_coordinate_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_glb_texture_coordinate_tests)
+    add_dependencies(gkcore_glb_texture_coordinate_tests gkcore_glb_texture_fixtures)
+    add_test(NAME gkcore.glb_texture_coordinates COMMAND gkcore_glb_texture_coordinate_tests "${_gkcore_glb_texture_fixture_dir}")
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
         src/model/FbxGeometry.cpp
@@ -601,6 +621,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_shader_binding_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_shader_binding_capture_tests)
             add_dependencies(gkcore_shader_binding_capture_tests gkcore_shader_binding_fixture)
+            add_executable(gkcore_glb_texture_capture_tests tests/glb_texture_capture_tests.cpp)
+            target_compile_features(gkcore_glb_texture_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_glb_texture_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_glb_texture_capture_tests)
+            add_dependencies(gkcore_glb_texture_capture_tests gkcore_glb_texture_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -630,6 +655,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --shader "${_gkcore_binding_shader}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/shader-binding-captures/$<CONFIG>)
             set_tests_properties(gkcore.shader_binding_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.glb_texture_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/glb_texture_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_glb_texture_capture_tests>
+                    --fixture-dir "${_gkcore_glb_texture_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/glb-texture-captures/$<CONFIG>)
+            set_tests_properties(gkcore.glb_texture_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -676,6 +707,10 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(TARGET gkcore_shader_binding_capture_tests)
         add_dependencies(gkcore_shader_binding_capture_tests gkcore_stage_runtime_payload)
+    endif()
+
+    if(TARGET gkcore_glb_texture_capture_tests)
+        add_dependencies(gkcore_glb_texture_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets
