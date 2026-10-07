@@ -563,3 +563,27 @@ ctest --test-dir build/runtime-windows -C Release --output-on-failure
 全targetのビルドとCTest 34/34件が成功しました。GPU smokeは2.60秒、連続取得を含む画像検査は11.02秒、多数描画は2.11秒、SDK consumerは3.83秒、全体は22.58秒です。ログは`build/native-validation/input-stress-final-build.log`と`input-stress-final-tests.log`です。新APIを使うconsumerへ更新した後のpackage単独検査も成功しました。CPU RuntimeOFFはMSVC19.51 / SDK28000でDebug/Releaseをビルドし、各28/28件成功しました（`input-cpu-debug-{build,tests}.log`、`input-cpu-release-{build,tests}.log`）。
 
 多数描画の試験は描画順・フレーム更新・終了までの回帰検査です。GPU使用率や目標FPS、全フレームのちらつき、全エフェクトの画質を評価した結果ではありません。Runtime Debug、別GPU、全モデル形式の確認は残っています。
+
+
+## 2026-10-07: 全キーの契約とRuntime Debugの実行
+
+公開47キーの独立したvirtual-key期待表を使い、`IsKeyDown`と`WasKeyPressed`について、期待するキーの問い合わせ、別キーの状態が漏れないこと、focusがない場合はbackendへ問い合わせないこと、不正値と未初期化時の診断を確認しました。内部の仮想キー256個についても、押下・解放が同じ処理内にある場合、非消費の問い合わせ、次の処理での消去、seed・反復・focus消去を確認します。これは既存契約の回帰範囲を広げる変更で、新しいRuntime動作や未検出の不具合を装うREDは追加していません。実物の全キーを操作した検証ではありません。
+
+`PRE_SETUP.bat --configuration Debug`を追加しました。既定はReleaseのまま、DebugではForgeを`build/forge-debug`、Runtimeを`build/runtime-windows-debug`へ保存します。MSBuildの構成、CMakeの生成対象、buildとCTestの構成を同じ値に揃えます。設定選択のテストは新しい引数が未対応でTypeErrorとなるREDを確認してから実装し、13/13件成功しました。構成不明値は拒否します。
+
+最初のDebug実行は描画が成功しましたが、画像取得時の診断キューを調べると`GKCORE_TEST_D3D12_INFOQUEUE=unavailable`でした。Debug macroの有効化処理やDXGIのlive-objectレポートだけでは、D3D12 Debug Layerが動いている証明にはなりません。Debug画像テストでInfoQueueがない場合に失敗する契約を追加し、Presentが`The D3D12 Debug InfoQueue is unavailable`で失敗するREDを記録しました（`build/native-validation/debug-layer-required-red.log`）。
+
+固定Agility SDKの`d3d12SDKLayers.dll`をDebug出力へ配置すると、InfoQueueがactiveになり画像テストが成功しました（`debug-layer-staged-test.log`）。CMakeのDebug専用構成にだけこのDLLをstage/installするようにし、Debug packageでの必須化とReleaseでの混入拒否をテストしました。allowlistはAPI未対応のREDから実装後12/12成功へ進みました。DLLを別の検証用ファイルへ移した後の増分ビルドでも復元され、固定依存物とSHA-256が一致しました（`debug-layer-restage.log`）。Release出力には同DLLがありません。
+
+MSVCの`/MDd`で`_DEBUG`が定義され、固定ForgeのConfig.hで`FORGE_DEBUG`、GraphicsConfig.hで`ENABLE_GRAPHICS_VALIDATION`とruntime checksが有効になります。ForgeとRuntimeはどちらもDebugに揃え、条件付きのヘッダー構造とCRTを一致させています。`RendererDesc`のGPU-based validationはfalseのままです。固定Forgeの診断にはメッセージのフィルターがあり、この結果はすべての診断・性能・画質の全面合格を示しません。既知の`reload-server.txt`不足のエラーも残ります。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1、Python 3.11.9で次を実行しました。
+
+```powershell
+.\PRE_SETUP.bat --configuration Debug --gpu-check
+.\PRE_SETUP.bat --gpu-check
+```
+
+Debugの全34テストが成功し、画像取得13回すべてでInfoQueue activeを記録しました。GPU smokeは2.48秒、画像検査は11.05秒、連続描画は1.73秒、Debug SDK consumerは3.77秒、全体は21.59秒です。ログは`build/native-validation/pre-setup-debug-validated.log`です。Releaseも全34テストが成功し、同じ順に2.32秒、10.17秒、1.63秒、3.62秒、全体20.31秒でした（`pre-setup-release-after-debug.log`）。Release/Debugで取得した通常・FXAA無効・tint・モデル照明2方向・連続6フレームの計11画像はbyte単位で一致しました。これは同一GPUとdriverの回帰結果です。
+
+RuntimeOFFのCPU構成もDebug/Releaseで再ビルドし、各28/28テストが成功しました。MSVC19.51 / SDK28000の別toolchainで、ログは`build/native-validation/key-coverage-cpu-{debug,release}-{build,tests}.log`です。Debugのビルド出力をReleaseと混ぜた場合の動作、別GPU、GPU-based validation、全キー・全モデル形式の実操作は未確認です。

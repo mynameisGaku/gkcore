@@ -1,6 +1,6 @@
 # GPUで確認した描画
 
-Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画像です。2026-10-05に、Release RuntimeをVisual Studio 2026 / v142、Windows SDK 10.0.22621.0でビルドして確認しました。画像は最終描画先から読み戻した640×480のRGBデータを、色を変えずにPNGへ保存しています。
+Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画像です。ReleaseとDebug RuntimeはVisual Studio 2026 / v142、Windows SDK 10.0.22621.0でビルドしました。画像は最終描画先から読み戻した640×480のRGBデータを、色を変えずにPNGへ保存しています。
 
 ## 基本描画とポストエフェクト
 
@@ -17,6 +17,12 @@ Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画
 2026-10-07に、同じアプリで6回のPresentを行い、ポスト効果を無効・有効へ交互に切り替えて各フレームを取得しました。Scene矩形の赤成分は232、149を交互に示し、UI矩形はすべてのフレームでRGB `(0, 255, 0)`を保ちました。毎回、3D・PNG画像・日本語文字の表示も判定しています。
 
 取得枚数は開発テスト専用の設定で1〜16枚を指定でき、省略時は従来どおり1枚です。追加画像は`sequence.ppm.frame1.ppm`から連番で保存します。0、17、数値でない設定は診断付きで失敗し、画像を生成しないことを検査しています。
+
+## Debug RuntimeとD3D12 InfoQueue
+
+Debug構成では`_DEBUG`からThe Forgeの`FORGE_DEBUG`、`ENABLE_GRAPHICS_VALIDATION`が有効になります。Debug画像テストの13箇所で`ID3D12InfoQueue`取得成功を確認しました。固定したAgility SDKの`d3d12SDKLayers.dll`をDebug出力先へ配置しない初回はInfoQueueが取得できず、必須確認を追加したテストがPresentで失敗しました。DLLをDebug構成へstageした後は取得でき、全CTest 34/34が成功しました。Debug構成だけではInfoQueue取得を保証しません。
+
+GPU-based validationは有効化していません。ReleaseとDebugで同一GPU・driverから取得した通常描画、direct、tint、sequence 6枚、model 2枚の計11枚のPPMはbyte単位で一致しました。この比較は画像の再現性を示し、画質の合否を示すものではありません。
 
 ## モデルの色と照明
 
@@ -40,14 +46,20 @@ Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画
 PRE_SETUP.bat --gpu-check
 ```
 
+Debug構成では次を実行します。
+
+```bat
+PRE_SETUP.bat --configuration Debug --gpu-check
+```
+
 ビルド済みの環境で画像テストだけを実行する場合は、次を使います。
 
 ```bat
 ctest --test-dir build/runtime-windows -C Release -R gkcore.render_capture --output-on-failure
 ```
 
-PPM画像と判定値のJSONは`build/runtime-windows/render-captures/Release`へ出力します。取得に使うDLLは開発テスト専用で、配布SDKには含めません。インストール済みSDKの検査では、通常のRuntime DLLを使う別アプリをビルドし、初期化・描画・最初のPresent・終了を確認します。
+PPM画像と判定値のJSONはReleaseでは`build/runtime-windows/render-captures/Release`、Debugでは`build/runtime-windows-debug/render-captures/Debug`へ出力します。Debug実行に必要な`d3d12SDKLayers.dll`はDebug構成の出力にだけstageします。インストール済みSDKの検査では、通常のRuntime DLLを使う別アプリをビルドし、初期化・描画・最初のPresent・終了を確認します。
 
-この検査は代表画素と領域の条件を使います。全面画像の一致、全エフェクトの画質、連続フレームのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。輪郭サンプルではSpaceによるBloomのON→OFF→ONと短いEscape入力による終了を確認しました。モデル照明サンプルのキー操作、RuntimeのDebug構成、他のGPU、全モデル形式の描画は未確認です。
+この検査は代表画素と領域の条件を使います。全面画像の画質、連続フレームすべてのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。輪郭サンプルではSpaceによるBloomのON→OFF→ONと短いEscape入力による終了を確認しました。全キーを実画面から操作する検査、モデル照明サンプルのキー操作、GPU-based validation、他のGPU、全モデル形式の描画は未確認です。Runtime DebugのInfoQueueと画像検査は確認済みです。
 
 実装上の原因と修正前後の記録は[TDD検証ログ](TDD_LOG.md)、対応機能と残作業は[機能とサポート状況](ROADMAP.md)を参照してください。

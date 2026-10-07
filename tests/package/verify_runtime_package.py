@@ -42,7 +42,7 @@ def main():
             command += ["--config", args.config]
         run(command)
         files = {p.relative_to(prefix).as_posix() for p in prefix.rglob("*") if p.is_file()}
-        validate(files)
+        validate(files, configuration=args.config or "Release")
 
         consumer_build = root / "consumer-build"
         configure = consumer_configure_command(args.install_script, source, consumer_build, args.generator,

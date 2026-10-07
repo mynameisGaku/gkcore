@@ -37,6 +37,20 @@ namespace
         }                                                                                   \
     } while (0)
 
+struct FKeyMappingExpectation
+{
+    // 確認対象の公開キー。
+    gk::Key key;
+    // Windows virtual-keyの独立した期待値。
+    uint32_t virtualKey;
+};
+
+// 公開キー全体を、MapKey実装に依存しない固定値で照合する。
+constexpr FKeyMappingExpectation kFKeyMappingExpectations[] = {
+    { gk::Key::Escape, 0x1b }, { gk::Key::ArrowLeft, 0x25 }, { gk::Key::ArrowUp, 0x26 }, { gk::Key::ArrowRight, 0x27 }, { gk::Key::ArrowDown, 0x28 }, { gk::Key::Space, 0x20 }, { gk::Key::Enter, 0x0d }, { gk::Key::Tab, 0x09 }, { gk::Key::Backspace, 0x08 }, { gk::Key::Digit0, 0x30 }, { gk::Key::Digit1, 0x31 }, { gk::Key::Digit2, 0x32 }, { gk::Key::Digit3, 0x33 }, { gk::Key::Digit4, 0x34 }, { gk::Key::Digit5, 0x35 }, { gk::Key::Digit6, 0x36 }, { gk::Key::Digit7, 0x37 }, { gk::Key::Digit8, 0x38 }, { gk::Key::Digit9, 0x39 }, { gk::Key::A, 0x41 }, { gk::Key::B, 0x42 }, { gk::Key::C, 0x43 }, { gk::Key::D, 0x44 }, { gk::Key::E, 0x45 }, { gk::Key::F, 0x46 }, { gk::Key::G, 0x47 }, { gk::Key::H, 0x48 }, { gk::Key::I, 0x49 }, { gk::Key::J, 0x4a }, { gk::Key::K, 0x4b }, { gk::Key::L, 0x4c }, { gk::Key::M, 0x4d }, { gk::Key::N, 0x4e }, { gk::Key::O, 0x4f }, { gk::Key::P, 0x50 }, { gk::Key::Q, 0x51 }, { gk::Key::R, 0x52 }, { gk::Key::S, 0x53 }, { gk::Key::T, 0x54 }, { gk::Key::U, 0x55 }, { gk::Key::V, 0x56 }, { gk::Key::W, 0x57 }, { gk::Key::X, 0x58 }, { gk::Key::Y, 0x59 }, { gk::Key::Z, 0x5a }, { gk::Key::Shift, 0x10 }, { gk::Key::Control, 0x11 },
+};
+constexpr uint32_t kFKeyMappingExpectationCount = sizeof(kFKeyMappingExpectations) / sizeof(kFKeyMappingExpectations[0]);
+
 struct CaptureState
 {
     bool failInitialize = false;
@@ -638,43 +652,39 @@ bool TestKeyPressedContracts()
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
-    capture.downKey = 'A';
+    for (uint32_t index = 0; index < kFKeyMappingExpectationCount; ++index)
+    {
+        const FKeyMappingExpectation& expected = kFKeyMappingExpectations[index];
+        const FKeyMappingExpectation& other = kFKeyMappingExpectations[(index + 1) % kFKeyMappingExpectationCount];
+        capture.pressedKey = expected.virtualKey;
+        CHECK(gk::WasKeyPressed(expected.key));
+        CHECK(capture.lastPressedKey == expected.virtualKey);
+        capture.pressedKey = other.virtualKey;
+        CHECK(!gk::WasKeyPressed(expected.key));
+        CHECK(capture.lastPressedKey == expected.virtualKey);
+    }
     capture.pressedKey = 0x20;
     CHECK(gk::WasKeyPressed(gk::Key::Space));
     CHECK(gk::WasKeyPressed(gk::Key::Space));
-    CHECK(!gk::IsKeyDown(gk::Key::Space));
-    CHECK(gk::IsKeyDown(gk::Key::A));
-    CHECK(!gk::WasKeyPressed(gk::Key::A));
-    CHECK(capture.lastPressedKey == 'A');
-    capture.pressedKey = 0x1b;
-    CHECK(gk::WasKeyPressed(gk::Key::Escape));
-    CHECK(gk::ProcessEvents());
-    CHECK(!gk::WasKeyPressed(gk::Key::Escape));
-    for (uint32_t offset = 0; offset < 26; ++offset)
-    {
-        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::A) + offset);
-        capture.pressedKey = 'A' + offset;
-        CHECK(gk::WasKeyPressed(key));
-        CHECK(capture.lastPressedKey == 'A' + offset);
-    }
-    for (uint32_t offset = 0; offset < 10; ++offset)
-    {
-        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::Digit0) + offset);
-        capture.pressedKey = '0' + offset;
-        CHECK(gk::WasKeyPressed(key));
-        CHECK(capture.lastPressedKey == '0' + offset);
-    }
+    const uint32_t lastPressedKey = capture.lastPressedKey;
     CHECK(!gk::WasKeyPressed(static_cast<gk::Key>(255)));
     CHECK(gk::GetLastErrorMessage()[0] != '\0');
-    capture.pressedKey = 0x20;
+    CHECK(capture.lastPressedKey == lastPressedKey);
     capture.hasFocus = false;
-    const uint32_t lastFocusedKey = capture.lastPressedKey;
+    capture.lastKey = 0xabcdef01u;
+    capture.lastPressedKey = 0xabcdef02u;
     CHECK(!gk::WasKeyPressed(gk::Key::Space));
-    CHECK(capture.lastPressedKey == lastFocusedKey);
+    CHECK(capture.lastPressedKey == 0xabcdef02u);
+    CHECK(!gk::IsKeyDown(gk::Key::Space));
+    CHECK(capture.lastKey == 0xabcdef01u);
     CHECK(gk::GetLastErrorMessage()[0] == '\0');
     gk::Shutdown();
     CHECK(!gk::WasKeyPressed(gk::Key::Space));
     CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    CHECK(!gk::IsKeyDown(gk::Key::Space));
+    CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    CHECK(capture.lastPressedKey == 0xabcdef02u);
+    CHECK(capture.lastKey == 0xabcdef01u);
     return true;
 }
 
@@ -683,44 +693,21 @@ bool TestInputKeyAndMouseMappings()
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
-    capture.downKey = 'A';
-    CHECK(gk::IsKeyDown(gk::Key::A));
-    CHECK(capture.lastKey == 'A');
-    CHECK(!gk::IsKeyDown(gk::Key::ArrowUp));
-    CHECK(capture.lastKey == 0x26);
-    CHECK(!gk::IsKeyDown(gk::Key::ArrowLeft));
-    CHECK(capture.lastKey == 0x25);
-    CHECK(!gk::IsKeyDown(gk::Key::ArrowRight));
-    CHECK(capture.lastKey == 0x27);
-    CHECK(!gk::IsKeyDown(gk::Key::ArrowDown));
-    CHECK(capture.lastKey == 0x28);
-    CHECK(!gk::IsKeyDown(gk::Key::Digit7));
-    CHECK(capture.lastKey == '7');
-    capture.downKey = 0xffffffffu;
-    for (uint32_t i = 0; i < 10; ++i)
+    for (uint32_t index = 0; index < kFKeyMappingExpectationCount; ++index)
     {
-        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::Digit0) + i);
-        CHECK(!gk::IsKeyDown(key));
-        CHECK(capture.lastKey == static_cast<uint32_t>('0') + i);
+        const FKeyMappingExpectation& expected = kFKeyMappingExpectations[index];
+        const FKeyMappingExpectation& other = kFKeyMappingExpectations[(index + 1) % kFKeyMappingExpectationCount];
+        capture.downKey = expected.virtualKey;
+        CHECK(gk::IsKeyDown(expected.key));
+        CHECK(capture.lastKey == expected.virtualKey);
+        capture.downKey = other.virtualKey;
+        CHECK(!gk::IsKeyDown(expected.key));
+        CHECK(capture.lastKey == expected.virtualKey);
     }
-    for (uint32_t i = 0; i < 26; ++i)
-    {
-        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::A) + i);
-        CHECK(!gk::IsKeyDown(key));
-        CHECK(capture.lastKey == static_cast<uint32_t>('A') + i);
-    }
-    CHECK(!gk::IsKeyDown(gk::Key::Space));
-    CHECK(capture.lastKey == 0x20);
-    CHECK(!gk::IsKeyDown(gk::Key::Enter));
-    CHECK(capture.lastKey == 0x0d);
-    CHECK(!gk::IsKeyDown(gk::Key::Backspace));
-    CHECK(capture.lastKey == 0x08);
-    CHECK(!gk::IsKeyDown(gk::Key::Control));
-    CHECK(capture.lastKey == 0x11);
-    CHECK(!gk::IsKeyDown(gk::Key::Shift));
-    CHECK(capture.lastKey == 0x10);
+    const uint32_t lastMappedKey = capture.lastKey;
     CHECK(!gk::IsKeyDown(static_cast<gk::Key>(255)));
     CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    CHECK(capture.lastKey == lastMappedKey);
     CHECK(!gk::IsKeyDown(gk::Key::Tab));
     CHECK(gk::GetLastErrorMessage()[0] == '\0');
 
@@ -739,9 +726,12 @@ bool TestInputKeyAndMouseMappings()
     CHECK(x == 12 && y == 34);
 
     capture.hasFocus = false;
-    const uint32_t lastKeyBeforeFocusLoss = capture.lastKey;
+    capture.lastKey = 0xabcdef01u;
+    capture.lastPressedKey = 0xabcdef02u;
     CHECK(!gk::IsKeyDown(gk::Key::A));
-    CHECK(capture.lastKey == lastKeyBeforeFocusLoss);
+    CHECK(capture.lastKey == 0xabcdef01u);
+    CHECK(!gk::WasKeyPressed(gk::Key::A));
+    CHECK(capture.lastPressedKey == 0xabcdef02u);
     const uint32_t lastButtonBeforeFocusLoss = capture.lastMouseButton;
     CHECK(!gk::IsMouseButtonDown(gk::MouseButton::Left));
     CHECK(capture.lastMouseButton == lastButtonBeforeFocusLoss);

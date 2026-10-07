@@ -358,7 +358,7 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
 
     if(NOT EXISTS "${GKCORE_FORGE_BUILD_DIR}/Renderer/Renderer.lib" OR NOT EXISTS "${GKCORE_FORGE_BUILD_DIR}/OS/OS.lib")
-        message(FATAL_ERROR "The Forge x64 Release libraries are missing. Run `python tools/build_forge.py --forge-root \"${GKCORE_FORGE_ROOT}\" --build-dir \"${GKCORE_FORGE_BUILD_DIR}\"` first.")
+        message(FATAL_ERROR "The Forge x64 libraries are missing. Build Debug or Release to match the Runtime configuration, and set GKCORE_FORGE_BUILD_DIR to that output directory.")
     endif()
     set(_gkcore_shader_artifacts
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_color.vert"
@@ -409,6 +409,14 @@ if(GKCORE_BUILD_RUNTIME)
         "${GKCORE_DXC_ROOT}/bin/x64/dxil.dll"
         "${_gkcore_forge_common}/Graphics/ThirdParty/OpenSource/ags/ags_lib/lib/amd_ags_x64.dll"
         "${_gkcore_forge_common}/Graphics/ThirdParty/OpenSource/winpixeventruntime/bin/WinPixEventRuntime.dll")
+    if(CMAKE_CONFIGURATION_TYPES STREQUAL "Debug" OR CMAKE_BUILD_TYPE STREQUAL "Debug")
+        set(_gkcore_runtime_debug_layer
+            "${_gkcore_forge_common}/Graphics/ThirdParty/OpenSource/Direct3d12Agility/bin/x64/d3d12SDKLayers.dll")
+        if(NOT EXISTS "${_gkcore_runtime_debug_layer}")
+            message(FATAL_ERROR "The pinned The Forge D3D12 debug layer is missing: ${_gkcore_runtime_debug_layer}")
+        endif()
+        list(APPEND _gkcore_runtime_dlls "${_gkcore_runtime_debug_layer}")
+    endif()
     foreach(_dll IN LISTS _gkcore_runtime_dlls)
         if(NOT EXISTS "${_dll}")
             message(FATAL_ERROR "A required The Forge Runtime DLL is missing from the pinned tree: ${_dll}")

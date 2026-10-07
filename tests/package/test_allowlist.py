@@ -24,6 +24,7 @@ SHADERS = {
 # 片方の欠落も検出するため、配布物に必要な2ファイルを明示する。
 GPU_CONFIGURATION = {"bin/gpu.data", "bin/gpu.cfg"}
 BASE = _FIXED | PUBLIC_HEADERS | RUNTIME_DLLS | GPU_CONFIGURATION | SHADERS | {"lib/gkcore.lib", "lib/cmake/gkcore/gkcoreTargets-release.cmake"}
+DEBUG_LAYER = "bin/d3d12SDKLayers.dll"
 
 
 class RuntimeAllowlistTests(unittest.TestCase):
@@ -73,6 +74,27 @@ class RuntimeAllowlistTests(unittest.TestCase):
     def test_rejects_prefix_escape(self):
         with self.assertRaises(PackageError):
             validate(BASE | {"../outside.txt"})
+
+    def test_debug_requires_sdk_debug_layer(self):
+        with self.assertRaisesRegex(PackageError, "d3d12SDKLayers.dll"):
+            validate(BASE, configuration="Debug")
+
+    def test_debug_accepts_sdk_debug_layer(self):
+        package = BASE | {DEBUG_LAYER}
+        self.assertEqual(validate(package, configuration="Debug"), package)
+
+    def test_release_rejects_sdk_debug_layer(self):
+        with self.assertRaisesRegex(PackageError, "d3d12SDKLayers.dll"):
+            validate(BASE | {DEBUG_LAYER}, configuration="Release")
+
+    def test_release_like_configurations_remain_supported(self):
+        for configuration in ("Release", "RelWithDebInfo", "MinSizeRel"):
+            with self.subTest(configuration=configuration):
+                self.assertEqual(validate(BASE, configuration=configuration), BASE)
+
+    def test_rejects_unknown_configuration(self):
+        with self.assertRaisesRegex(PackageError, "configuration"):
+            validate(BASE, configuration="Fast")
 
 
 if __name__ == "__main__":

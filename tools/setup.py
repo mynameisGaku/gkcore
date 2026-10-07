@@ -21,6 +21,8 @@ DXC = DEVTOOLS / "dxc-1.8.2405"
 FORGE_BUILD = ROOT / "build" / "forge"
 SHADER_BUILD = ROOT / "build" / "runtime-windows" / "gkcore_shaders"
 BUILD = ROOT / "build" / "runtime-windows"
+DEBUG_FORGE_BUILD = ROOT / "build" / "forge-debug"
+DEBUG_BUILD = ROOT / "build" / "runtime-windows-debug"
 
 
 class SetupError(RuntimeError):
@@ -111,9 +113,11 @@ def run(command: list[str], *, env=None) -> None:
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-def ctest_command(build_dir: Path, gpu_check: bool = False) -> list[str]:
+def ctest_command(build_dir: Path, gpu_check: bool = False, configuration: str = "Release") -> list[str]:
     """Run every registered test; opt-in GPU smoke joins the suite rather than filtering it."""
-    return ["ctest", "--test-dir", str(build_dir), "-C", "Release", "--output-on-failure"]
+    if configuration not in ("Debug", "Release"):
+        raise SetupError(f"Unsupported build configuration: {configuration}")
+    return ["ctest", "--test-dir", str(build_dir), "-C", configuration, "--output-on-failure"]
 
 
 def ensure_dependencies() -> None:
@@ -127,24 +131,30 @@ def ensure_dependencies() -> None:
         run([sys.executable, str(ROOT / "tools/verify_dxc.py"), "--root", str(DXC)])
 
 
-def prepare(gpu_check: bool = False) -> None:
+def prepare(gpu_check: bool = False, configuration: str = "Release") -> None:
+    if configuration not in ("Debug", "Release"):
+        raise SetupError(f"Unsupported build configuration: {configuration}")
+    forge_build = FORGE_BUILD if configuration == "Release" else DEBUG_FORGE_BUILD
+    build_dir = BUILD if configuration == "Release" else DEBUG_BUILD
     toolchain = require_windows_toolchain()
     ensure_dependencies()
     run([sys.executable, str(ROOT / "tools/build_forge.py"), "--forge-root", str(FORGE),
-         "--dxc-root", str(DXC), "--build-dir", str(FORGE_BUILD), "--msbuild", str(toolchain.msbuild_path)])
+         "--dxc-root", str(DXC), "--build-dir", str(forge_build), "--msbuild", str(toolchain.msbuild_path),
+         "--configuration", configuration])
     run([sys.executable, str(ROOT / "tools/build_gkcore_shaders.py"), "--forge-root", str(FORGE),
          "--dxc-root", str(DXC), "--output-dir", str(SHADER_BUILD)])
-    configure = ["cmake", "-S", str(ROOT), "-B", str(BUILD), "-G", toolchain.generator,
+    configure = ["cmake", "-S", str(ROOT), "-B", str(build_dir), "-G", toolchain.generator,
                  "-A", "x64", "-T", "v142", f"-DCMAKE_GENERATOR_INSTANCE={toolchain.installation_path}",
                  f"-DCMAKE_SYSTEM_VERSION={toolchain.windows_sdk_version}",
                  f"-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM={toolchain.windows_sdk_version}",
+                 f"-DCMAKE_CONFIGURATION_TYPES={configuration}",
                  "-DGKCORE_BUILD_TESTS=ON", "-DGKCORE_BUILD_RUNTIME=ON",
                  f"-DGKCORE_FORGE_ROOT={FORGE}", f"-DGKCORE_DXC_ROOT={DXC}",
-                 f"-DGKCORE_FORGE_BUILD_DIR={FORGE_BUILD}", f"-DGKCORE_SHADER_BUILD_DIR={SHADER_BUILD}",
+                 f"-DGKCORE_FORGE_BUILD_DIR={forge_build}", f"-DGKCORE_SHADER_BUILD_DIR={SHADER_BUILD}",
                  f"-DGKCORE_RUN_BACKEND_SMOKE={'ON' if gpu_check else 'OFF'}"]
     run(configure)
-    run(["cmake", "--build", str(BUILD), "--config", "Release", "--parallel"])
-    run(ctest_command(BUILD, gpu_check))
+    run(["cmake", "--build", str(build_dir), "--config", configuration, "--parallel"])
+    run(ctest_command(build_dir, gpu_check, configuration))
     if gpu_check:
         print("BUILD READY: library, tests, sample, and the requested Direct3D 12 GPU smoke check passed.", flush=True)
     else:
@@ -155,9 +165,11 @@ def prepare(gpu_check: bool = False) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--gpu-check", action="store_true", help="run the optional Direct3D 12 host-GPU smoke test")
+    parser.add_argument("--configuration", choices=("Debug", "Release"), default="Release",
+                        help="select the isolated Visual Studio build configuration")
     args = parser.parse_args()
     try:
-        prepare(gpu_check=args.gpu_check)
+        prepare(gpu_check=args.gpu_check, configuration=args.configuration)
         return 0
     except (OSError, subprocess.CalledProcessError, SetupError) as exc:
         print(f"gkcore setup stopped: {exc}", file=sys.stderr)

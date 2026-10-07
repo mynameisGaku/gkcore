@@ -15,6 +15,9 @@ RUNTIME_DLLS = {
     "bin/amd_ags_x64.dll",
     "bin/WinPixEventRuntime.dll",
 }
+# Debug実行時に必要なD3D12検証層。
+DEBUG_RUNTIME_DLL = "bin/d3d12SDKLayers.dll"
+RELEASE_CONFIGURATIONS = {"Release", "RelWithDebInfo", "MinSizeRel"}
 # 起動時に読み込むGPUの識別情報と設定。
 RUNTIME_GPU_CONFIGURATION = {
     "bin/gpu.data",
@@ -60,8 +63,10 @@ _FIXED = {
 }
 
 
-def validate(files):
+def validate(files, configuration="Release"):
     """Validate the installed file manifest and return its normalized paths."""
+    if configuration != "Debug" and configuration not in RELEASE_CONFIGURATIONS:
+        raise PackageError("unsupported package configuration: " + str(configuration))
     normalized = set()
     for name in files:
         path = PurePosixPath(str(name).replace("\\", "/"))
@@ -71,6 +76,8 @@ def validate(files):
     if any(path == "." for path in normalized):
         raise PackageError("package manifest contains a path outside its prefix")
     required = _FIXED | RUNTIME_DLLS | RUNTIME_GPU_CONFIGURATION | RUNTIME_SHADERS | {"lib/gkcore.lib"}
+    if configuration == "Debug":
+        required.add(DEBUG_RUNTIME_DLL)
     missing = required - normalized
     if missing:
         raise PackageError("missing required runtime files: " + ", ".join(sorted(missing)))

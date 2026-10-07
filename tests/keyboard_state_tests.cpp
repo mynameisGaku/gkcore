@@ -15,82 +15,88 @@ namespace
         }                                                                            \
     } while (0)
 
-bool TestPressAndReleaseWithinOnePoll()
+/**
+ * 256個すべてのkeyで同poll内の短い押下、pulse保持、次pollの消去を確認する。
+ */
+bool TestAllVirtualKeyPressReleasePulses()
 {
     gk::platform::FKeyboardState keyboard;
-    keyboard.BeginEventPoll();
-    keyboard.SetKeyDown(0x20, true);
-    keyboard.SetKeyDown(0x20, false);
-    CHECK(keyboard.WasKeyPressed(0x20));
-    CHECK(!keyboard.IsKeyDown(0x20));
+    for (uint32_t pressedKey = 0; pressedKey < 256; ++pressedKey)
+    {
+        keyboard.Clear();
+        keyboard.BeginEventPoll();
+        keyboard.SetKeyDown(pressedKey, true);
+        keyboard.SetKeyDown(pressedKey, false);
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            const bool expectedPressed = queriedKey == pressedKey;
+            CHECK(keyboard.WasKeyPressed(queriedKey) == expectedPressed);
+            CHECK(keyboard.WasKeyPressed(queriedKey) == expectedPressed);
+            CHECK(!keyboard.IsKeyDown(queriedKey));
+        }
+        keyboard.BeginEventPoll();
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+            CHECK(!keyboard.IsKeyDown(queriedKey));
+        }
+    }
     return true;
 }
 
-bool TestPulseLifetimeAndRepeatedQueries()
+/**
+ * 全keyでseed、repeat抑止、新down記録、focus喪失相当の消去を確認する。
+ */
+bool TestAllVirtualKeySeedRepeatAndClear()
 {
     gk::platform::FKeyboardState keyboard;
-    keyboard.SetKeyDown(0x1b, true);
-    CHECK(keyboard.WasKeyPressed(0x1b));
-    CHECK(keyboard.WasKeyPressed(0x1b));
-    CHECK(keyboard.IsKeyDown(0x1b));
-    keyboard.BeginEventPoll();
-    CHECK(!keyboard.WasKeyPressed(0x1b));
-    CHECK(keyboard.IsKeyDown(0x1b));
-    keyboard.SetKeyDown(0x1b, false);
-    CHECK(!keyboard.IsKeyDown(0x1b));
-    return true;
-}
+    for (uint32_t seededKey = 0; seededKey < 256; ++seededKey)
+    {
+        keyboard.Clear();
+        keyboard.SetHeldState(seededKey, true);
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(keyboard.IsKeyDown(queriedKey) == (queriedKey == seededKey));
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+        }
 
-bool TestRepeatAndRepressTransitions()
-{
-    gk::platform::FKeyboardState keyboard;
-    keyboard.SetKeyDown(0x20, true);
-    keyboard.BeginEventPoll();
-    keyboard.SetKeyDown(0x20, true);
-    CHECK(!keyboard.WasKeyPressed(0x20));
-    CHECK(keyboard.IsKeyDown(0x20));
-    keyboard.SetKeyDown(0x20, false);
-    keyboard.BeginEventPoll();
-    keyboard.SetKeyDown(0x20, true);
-    CHECK(keyboard.WasKeyPressed(0x20));
-    CHECK(keyboard.IsKeyDown(0x20));
-    return true;
-}
+        keyboard.BeginEventPoll();
+        keyboard.RecordKeyDown(seededKey, true);
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(keyboard.IsKeyDown(queriedKey) == (queriedKey == seededKey));
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+        }
 
-bool TestSeedAndFocusClear()
-{
-    gk::platform::FKeyboardState keyboard;
-    keyboard.SetHeldState(0x1b, true);
-    CHECK(keyboard.IsKeyDown(0x1b));
-    CHECK(!keyboard.WasKeyPressed(0x1b));
-    keyboard.Clear();
-    CHECK(!keyboard.IsKeyDown(0x1b));
-    CHECK(!keyboard.WasKeyPressed(0x1b));
-    keyboard.SetKeyDown(0x1b, true);
-    keyboard.Clear();
-    CHECK(!keyboard.IsKeyDown(0x1b));
-    CHECK(!keyboard.WasKeyPressed(0x1b));
-    return true;
-}
+        // bit 30が0のdown通知はseed済み状態でも新しい押下として記録する。
+        keyboard.RecordKeyDown(seededKey, false);
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(keyboard.IsKeyDown(queriedKey) == (queriedKey == seededKey));
+            CHECK(keyboard.WasKeyPressed(queriedKey) == (queriedKey == seededKey));
+        }
 
-bool TestSeededKeyDownMessageRaisesPulse()
-{
-    gk::platform::FKeyboardState keyboard;
-    keyboard.SetHeldState(0x20, true);
-    keyboard.RecordKeyDown(0x20, false);
-    CHECK(keyboard.WasKeyPressed(0x20));
-    CHECK(keyboard.IsKeyDown(0x20));
-    return true;
-}
+        keyboard.Clear();
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(!keyboard.IsKeyDown(queriedKey));
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+        }
 
-bool TestRepeatAfterClearDoesNotRaisePulse()
-{
-    gk::platform::FKeyboardState keyboard;
-    keyboard.Clear();
-    keyboard.RecordKeyDown(0x20, true);
-    CHECK(!keyboard.WasKeyPressed(0x20));
-    CHECK(!keyboard.WasKeyPressed(0x20));
-    CHECK(keyboard.IsKeyDown(0x20));
+        keyboard.RecordKeyDown(seededKey, true);
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(keyboard.IsKeyDown(queriedKey) == (queriedKey == seededKey));
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+        }
+
+        keyboard.Clear();
+        for (uint32_t queriedKey = 0; queriedKey < 256; ++queriedKey)
+        {
+            CHECK(!keyboard.IsKeyDown(queriedKey));
+            CHECK(!keyboard.WasKeyPressed(queriedKey));
+        }
+    }
     return true;
 }
 
@@ -123,6 +129,6 @@ bool TestKeyRange()
 
 int main()
 {
-    const bool passed = TestPressAndReleaseWithinOnePoll() && TestPulseLifetimeAndRepeatedQueries() && TestRepeatAndRepressTransitions() && TestSeedAndFocusClear() && TestSeededKeyDownMessageRaisesPulse() && TestRepeatAfterClearDoesNotRaisePulse() && TestKeyRange();
+    const bool passed = TestAllVirtualKeyPressReleasePulses() && TestAllVirtualKeySeedRepeatAndClear() && TestKeyRange();
     return passed ? 0 : 1;
 }

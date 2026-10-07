@@ -17,7 +17,7 @@
 
 2026-10-05、Windows 11 Pro x64 (build 26200)、Visual Studio 18 2026 / v142 14.29 (MSVC 19.29.30159)、Windows SDK 10.0.22621.0、CMake 4.3.1、GeForce RTX 4070 SUPERで、最終`PRE_SETUP.bat --gpu-check`が成功しRelease RuntimeとCTest 32/32を確認しました。GPU smokeは2.46秒、5 mode画素検査は5.95秒、install済みSDK consumer GPU smokeは3.77秒、合計15.05秒です。CPU RuntimeOFFのDebug/Release CTestは同じPCで各27/27成功しましたが、MSVC 19.51.36260.0とWindows SDK 10.0.28000.0を使った別toolchainでの検証です。標準consumer GPU smokeはInit、描画、Present、Shutdownまで成功しました。詳細は[TDD 検証ログ](TDD_LOG.md)と[GPU描画検証](render-validation.md)を参照してください。
 
-FSL artifact の検査テストは `python3 tests/shader_contract_tests.py` で実行します。固定した The Forge の D3D12 adapter 検索はsoftware adapterを除外するため、WARPは利用できません。GPU画素読み戻しとサンプルの目視は実施済みですが、検査は固定位置・色・領域閾値による回帰判定です。全面画像の画質acceptance、すべてのモデル形式の実機表示、Runtime Debug、他GPU、全入力操作の網羅、再配布条件の最終確認は未実施です。
+FSL artifact の検査テストは `python3 tests/shader_contract_tests.py` で実行します。固定した The Forge の D3D12 adapter 検索はsoftware adapterを除外するため、WARPは利用できません。GPU画素読み戻しとサンプルの目視は実施済みですが、検査は固定位置・色・領域閾値による回帰判定です。全面画像の画質acceptance、すべてのモデル形式の実機表示、他GPU、全入力操作の網羅、GPU-based validation、再配布条件の最終確認は未実施です。
 
 見た目の回帰検査では Windows GPU ごとに基準画像を用意する方針です。同じ GPU、driver、画像で、RGB のいずれかが 2/255 を超えて異なる画素の割合を 1% 以下、RGB 全 channel の平均絶対誤差を 2/255 以下にします。GPU が異なる画像同士は比較しません。
 
@@ -27,10 +27,12 @@ FSL artifact の検査テストは `python3 tests/shader_contract_tests.py` で�
 
 2026-10-07の追加確認で、Release全CTestは34/34、RuntimeOFFのCPU Debug/Releaseは各28/28成功しました。キー押下の保持を追加し、輪郭サンプルのSpace切り替えとEscape終了を実際に確認しました。連続描画テストは123フレームを実行し、フレーム119・120の画像を読み戻します。詳細は[キー入力](input.md)と[描画検証](render-validation.md)を参照してください。
 
+公開47キーの固定した期待値と、仮想キー256個すべての押下・反復・消去をCPUテストで確認しました。RuntimeのDebug構成も標準セットアップからビルドし、Debug LayerのInfoQueueが有効な状態で全34テストが成功しました。Releaseも全34テストが成功し、同じGPU・driverで取得した11枚の画像はbyte単位で一致しました。DebugとReleaseのForgeライブラリ・Runtime出力は別フォルダーへ保存します。GPU-based validationと全キーの実操作は未確認です。
+
 ## 次に進める内容
 
 1. 高負荷での連続描画、入力操作、各エフェクトの個別設定をGPU画像と起動画面で確認し、画質評価を進める。現在の画像テストは代表画素・領域、6フレームの設定切り替え、多数の矩形を123フレーム描いた後の出力を検査する。
-2. 初学者向け手引きを使った導入確認と、Runtime Debug・他GPU・全モデル形式の実機表示を検証する。インストールSDK consumerのInit・最初のPresentは確認済み。
+2. 初学者向け手引きを使った導入確認と、他GPU・全モデル形式の実機表示を検証する。インストールSDK consumerのInit・最初のPresentは確認済み。
 3. 依存物の再配布条件と gkcore 自身の配布ライセンスを確定し、必要な notice を整える。
 4. 影、環境マップ / IBL、metallic-roughness texture、normal map、alpha mode とモデル材質用 shader ABI を設計・実装・検証する。
 

@@ -115,6 +115,13 @@ bool FFrameCapture::Record(Renderer* renderer, Cmd* command, RenderTarget* targe
     if (target->mWidth == 0 || target->mHeight == 0)
         return SetCaptureError(error, "The GPU capture target has an empty size");
 
+#if defined(ENABLE_GRAPHICS_VALIDATION) && defined(_WINDOWS)
+    // Debugの設定だけでなく、実際に診断キューを取得できたかを記録する。
+    std::fprintf(stderr, "GKCORE_TEST_D3D12_INFOQUEUE=%s\n", renderer->mDx.pDebugValidation ? "active" : "unavailable");
+    if (!renderer->mDx.pDebugValidation)
+        return SetCaptureError(error, "The D3D12 Debug InfoQueue is unavailable");
+#endif
+
     // D3D12 copyに使う実resourceのformatとsample数。
     const D3D12_RESOURCE_DESC sourceDesc = target->pTexture->mDx.pResource->GetDesc();
     if (target->mFormat == TinyImageFormat_R8G8B8A8_SRGB && (sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB || sourceDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM))

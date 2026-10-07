@@ -29,9 +29,9 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release Runtimeと最新CTest 34/34が成功しました。GPU画素検査は基本描画・モデル照明に加え、同じアプリの6フレームで効果切り替えとUIの色維持を確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release Runtimeは全CTest 34/34（20.31秒）、Debug Runtimeは全CTest 34/34（21.59秒）が成功しました。DebugのGPU画像検査中、13箇所でD3D12 InfoQueueの取得を確認しました。ReleaseとDebugで同じ11枚のテスト画像がbyte単位で一致しました。これは画質の合否やGPU-based validationを確認した結果ではありません。別GPUでの実行も未確認です。
 
-固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。今回のRelease実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
+固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。ReleaseとDebugの実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
 ## Windows GPU smoke と画面の目視確認
 
@@ -41,9 +41,19 @@ DX12 対応 GPU を搭載した Windows PC で次を実行すると、通常の 
 PRE_SETUP.bat --gpu-check
 ```
 
+Debug Runtimeを含む全テストとGPU smokeを実行する場合は、Debug専用のbuild rootを使う次のコマンドを実行します。
+
+```bat
+PRE_SETUP.bat --configuration Debug --gpu-check
+```
+
+Visual Studio用CMakeを直接実行する場合も、Debug rootは`CMAKE_CONFIGURATION_TYPES=Debug`だけ、Release rootは`CMAKE_CONFIGURATION_TYPES=Release`だけにし、同じ構成のThe Forge buildを`GKCORE_FORGE_BUILD_DIR`へ指定します。DebugとReleaseを同じrootへ混在させると、Debug専用のSDK Layers配置条件が成立しません。`PRE_SETUP.bat`は構成ごとにrootと依存buildを分けてこの条件を設定します。
+
 2026-10-05に`PRE_SETUP.bat --gpu-check`を再実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプル、全CTest 32/32が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。GPU smokeは2.46秒、5 modeの画素検査は5.95秒、SDK consumer GPU smokeは3.77秒、全体は15.05秒でした。最終ログは`build/native-validation/pre-setup-render-final.log`です。
 
-`gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。2026-10-07の追加検証では、同一アプリ内の6フレームを取得してポスト効果の有効・無効切り替えとUIの色維持も確認しました。更新後のRelease全CTestは32/32件成功しています。ログは`build/native-validation/sequence-final-{build,tests}.log`です。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
+`gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。2026-10-07の追加検証では、同一アプリ内の6フレームを取得してポスト効果の有効・無効切り替えとUIの色維持も確認しました。Release全CTestは34/34件成功しています。ログは`build/native-validation/input-stress-final-{build,tests}.log`です。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
+
+Debug Runtimeの確認では、Debug構成が`_DEBUG`からThe Forgeの`FORGE_DEBUG`と`ENABLE_GRAPHICS_VALIDATION`を有効にすることに加え、実行時のInfoQueueを確認します。`d3d12SDKLayers.dll`がDebug出力先にない最初の実行ではInfoQueueを取得できず、取得を必須にしたテストがPresentで失敗しました。固定したAgility SDKの同DLLをDebug出力先へstageした後、全13箇所でInfoQueueが有効と記録され、Debug全CTest 34/34が成功しました。Debug構成を選んだだけではSDK Layersの取得を保証しません。GPU-based validationは有効化していません。結果ログは`build/native-validation/pre-setup-debug-validated.log`（21.59秒）です。
 
 色の変化を目で確かめるには、同じ build が作る `build\runtime-windows\Release\gkcore_custom_post_effect.exe` を起動します。ウィンドウを 960×540 以上に保ち、Space キーでポスト効果を切り替えてください。有効時には Scene の三角形と矩形の色が変わり、無効時には元の色に戻ります。緑の UI 矩形と画面下部の ON/OFF 表示は Scene の効果に影響されず、ウィンドウをリサイズしても表示されることを目で確認します。Escape キーで終了します。
 
@@ -90,7 +100,7 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 
 ## 押下の保持と連続描画
 
-`WasKeyPressed`は直近の`ProcessEvents`で受信した押下を次の処理まで保持します。`IsKeyDown`は現在の押下中状態を返します。純CPUテストで短い押下、反復、focusの消去・復帰、範囲外のキーを確認し、輪郭サンプルでもSpace切り替えとEscape終了を操作して確認しました。[キー入力](input.md)を参照してください。
+`WasKeyPressed`は直近の`ProcessEvents`で受信した押下を次の処理まで保持します。`IsKeyDown`は現在の押下中状態を返します。純CPU契約テストでは公開47キーのVK変換と0〜255の全入力slotを確認し、輪郭サンプルではSpace切り替えと短いEscape入力による終了を実際に操作しました。全キーを実画面から操作する検査は未実施です。[キー入力](input.md)を参照してください。
 
 `gkcore.frame_stress`は123フレームの多数描画を実行し、119・120番目だけを取得します。取得前のフレームは通常の描画同期を使います。検査用の`GKCORE_TEST_CAPTURE_START_FRAME`は0〜65535、取得枚数は1〜16で、省略時は最初の1枚を取得します。これは性能の合否判定や全面画質評価ではありません。
 
