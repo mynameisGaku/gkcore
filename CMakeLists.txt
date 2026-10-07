@@ -581,6 +581,10 @@ if(GKCORE_BUILD_RUNTIME)
             target_compile_features(gkcore_post_effect_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_post_effect_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_post_effect_capture_tests)
+            add_executable(gkcore_image_lifetime_capture_tests tests/image_lifetime_capture_tests.cpp)
+            target_compile_features(gkcore_image_lifetime_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_image_lifetime_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_image_lifetime_capture_tests)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -599,6 +603,11 @@ if(GKCORE_BUILD_RUNTIME)
                     --executable $<TARGET_FILE:gkcore_post_effect_capture_tests>
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/post-effect-captures/$<CONFIG>)
             set_tests_properties(gkcore.post_effect_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.image_lifetime_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/image_lifetime_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_image_lifetime_capture_tests>
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/image-lifetime-captures/$<CONFIG>)
+            set_tests_properties(gkcore.image_lifetime_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -638,6 +647,9 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     if(TARGET gkcore_post_effect_capture_tests)
         add_dependencies(gkcore_post_effect_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_image_lifetime_capture_tests)
+        add_dependencies(gkcore_image_lifetime_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

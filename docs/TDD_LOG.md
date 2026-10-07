@@ -613,3 +613,22 @@ ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
 Releaseは全35/35件成功、追加画像テスト14.14秒、全体35.59秒でした。Debugも35/35件成功、追加画像テスト15.45秒、全体38.72秒でした。ログは`build/native-validation/post-effects-{release,debug}-final-{build,tests}.log`です。DebugはInfoQueue取得を必須とする既存画像取得経路を使います。設定11枚・設定保持3枚の計14画像はRelease/Debugでbyte単位に一致しました。同じGPUとdriverの回帰結果です。
 
 新しい取得コードとテストは開発用で、Runtime SDKのinstall対象には含めません。全面画像の画質、ちらつき、GPU負荷や目標FPS、他GPU、透明UI全般の評価は別に行います。ユーザー向け文書には実GPU画像を色変換せずPNGとして掲載しました。
+
+
+## 2026-10-07: 透明UI、画像回転と削除後のGPU描画
+
+開発用GPU fixtureで、RGBA赤画像のalpha 0・64・128・255を青い不透明UI背景へ合成し、alphaBlendを無効にした場合も確認しました。alpha0は青 `(0, 0, 255)`、64は `(137, 0, 224)`、128は `(188, 0, 187)`、255は赤 `(255, 0, 0)`でした。alphaBlend=falseではalpha0を含む両端が赤になりました。1×1の半透明画像を64倍に拡大した場合も `(188, 0, 187)`でした。
+
+4色の32×16画像を原寸表示し、中心指定で2倍・90度回転した表示も検査しました。画面の下方向を正のYとする時計回り回転で、回転画像は左上が青・右上が赤・左下が白・右下が緑になりました。初回テストは原寸画像を2倍と誤解した座標で範囲外を読み、期待の緑に対してScene背景 `(40, 80, 120)`となって失敗しました（`build/native-validation/image-lifetime-first.log`）。独立レビューでも同じ指摘があり、サンプル座標と比較領域を32×16内へ修正しました。これはテストの座標誤りであり、Runtimeの描画処理は変更していません。
+
+画像を描画queueへ登録した後、Presentより前に3つのhandleを削除しました。古いhandleでの新しいDrawImageは診断付きで拒否され、登録済みの画像は取得画面に残りました。別の実行では132フレームで毎回3画像を新規LoadImageし、描画登録とhandle削除を繰り返しました。396個のpayloadがGPU cacheの128枠を超えた後、フレーム130と131だけを取得し、基準・効果有効時と同じUI画素が保たれることを確認しました。256MiB byte budgetの上限検査ではありません。
+
+Sceneは効果無効時の `(40, 80, 120)`から有効時 `(151, 151, 151)`へ変わりましたが、青いUI背景内の透明画像・原寸の不透明画像・回転の不透明画像の領域はbyte単位で一致しました。検査対象の背景を固定した透明UIの結果で、異なるScene背景を透過させるあらゆるUIの確認ではありません。Release/Debugの基準・効果有効・cache入れ替え後2枚の計4画像もbyte単位で一致しました。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0で両Runtime構成をビルドし、新しい画像testを含む全CTestを実行しました。Releaseのログは`build/native-validation/image-lifetime-release-final-{build,tests}.log`、Debugは`image-lifetime-debug-final-{build,tests}.log`です。各構成の画像と検査値は`build/runtime-windows/image-lifetime-captures/Release`と`build/runtime-windows-debug/image-lifetime-captures/Debug`へ保存しています。
+
+Runtime本体のソースは変更せず、取得用DLLとfixtureはSDKのinstall対象に含めません。GPU負荷・目標FPS、全フレームのちらつき、device lossや画像転送失敗を含む異常終了時のcleanup、全blend方式、他GPUは未検証です。独立レビューで見つかったTextureCacheの転送drain失敗時の資源破棄分岐も、今回の正常経路の試験では評価していません。
+
+Releaseは全36/36件成功、画像寿命検査4.03秒、全体39.89秒でした。Debugも全36/36件成功、画像寿命検査4.36秒、全体42.61秒でした。SDK consumerを含む配布物検査も両構成で成功しています。
+
+画像ガイドのC++サンプルはv142で構文検査し、成功しました。イベント処理の失敗と通常のウィンドウ終了を区別し、API失敗を終了コードへ反映します。
