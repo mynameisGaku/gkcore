@@ -312,7 +312,7 @@ if(GKCORE_BUILD_TESTS)
 
     set(_gkcore_model_normal_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-normal-fixtures")
     set(_gkcore_model_normal_fixture_files)
-    foreach(_fixture_name IN ITEMS no-normal uniform-normal normal-reference alpha-ignored scale-zero scale-two scale-two-reference scale-negative scale-negative-reference mirrored-tangent mirrored-reference uv1-pattern uv1-reference shared-image shared-reference node-mirror-normal node-mirror-reference tiny-node-scale mixed-sign-triangles missing-tangent missing-normal missing-normal-uv bad-tangent-w tangent-w-mismatch parallel-tangent zero-tangent singular-node bad-normal-scale transform-normal)
+    foreach(_fixture_name IN ITEMS no-normal uniform-normal normal-reference alpha-ignored scale-zero scale-two scale-two-reference scale-negative scale-negative-reference mirrored-tangent mirrored-reference uv1-pattern uv1-reference shared-image shared-reference node-mirror-normal node-mirror-reference tiny-node-scale mixed-sign-triangles shared-image-aliases distinct-image-records mixed-role-image-alias alias-missing-uv alias-transform missing-tangent missing-normal missing-normal-uv bad-tangent-w tangent-w-mismatch parallel-tangent zero-tangent singular-node bad-normal-scale transform-normal)
         list(APPEND _gkcore_model_normal_fixture_files "${_gkcore_model_normal_fixture_dir}/${_fixture_name}.glb")
     endforeach()
     add_custom_command(OUTPUT ${_gkcore_model_normal_fixture_files}

@@ -38,9 +38,9 @@ bool CheckEvents()
  */
 int main(int argc, char** argv)
 {
-    if (argc != 3 || (std::strcmp(argv[2], "scene") != 0 && std::strcmp(argv[2], "ui") != 0 && std::strcmp(argv[2], "stress") != 0 && std::strcmp(argv[2], "mirror") != 0))
+    if (argc != 3 || (std::strcmp(argv[2], "scene") != 0 && std::strcmp(argv[2], "ui") != 0 && std::strcmp(argv[2], "stress") != 0 && std::strcmp(argv[2], "mirror") != 0 && std::strcmp(argv[2], "aliases-frame") != 0))
     {
-        std::fprintf(stderr, "usage: model_normal_capture_tests <model-file> <scene|ui|stress|mirror>\n");
+        std::fprintf(stderr, "usage: model_normal_capture_tests <model-file> <scene|ui|stress|mirror|aliases-frame>\n");
         return 2;
     }
 
@@ -54,6 +54,8 @@ int main(int argc, char** argv)
     const bool stressMode = std::strcmp(argv[2], "stress") == 0;
     const bool uiMode = std::strcmp(argv[2], "ui") == 0;
     const bool mirrorMode = std::strcmp(argv[2], "mirror") == 0;
+    // 画像aliasを同じframe内で積む検査mode。
+    const bool aliasesFrameMode = std::strcmp(argv[2], "aliases-frame") == 0;
     // モデル材質のnormal mapが変える照明結果を固定する。
     bool passed = Check(gk::SetCamera(gk::Vec3{ 0.0f, 0.0f, -3.0f }, gk::Vec3{ 0.0f, 0.0f, 0.0f }), "SetCamera") && Check(gk::SetAmbientLight(0.1f), "SetAmbientLight") && Check(gk::SetDirectionalLight(gk::Vec3{ 0.7f, 0.4f, 1.0f }, 2.0f), "SetDirectionalLight") && Check(gk::SetBloomEnabled(false), "SetBloomEnabled") && Check(gk::SetBloomIntensity(0.0f), "SetBloomIntensity") && Check(gk::SetToneMappingEnabled(false), "SetToneMappingEnabled") && Check(gk::SetFxaaEnabled(false), "SetFxaaEnabled") && Check(gk::SetExposure(1.0f), "SetExposure") && Check(gk::SetSaturation(1.0f), "SetSaturation") && Check(gk::SetContrast(1.0f), "SetContrast") && Check(gk::SetPostEffectShader({}), "SetPostEffectShader(disabled)");
 
@@ -66,6 +68,31 @@ int main(int argc, char** argv)
         {
             passed = false;
             break;
+        }
+        if (aliasesFrameMode)
+        {
+            passed = Check(gk::BeginFrame(), "BeginFrame") && Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "SetDrawLayer(Scene)") && Check(gk::DrawRect(0.0f, 0.0f, 640.0f, 480.0f, gk::ColorRGB(40, 80, 120), true), "DrawRect(background)");
+            // 1 frameに保持させる独立したモデルhandle数。
+            const int aliasModelCount = 50;
+            for (int aliasIndex = 0; passed && aliasIndex < aliasModelCount; ++aliasIndex)
+            {
+                // 同じGLBを別handleで読み、各描画を登録してからhandleを破棄する。
+                const gk::ModelHandle aliasModel = gk::LoadModel(argv[1]);
+                if (!aliasModel.IsValid())
+                {
+                    std::fprintf(stderr, "LoadModel(alias %d): %s\n", aliasIndex, gk::GetLastErrorMessage());
+                    passed = false;
+                    break;
+                }
+                passed = Check(gk::SetModelPosition(aliasModel, gk::Vec3{ 0.0f, 0.0f, 0.0f }), "SetModelPosition(alias)") && Check(gk::SetModelRotation(aliasModel, gk::Vec3{ 0.0f, 0.0f, 0.0f }), "SetModelRotation(alias)") && Check(gk::SetModelScale(aliasModel, gk::Vec3{ 1.0f, 1.0f, 1.0f }), "SetModelScale(alias)") && Check(gk::DrawModel(aliasModel), "DrawModel(alias)");
+                const bool deleted = Check(gk::DeleteModel(aliasModel), "DeleteModel(alias before Present)");
+                passed = passed && deleted;
+            }
+            if (passed)
+            {
+                passed = Check(gk::SetDrawLayer(gk::DrawLayer::UI), "SetDrawLayer(UI marker)") && Check(gk::DrawRect(520.0f, 32.0f, 64.0f, 48.0f, gk::ColorRGB(0, 255, 0), true), "DrawRect(UI marker)") && Check(gk::Present(), "Present(aliases-frame)");
+            }
+            continue;
         }
         // このframeで読み込むモデルの所有handle。
         const gk::ModelHandle model = gk::LoadModel(argv[1]);

@@ -3,6 +3,7 @@
 #include "../foundation/Memory.h"
 #include "../../third_party/cgltf/cgltf.h"
 #include <math.h>
+#include <stdint.h>
 #include <string.h>
 
 /**
@@ -23,7 +24,7 @@ const uint32_t maxOutputVertices = 4000000u;
 const uint32_t maxOutputIndices = 6000000u;
 // 検査対象にできるsource要素数の上限。
 const uint32_t maxSourceValues = 2000000u;
-// texture mapに未割当を示すindex値。
+// image mapに未割当を示すindex値。
 const uint32_t missingIndex = 0xffffffffu;
 /**
  * 変換後の頂点属性へ保存する前に有限値か確かめる。
@@ -31,6 +32,27 @@ const uint32_t missingIndex = 0xffffffffu;
 bool IsFinite(float value)
 {
     return isfinite(value) != 0;
+}
+
+/**
+ * 配列内にある要素だけを見つけ、必要ならそのindexを返す。
+ */
+bool FindArrayIndex(const void* array, cgltf_size count, size_t elementSize, const void* element, cgltf_size* index)
+{
+    if (!array || !element || !count || !elementSize)
+        return false;
+    // 配列先頭と照合対象のアドレス。
+    const uintptr_t arrayStart = reinterpret_cast<uintptr_t>(array);
+    const uintptr_t elementAddress = reinterpret_cast<uintptr_t>(element);
+    if (count > static_cast<cgltf_size>((UINTPTR_MAX - arrayStart) / elementSize))
+        return false;
+    // count上限を確認した配列byte数。
+    const uintptr_t arrayBytes = static_cast<uintptr_t>(count) * elementSize;
+    if (elementAddress < arrayStart || elementAddress - arrayStart >= arrayBytes || (elementAddress - arrayStart) % elementSize != 0)
+        return false;
+    if (index)
+        *index = (elementAddress - arrayStart) / elementSize;
+    return true;
 }
 
 /**
@@ -124,47 +146,59 @@ bool TransformMappedTangent(const float matrix[16], const float source[4], const
  * glTF textureを画像resourceへ登録し、共有済みslotを返す。
  * 参照外、未対応画像、読み込みや確保の失敗では-1を返す。
  */
-int32_t AddTexture(cgltf_data* data, const cgltf_texture_view& view, const char* role, ModelResource& model, uint32_t* textureMap, String& error)
+int32_t AddTexture(cgltf_data* data, const cgltf_texture_view& view, const char* role, ModelResource& model, uint32_t* imageMap, String& error)
 {
-    // data内のtexture配列で参照textureが占める位置。
-    const cgltf_size textureIndex = static_cast<cgltf_size>(view.texture - data->textures);
-    if (textureIndex >= data->textures_count)
+    if (!FindArrayIndex(data->textures, data->textures_count, sizeof(cgltf_texture), view.texture, nullptr))
     {
         error.Assign(role);
         error.Append(" texture reference is invalid");
         return -1;
     }
-    if (textureMap[textureIndex] == missingIndex)
+    // textureが参照する画像recordと、その配列内index。
+    cgltf_image* sourceImage = view.texture->image;
+    cgltf_size imageIndex = 0;
+    if (!FindArrayIndex(data->images, data->images_count, sizeof(cgltf_image), sourceImage, &imageIndex))
     {
-        // このtextureが参照する画像データ。
-        cgltf_image* sourceImage = view.texture->image;
-        if (!sourceImage || !sourceImage->buffer_view || !sourceImage->mime_type || strcmp(sourceImage->mime_type, "image/png") != 0)
-        {
-            error.Assign(role);
-            error.Append(" image must be embedded PNG data");
-            return -1;
-        }
-        // decoderへ渡す埋め込みPNG byte列。
-        const uint8_t* encoded = cgltf_buffer_view_data(sourceImage->buffer_view);
-        if (!encoded || sourceImage->buffer_view->size > maxModelFileBytes)
-        {
-            error.Assign(role);
-            error.Append(" image buffer is invalid or too large");
-            return -1;
-        }
-        // decodeした画像resource。複数材質から同じtextureを共有する。
+        error.Assign(role);
+        error.Append(" image reference is invalid");
+        return -1;
+    }
+    if (sourceImage->uri || !sourceImage->buffer_view || !FindArrayIndex(data->buffer_views, data->buffer_views_count, sizeof(cgltf_buffer_view), sourceImage->buffer_view, nullptr) || !sourceImage->mime_type || strcmp(sourceImage->mime_type, "image/png") != 0)
+    {
+        error.Assign(role);
+        error.Append(" image must be embedded PNG data");
+        return -1;
+    }
+    if (sourceImage->buffer_view->size > maxModelFileBytes)
+    {
+        error.Assign(role);
+        error.Append(" image buffer is invalid or too large");
+        return -1;
+    }
+    // alias参照でもbuffer範囲を確認してからdecoded image mapを見る。
+    const uint8_t* encoded = cgltf_buffer_view_data(sourceImage->buffer_view);
+    if (!encoded)
+    {
+        error.Assign(role);
+        error.Append(" image buffer is invalid or too large");
+        return -1;
+    }
+    if (imageMap[imageIndex] == missingIndex)
+    {
+        // 同じimage recordに対して一度だけ作る所有resource。
         ImageResource* image = DecodeImagePayload(encoded, static_cast<uint32_t>(sourceImage->buffer_view->size), error);
         if (!image)
             return -1;
-        textureMap[textureIndex] = model.textures.Count();
+        const uint32_t textureSlot = model.textures.Count();
         if (!model.textures.Append(image))
         {
             Release(&image->reference);
             error.Assign("GLB material texture allocation failed");
             return -1;
         }
+        imageMap[imageIndex] = textureSlot;
     }
-    return static_cast<int32_t>(textureMap[textureIndex]);
+    return static_cast<int32_t>(imageMap[imageIndex]);
 }
 
 /**
@@ -208,7 +242,7 @@ void TransformNormal(const float matrix[16], const float source[3], float output
 /**
  * glTF材質または既定材質を重複のないモデルentryへ登録する。
  */
-int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& model, uint32_t* textureMap, String& error)
+int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& model, uint32_t* imageMap, String& error)
 {
     // 基本色、金属度、粗さ、画像slotを保持する材質値。
     ModelMaterial material{};
@@ -258,13 +292,13 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         material.roughnessFactor = pbr.roughness_factor;
         if (pbr.base_color_texture.texture)
         {
-            material.baseColorTextureIndex = AddTexture(data, pbr.base_color_texture, "GLB base-color", model, textureMap, error);
+            material.baseColorTextureIndex = AddTexture(data, pbr.base_color_texture, "GLB base-color", model, imageMap, error);
             if (material.baseColorTextureIndex < 0)
                 return -1;
         }
         if (pbr.metallic_roughness_texture.texture)
         {
-            material.metallicRoughnessTextureIndex = AddTexture(data, pbr.metallic_roughness_texture, "GLB metallic-roughness", model, textureMap, error);
+            material.metallicRoughnessTextureIndex = AddTexture(data, pbr.metallic_roughness_texture, "GLB metallic-roughness", model, imageMap, error);
             if (material.metallicRoughnessTextureIndex < 0)
                 return -1;
         }
@@ -277,7 +311,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
             error.Assign("GLB normal texture scale must be finite");
             return -1;
         }
-        material.normalTextureIndex = AddTexture(data, source->normal_texture, "GLB normal", model, textureMap, error);
+        material.normalTextureIndex = AddTexture(data, source->normal_texture, "GLB normal", model, imageMap, error);
         if (material.normalTextureIndex < 0)
             return -1;
         material.normalScale = source->normal_texture.scale;
@@ -356,7 +390,7 @@ bool SelectTextureUv(const cgltf_primitive& primitive, const cgltf_texture_view&
 /**
  * index付き三角形primitiveを検証し、変換済み頂点・index・材質を追加する。
  */
-bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const float matrix[16], ModelResource& model, uint32_t* textureMap, String& error)
+bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const float matrix[16], ModelResource& model, uint32_t* imageMap, String& error)
 {
     if (primitive->type != cgltf_primitive_type_triangles || primitive->targets_count || primitive->has_draco_mesh_compression)
     {
@@ -545,7 +579,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         }
     }
     // primitiveが参照する重複除去済み材質slot。
-    const int32_t materialIndex = AddMaterial(data, primitive->material, model, textureMap, error);
+    const int32_t materialIndex = AddMaterial(data, primitive->material, model, imageMap, error);
     if (materialIndex < 0)
         return false;
     // 追加したindex範囲と材質slotを結ぶprimitive記録。
@@ -561,11 +595,11 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
 /**
  * nodeのworld変換を使ってmesh内の全primitiveを追加する。
  */
-bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], ModelResource& model, uint32_t* textureMap, String& error)
+bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], ModelResource& model, uint32_t* imageMap, String& error)
 {
     // mesh内のprimitiveを順番に追加するloop。
     for (cgltf_size i = 0; i < mesh->primitives_count; ++i)
-        if (!AppendGlbPrimitive(data, &mesh->primitives[i], matrix, model, textureMap, error))
+        if (!AppendGlbPrimitive(data, &mesh->primitives[i], matrix, model, imageMap, error))
             return false;
     return true;
 }
@@ -573,7 +607,7 @@ bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], M
 /**
  * 選択sceneのnode subtreeをたどり、階層深度とskin制約を守る。
  */
-bool VisitGlbNode(cgltf_data* data, cgltf_node* node, uint32_t depth, ModelResource& model, uint32_t* textureMap, String& error)
+bool VisitGlbNode(cgltf_data* data, cgltf_node* node, uint32_t depth, ModelResource& model, uint32_t* imageMap, String& error)
 {
     if (!node || depth > 64 || node->skin)
     {
@@ -583,11 +617,11 @@ bool VisitGlbNode(cgltf_data* data, cgltf_node* node, uint32_t depth, ModelResou
     // nodeから子へ適用するworld変換行列。
     float matrix[16];
     cgltf_node_transform_world(node, matrix);
-    if (node->mesh && !AppendGlbMesh(data, node->mesh, matrix, model, textureMap, error))
+    if (node->mesh && !AppendGlbMesh(data, node->mesh, matrix, model, imageMap, error))
         return false;
     // 子nodeを深さを進めて再帰処理するloop。
     for (cgltf_size i = 0; i < node->children_count; ++i)
-        if (!VisitGlbNode(data, node->children[i], depth + 1, model, textureMap, error))
+        if (!VisitGlbNode(data, node->children[i], depth + 1, model, imageMap, error))
             return false;
     return true;
 }
@@ -702,36 +736,36 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
     }
     // finishで返す最終読み込み結果。
     bool success = false;
-    // glTF textureからモデルtexture slotへの対応表。
-    uint32_t* textureMap = nullptr;
+    // glTF image recordからdecoded resource slotへの対応表。
+    uint32_t* imageMap = nullptr;
     if (data->file_type != cgltf_file_type_glb || !data->asset.version || strcmp(data->asset.version, "2.0") != 0 || data->buffers_count != 1 || data->buffers[0].uri || data->skins_count || !ValidateParentGraph(data, error) || cgltf_load_buffers(&options, data, nullptr) != cgltf_result_success || cgltf_validate(data) != cgltf_result_success)
     {
         if (error.Empty())
             error.Assign("GLB must be valid version 2.0 with one embedded static buffer");
         goto finish;
     }
-    if (data->textures_count > maxSourceValues || data->nodes_count > maxSourceValues || data->meshes_count > maxSourceValues)
+    if (data->textures_count > maxSourceValues || data->images_count > maxSourceValues || data->nodes_count > maxSourceValues || data->meshes_count > maxSourceValues)
     {
-        error.Assign("GLB contains too many textures, nodes, or meshes");
+        error.Assign("GLB contains too many textures, images, nodes, or meshes");
         goto finish;
     }
-    if (data->textures_count)
+    if (data->images_count)
     {
-        textureMap = static_cast<uint32_t*>(Allocate(sizeof(uint32_t) * data->textures_count));
-        if (!textureMap)
+        imageMap = static_cast<uint32_t*>(Allocate(sizeof(uint32_t) * data->images_count));
+        if (!imageMap)
         {
-            error.Assign("GLB texture map allocation failed");
+            error.Assign("GLB image map allocation failed");
             goto finish;
         }
-        // texture対応表を未割当状態で初期化するloop。
-        for (cgltf_size i = 0; i < data->textures_count; ++i)
-            textureMap[i] = missingIndex;
+        // image recordとdecoded resourceの対応表を未割当で初期化するloop。
+        for (cgltf_size i = 0; i < data->images_count; ++i)
+            imageMap[i] = missingIndex;
     }
     if (data->scene)
     {
         // 選択sceneのroot nodeを順に変換するloop。
         for (cgltf_size i = 0; i < data->scene->nodes_count; ++i)
-            if (!VisitGlbNode(data, data->scene->nodes[i], 0, model, textureMap, error))
+            if (!VisitGlbNode(data, data->scene->nodes[i], 0, model, imageMap, error))
                 goto finish;
     }
     else
@@ -744,7 +778,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
             if (!data->nodes[i].parent)
             {
                 foundRoot = true;
-                if (!VisitGlbNode(data, &data->nodes[i], 0, model, textureMap, error))
+                if (!VisitGlbNode(data, &data->nodes[i], 0, model, imageMap, error))
                     goto finish;
             }
         }
@@ -755,7 +789,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
             {
                 // node transformがないmeshに適用する単位行列。
                 const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-                if (!AppendGlbMesh(data, &data->meshes[i], identity, model, textureMap, error))
+                if (!AppendGlbMesh(data, &data->meshes[i], identity, model, imageMap, error))
                     goto finish;
             }
         }
@@ -767,7 +801,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
     }
     success = true;
 finish:
-    Deallocate(textureMap);
+    Deallocate(imageMap);
     cgltf_free(data);
     return success;
 }

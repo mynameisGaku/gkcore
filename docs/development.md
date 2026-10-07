@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各45/45件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像の29画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各45/45件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像と画像共有の38画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。ReleaseとDebugの実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 

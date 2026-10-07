@@ -15,7 +15,7 @@
 
 ## テストと再現性
 
-2026-10-07、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各45/45件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
+2026-10-08、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各45/45件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
 
 RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各32/32件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
 
@@ -29,7 +29,7 @@ GLBのMASK材質を内蔵モデルshaderで切り抜く処理を追加しまし�
 
 金属度・粗さの画像を線形で読み、G・Bの値と材質係数を掛ける描画を追加しました。基本色のsRGB解釈とはcacheの色空間を分け、同一画像を両方に使う材質も確認しました。Scene15・UI8・132フレームの読み直し後2枚の計25画像がRelease/Debugで一致しています。材質係数だけの参照モデルとの比較、R/Aの無視、別UV、異なる画像pairの切り替え、clip後の独立UV保持も検査しました。[モデルガイド](models.md)に実画像を掲載しています。
 
-法線画像はScene17・UI8・runtime鏡映2・再読込後2の29画像で、頂点法線だけの参照モデルと比較しています。NORMAL/TANGENTの自動生成は未対応です。同じtexture indexの基本色・MR・法線はsRGB/線形の2資源を共有します。別のtexture indexが同じ画像を参照する場合のdecode共有は残作業です。詳しくは[モデルガイド](models.md)を参照してください。
+法線画像はScene20・UI11・runtime鏡映2・2種類の再読込後各2・同frameに50モデルを描く1の38画像で、頂点法線だけの参照モデルと比較しています。38枚はRelease/Debug間でbyte単位に一致しました。NORMAL/TANGENTの自動生成は未対応です。同じimage項目を参照する基本色・MR・法線は、texture indexが異なる場合もモデル内でdecode結果を共有し、sRGB/線形の2資源を使います。画像共有と各役割のUV選択は独立です。詳しくは[モデルガイド](models.md)を参照してください。
 
 FSL artifactは`python tests/shader_contract_tests.py`で検査します。固定したThe ForgeのD3D12 adapter検索はsoftware adapterを除外するため、WARPは利用できません。GPU画像は固定位置・色・領域による回帰判定です。全面画像の画質、連続フレームすべてのちらつき、GPU負荷と目標FPS、全モデル形式、全入力操作、他GPU、GPU-based validation、再配布条件の最終確認は未実施です。実行手順は[描画検証](render-validation.md)、詳しい結果は[TDD検証ログ](TDD_LOG.md)を参照してください。
 

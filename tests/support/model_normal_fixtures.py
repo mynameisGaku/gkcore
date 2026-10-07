@@ -262,8 +262,46 @@ def make_glb(output, filename, normal_texture=None, normal_scale=1.0,
     output.joinpath(filename).write_bytes(glb)
 
 
+def rewrite_glb_json(output, filename, added_texture_sources=None,
+                     metallic_roughness_texture=None, normal_texture=None,
+                     normal_texcoord=None, normal_transform=False):
+    """GLBのJSON chunkだけを変更してtexture役割のaliasを作る。"""
+    path = output / filename
+    content = path.read_bytes()
+    magic, version, _ = struct.unpack_from("<4sII", content, 0)
+    json_length, json_kind = struct.unpack_from("<II", content, 12)
+    if magic != b"glTF" or version != 2 or json_kind != 0x4E4F534A:
+        raise ValueError("生成したGLB headerが不正です")
+    json_start = 20
+    document = json.loads(content[json_start:json_start + json_length].decode("utf-8"))
+    if added_texture_sources:
+        document["textures"].extend({"sampler": 0, "source": source}
+                                     for source in added_texture_sources)
+    material = document["materials"][0]
+    if metallic_roughness_texture is not None:
+        material["pbrMetallicRoughness"]["metallicRoughnessTexture"] = {
+            "index": metallic_roughness_texture, "texCoord": 0}
+    if normal_texture is not None:
+        material["normalTexture"]["index"] = normal_texture
+    if normal_texcoord is not None:
+        material["normalTexture"]["texCoord"] = normal_texcoord
+    if normal_transform:
+        material["normalTexture"]["extensions"] = {
+            "KHR_texture_transform": {"offset": [0.1, 0.0]}}
+        document["extensionsUsed"] = ["KHR_texture_transform"]
+        document["extensionsRequired"] = ["KHR_texture_transform"]
+    json_payload = json.dumps(document, separators=(",", ":"), allow_nan=False).encode("utf-8")
+    json_payload += b" " * ((-len(json_payload)) % 4)
+    binary_chunk = content[json_start + json_length:]
+    total = 12 + 8 + len(json_payload) + len(binary_chunk)
+    rebuilt = (struct.pack("<4sII", b"glTF", 2, total) +
+               struct.pack("<II", len(json_payload), 0x4E4F534A) + json_payload +
+               binary_chunk)
+    path.write_bytes(rebuilt)
+
+
 def generate(output):
-    """positive19件とnegative10件のnormal fixtureを作る。"""
+    """positive22件とnegative12件のnormal fixtureを作る。"""
     output.mkdir(parents=True, exist_ok=True)
     normal = NORMAL_PIXEL
     make_glb(output, "no-normal.glb")
@@ -281,6 +319,16 @@ def generate(output):
     make_glb(output, "uv1-reference.glb", four_quads=True)
     make_glb(output, "shared-image.glb", normal_texture=SHARED_PIXEL, shared=True, shared_image=True, base_pixel=SHARED_PIXEL, metallic_factor=1.0)
     make_glb(output, "shared-reference.glb", base_pixel=SHARED_PIXEL, reference_pixel=SHARED_PIXEL, metallic_factor=1.0, roughness_factor=SHARED_PIXEL[1] / 255.0)
+    make_glb(output, "shared-image-aliases.glb", normal_texture=SHARED_PIXEL, shared=True, shared_image=True, base_pixel=SHARED_PIXEL, normal_texcoord=1, metallic_factor=1.0)
+    rewrite_glb_json(output, "shared-image-aliases.glb", added_texture_sources=[0, 0], metallic_roughness_texture=1, normal_texture=2, normal_texcoord=1)
+    make_glb(output, "distinct-image-records.glb", normal_texture=SHARED_PIXEL, base_pixel=SHARED_PIXEL, metallic_factor=1.0)
+    rewrite_glb_json(output, "distinct-image-records.glb", metallic_roughness_texture=1)
+    make_glb(output, "mixed-role-image-alias.glb", normal_texture=SHARED_PIXEL, base_pixel=SHARED_PIXEL, normal_texcoord=1, metallic_factor=1.0)
+    rewrite_glb_json(output, "mixed-role-image-alias.glb", added_texture_sources=[1], metallic_roughness_texture=2, normal_texture=1, normal_texcoord=1)
+    make_glb(output, "alias-missing-uv.glb", normal_texture=SHARED_PIXEL, shared=True, shared_image=True, base_pixel=SHARED_PIXEL)
+    rewrite_glb_json(output, "alias-missing-uv.glb", added_texture_sources=[0], metallic_roughness_texture=1, normal_texture=1, normal_texcoord=2)
+    make_glb(output, "alias-transform.glb", normal_texture=SHARED_PIXEL, shared=True, shared_image=True, base_pixel=SHARED_PIXEL)
+    rewrite_glb_json(output, "alias-transform.glb", added_texture_sources=[0], metallic_roughness_texture=1, normal_texture=1, normal_transform=True)
     make_glb(output, "node-mirror-normal.glb", normal_texture=normal, node_mirror=True)
     make_glb(output, "node-mirror-reference.glb", reference_pixel=normal, node_mirror=True)
     make_glb(output, "tiny-node-scale.glb", normal_texture=normal, node_scale=[1.0e-5, 1.0e-5, 1.0e-5])
@@ -295,7 +343,7 @@ def generate(output):
     make_glb(output, "singular-node.glb", normal_texture=normal, node_scale=[0, 1, 1])
     make_glb(output, "bad-normal-scale.glb", normal_texture=normal, bad_normal_scale=True)
     make_glb(output, "transform-normal.glb", normal_texture=normal, transform_normal=True)
-    return 29
+    return 34
 
 
 def main():

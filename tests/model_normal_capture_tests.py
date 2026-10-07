@@ -29,6 +29,9 @@ SCENE_MODELS = (
     "uv1-reference",
     "shared-image",
     "shared-reference",
+    "shared-image-aliases",
+    "mixed-role-image-alias",
+    "distinct-image-records",
     "node-mirror-normal",
     "node-mirror-reference",
 )
@@ -41,14 +44,20 @@ SCENE_PAIRS = (
     ("mirrored-tangent", "mirrored-reference", "full"),
     ("uv1-pattern", "uv1-reference", "uv-samples"),
     ("shared-image", "shared-reference", "full"),
+    ("shared-image-aliases", "shared-reference", "full"),
+    ("mixed-role-image-alias", "shared-reference", "full"),
+    ("distinct-image-records", "shared-reference", "full"),
     ("node-mirror-normal", "node-mirror-reference", "full"),
 )
-UI_MODELS = ("uniform-normal", "normal-reference", "mirrored-tangent", "mirrored-reference", "uv1-pattern", "uv1-reference", "shared-image", "shared-reference")
+UI_MODELS = ("uniform-normal", "normal-reference", "mirrored-tangent", "mirrored-reference", "uv1-pattern", "uv1-reference", "shared-image", "shared-reference", "shared-image-aliases", "mixed-role-image-alias", "distinct-image-records")
 UI_PAIRS = (
     ("uniform-normal", "normal-reference", "full"),
     ("mirrored-tangent", "mirrored-reference", "full"),
     ("uv1-pattern", "uv1-reference", "uv-samples"),
     ("shared-image", "shared-reference", "full"),
+    ("shared-image-aliases", "shared-reference", "full"),
+    ("mixed-role-image-alias", "shared-reference", "full"),
+    ("distinct-image-records", "shared-reference", "full"),
 )
 BACKGROUND = (40, 80, 120)
 UI_GREEN = (0, 255, 0)
@@ -227,6 +236,13 @@ def main():
     stress_markers = [check_markers(frame, f"stress/shared-image/{index}") for index, frame in enumerate(stress_frames)]
     stress_comparisons = [require_match(frame, scene_images["shared-reference"], f"stress frame {index} vs reference") for index, frame in enumerate(stress_frames)]
     stress_pair = require_match(stress_frames[0], stress_frames[1], "stress frame 130 vs 131")
+    alias_stress_frames = capture(executable, fixture_dir, output_dir, "shared-image-aliases", "stress", count=2, start_frame=130)
+    alias_stress_markers = [check_markers(frame, f"stress/shared-image-aliases/{index}") for index, frame in enumerate(alias_stress_frames)]
+    alias_stress_comparisons = [require_match(frame, scene_images["shared-reference"], f"alias stress frame {index} vs reference") for index, frame in enumerate(alias_stress_frames)]
+    alias_stress_pair = require_match(alias_stress_frames[0], alias_stress_frames[1], "alias stress frame 130 vs 131")
+    alias_frame_image = capture(executable, fixture_dir, output_dir, "shared-image-aliases", "aliases-frame")[0]
+    alias_frame_markers = check_markers(alias_frame_image, "aliases-frame/shared-image-aliases")
+    alias_frame_comparison = require_match(alias_frame_image, scene_images["shared-reference"], "aliases-frame/shared-image-aliases vs reference")
 
     results = {
         "dimensions": [WIDTH, HEIGHT],
@@ -236,6 +252,8 @@ def main():
         "ui_comparisons": ui_comparisons,
         "runtime_mirror": {"markers": [check_markers(mirror_images[name], f"mirror/{name}") for name in mirror_images], "comparisons": mirror_comparison},
         "stress": {"frames": [130, 131], "markers": stress_markers, "reference_comparisons": stress_comparisons, "frame_comparison": stress_pair},
+        "alias_stress": {"frames": [130, 131], "markers": alias_stress_markers, "reference_comparisons": alias_stress_comparisons, "frame_comparison": alias_stress_pair},
+        "aliases_frame": {"markers": alias_frame_markers, "reference_comparison": alias_frame_comparison},
     }
     (output_dir / "results.json").write_text(json.dumps(results, indent=2), encoding="utf-8")
     print(json.dumps(results, indent=2))

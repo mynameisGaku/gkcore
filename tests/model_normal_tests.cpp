@@ -179,7 +179,7 @@ bool CheckLoadedFixture(const std::filesystem::path& directory, const FNormalExp
         // loaded材質のnormal texture slotとscale。
         const gk::detail::ModelMaterial& material = model->materials.At(0);
         // 3役割の共有画像と数値参照は同じ金属度・粗さになる設定を使う。
-        const bool sharedImage = strcmp(expected.filename, "shared-image.glb") == 0;
+        const bool sharedImage = strcmp(expected.filename, "shared-image.glb") == 0 || strcmp(expected.filename, "shared-image-aliases.glb") == 0 || strcmp(expected.filename, "distinct-image-records.glb") == 0 || strcmp(expected.filename, "mixed-role-image-alias.glb") == 0;
         const bool sharedReference = strcmp(expected.filename, "shared-reference.glb") == 0;
         const float metallic = sharedImage || sharedReference ? 1.0f : 0.0f;
         const float roughness = sharedReference ? 128.0f / 255.0f : 1.0f;
@@ -407,8 +407,8 @@ int main(int argc, char** argv)
     const std::filesystem::path directory(argv[1]);
     // fixture検査から返るfailure診断。
     gk::String failure;
-    // loader実行前に存在とGLB headerを確認する全29 fixture。
-    const char* fixtureNames[] = { "no-normal.glb", "uniform-normal.glb", "normal-reference.glb", "alpha-ignored.glb", "scale-zero.glb", "scale-two.glb", "scale-two-reference.glb", "scale-negative.glb", "scale-negative-reference.glb", "mirrored-tangent.glb", "mirrored-reference.glb", "uv1-pattern.glb", "uv1-reference.glb", "shared-image.glb", "shared-reference.glb", "node-mirror-normal.glb", "node-mirror-reference.glb", "tiny-node-scale.glb", "mixed-sign-triangles.glb", "missing-tangent.glb", "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb" };
+    // loader実行前に存在とGLB headerを確認する全34 fixture。
+    const char* fixtureNames[] = { "no-normal.glb", "uniform-normal.glb", "normal-reference.glb", "alpha-ignored.glb", "scale-zero.glb", "scale-two.glb", "scale-two-reference.glb", "scale-negative.glb", "scale-negative-reference.glb", "mirrored-tangent.glb", "mirrored-reference.glb", "uv1-pattern.glb", "uv1-reference.glb", "shared-image.glb", "shared-reference.glb", "shared-image-aliases.glb", "distinct-image-records.glb", "mixed-role-image-alias.glb", "node-mirror-normal.glb", "node-mirror-reference.glb", "tiny-node-scale.glb", "mixed-sign-triangles.glb", "missing-tangent.glb", "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb", "alias-missing-uv.glb", "alias-transform.glb" };
     // すべてのpositive/negative fixtureをloaderより先に検証するloop。
     for (const char* filename : fixtureNames)
     {
@@ -420,9 +420,9 @@ int main(int argc, char** argv)
     }
     // positive fixtureごとに期待するslot、scale、UV、接線向き。
     const FNormalExpectation positives[] = {
-        { "no-normal.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "uniform-normal.glb", 2, 1, 1.0f, false, 1.0f, false, true }, { "normal-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "alpha-ignored.glb", 2, 1, 1.0f, false, 1.0f, false, true }, { "scale-zero.glb", 2, 1, 0.0f, false, 1.0f, false, true }, { "scale-two.glb", 2, 1, 2.0f, false, 1.0f, false, true }, { "scale-two-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "scale-negative.glb", 2, 1, -1.0f, false, 1.0f, false, true }, { "scale-negative-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "mirrored-tangent.glb", 2, 1, 1.0f, false, -1.0f, false, true }, { "mirrored-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "uv1-pattern.glb", 2, 1, 1.0f, true, 1.0f, false, true }, { "uv1-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "shared-image.glb", 1, 0, 1.0f, false, 1.0f, false, true }, { "shared-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "node-mirror-normal.glb", 2, 1, 1.0f, false, 1.0f, true, true }, { "node-mirror-reference.glb", 1, -1, 1.0f, false, 1.0f, true, false }, { "mixed-sign-triangles.glb", 2, 1, 1.0f, false, 1.0f, false, true, true }, { "tiny-node-scale.glb", 2, 1, 1.0f, false, 1.0f, false, true },
+        { "no-normal.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "uniform-normal.glb", 2, 1, 1.0f, false, 1.0f, false, true }, { "normal-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "alpha-ignored.glb", 2, 1, 1.0f, false, 1.0f, false, true }, { "scale-zero.glb", 2, 1, 0.0f, false, 1.0f, false, true }, { "scale-two.glb", 2, 1, 2.0f, false, 1.0f, false, true }, { "scale-two-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "scale-negative.glb", 2, 1, -1.0f, false, 1.0f, false, true }, { "scale-negative-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "mirrored-tangent.glb", 2, 1, 1.0f, false, -1.0f, false, true }, { "mirrored-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "uv1-pattern.glb", 2, 1, 1.0f, true, 1.0f, false, true }, { "uv1-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "shared-image.glb", 1, 0, 1.0f, false, 1.0f, false, true }, { "shared-reference.glb", 1, -1, 1.0f, false, 1.0f, false, false }, { "shared-image-aliases.glb", 1, 0, 1.0f, true, 1.0f, false, true }, { "distinct-image-records.glb", 2, 1, 1.0f, false, 1.0f, false, true }, { "mixed-role-image-alias.glb", 2, 1, 1.0f, true, 1.0f, false, true }, { "node-mirror-normal.glb", 2, 1, 1.0f, false, 1.0f, true, true }, { "node-mirror-reference.glb", 1, -1, 1.0f, false, 1.0f, true, false }, { "mixed-sign-triangles.glb", 2, 1, 1.0f, false, 1.0f, false, true, true }, { "tiny-node-scale.glb", 2, 1, 1.0f, false, 1.0f, false, true },
     };
-    // 19件の正常fixtureを期待値と照合するloop。
+    // 22件の正常fixtureを期待値と照合するloop。
     for (const FNormalExpectation& expected : positives)
     {
         if (!CheckLoadedFixture(directory, expected, failure))
@@ -451,7 +451,7 @@ int main(int argc, char** argv)
         return 1;
     }
     // normal画像、UV1 pattern、shared textureのslotを確認するcase。
-    const char* imageCases[] = { "uniform-normal.glb", "uv1-pattern.glb", "shared-image.glb" };
+    const char* imageCases[] = { "uniform-normal.glb", "uv1-pattern.glb", "shared-image.glb", "shared-image-aliases.glb", "distinct-image-records.glb", "mixed-role-image-alias.glb" };
     // 代表PNGのpixel、四象限、共有slotを調べるloop。
     for (const char* filename : imageCases)
     {
@@ -474,10 +474,33 @@ int main(int argc, char** argv)
         }
         if (imageValid && strcmp(filename, "uv1-pattern.glb") == 0)
             imageValid = imageModel->textures.Count() == 2 && CheckPatternImage(*imageModel->textures.At(1));
-        if (imageValid && strcmp(filename, "shared-image.glb") == 0)
+        if (imageValid && (strcmp(filename, "shared-image.glb") == 0 || strcmp(filename, "shared-image-aliases.glb") == 0))
         {
             const uint8_t sharedPixel[4] = { 128, 128, 255, 255 };
             imageValid = imageModel->textures.Count() == 1 && CheckPixel(*imageModel->textures.At(0), sharedPixel) && imageModel->materials.At(0).baseColorTextureIndex == 0 && imageModel->materials.At(0).metallicRoughnessTextureIndex == 0 && imageModel->materials.At(0).normalTextureIndex == 0;
+        }
+        if (imageValid && strcmp(filename, "distinct-image-records.glb") == 0)
+        {
+            const uint8_t sharedPixel[4] = { 128, 128, 255, 255 };
+            imageValid = imageModel->textures.Count() == 2 && CheckPixel(*imageModel->textures.At(0), sharedPixel) && CheckPixel(*imageModel->textures.At(1), sharedPixel) && imageModel->textures.At(0) != imageModel->textures.At(1) && imageModel->materials.At(0).baseColorTextureIndex == 0 && imageModel->materials.At(0).metallicRoughnessTextureIndex == 1 && imageModel->materials.At(0).normalTextureIndex == 1;
+        }
+        if (imageValid && strcmp(filename, "mixed-role-image-alias.glb") == 0)
+            imageValid = imageModel->textures.Count() == 2 && imageModel->materials.At(0).baseColorTextureIndex == 0 && imageModel->materials.At(0).metallicRoughnessTextureIndex == 1 && imageModel->materials.At(0).normalTextureIndex == 1;
+        if (imageValid && strcmp(filename, "shared-image-aliases.glb") == 0)
+            imageValid = imageModel->materials.At(0).metallicRoughnessTextureIndex == imageModel->materials.At(0).normalTextureIndex;
+        if (imageValid && (strcmp(filename, "shared-image-aliases.glb") == 0 || strcmp(filename, "mixed-role-image-alias.glb") == 0))
+        {
+            const float baseUv[4][2] = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } };
+            const float normalUv[4][2] = { { 1, 1 }, { 0, 1 }, { 0, 0 }, { 1, 0 } };
+            for (uint32_t vertexIndex = 0; vertexIndex < 4; ++vertexIndex)
+            {
+                const gk::detail::ModelVertex& vertex = imageModel->vertices.At(vertexIndex);
+                if (!Near(vertex.uv[0], baseUv[vertexIndex][0]) || !Near(vertex.uv[1], baseUv[vertexIndex][1]) || !Near(vertex.metallicRoughnessUv[0], baseUv[vertexIndex][0]) || !Near(vertex.metallicRoughnessUv[1], baseUv[vertexIndex][1]) || !Near(vertex.normalUv[0], normalUv[vertexIndex][0]) || !Near(vertex.normalUv[1], normalUv[vertexIndex][1]))
+                {
+                    imageValid = false;
+                    break;
+                }
+            }
         }
         const bool imageDeleted = gk::detail::DeleteModel(imageHandle, error);
         if (!imageValid || !imageDeleted)
@@ -487,7 +510,7 @@ int main(int argc, char** argv)
         }
     }
     // 必須属性、画像座標、接線基底、scale、未対応変換の拒否を確認するloop。
-    const char* rejected[] = { "missing-tangent.glb", "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb" };
+    const char* rejected[] = { "missing-tangent.glb", "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb", "alias-missing-uv.glb", "alias-transform.glb" };
     // 不正normal入力を拒否するloop。
     for (const char* filename : rejected)
     {

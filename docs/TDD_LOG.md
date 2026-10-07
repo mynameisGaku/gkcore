@@ -804,3 +804,37 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R "^gkcore.model_normal$|
 ```
 
 CPU構成は `build/dev-windows` でDebug/Releaseそれぞれをビルドし、全CTestを実行しました。根拠の仕様は [glTF normalTexture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_normaltexture) と、同じ仕様の接線・bitangent定義です。
+
+
+## GLBで同じimageを参照するtextureの共有
+
+2026-10-08、別texture indexが同じimageを参照する場合の重複decodeを修正しました。先に共有画像・別image項目・役割ごとのUV・不正なUV選択/変換の契約を追加し、変更前のRelease CPUテストは `shared-image-aliases.glb` のtexture resource数で失敗しました。期待は1画像ですが、旧実装はtexture indexごとに3画像を作ります。ログは `build/native-validation/model-image-alias-cpu-red-{build,tests}.log` です。
+
+実GPUの先行テストは、同じGLBを50回新しく読み込み、同じ位置に重ねて1frameへ登録し、全handleをPresent前に削除しました。旧実装では基本色sRGB・MR線形・法線線形を別の画像から作り、50組で150資源を要求するため128 entry上限へ達します。Presentは `A frame uses more unique images than the bounded texture cache supports` で失敗し、画像は生成されませんでした。loaderが変更前のHEADと一致することを確認してからビルドした結果で、失敗記録は `model-image-alias-gpu-red/failure.txt` に保存しています。通常のreload-server.txt未配置の起動ログとは分けて判定しています。
+
+source imageの項目を対応表のkeyにし、decodeした画像の初期所有参照をモデルのslotへ1回だけ移します。map再利用では参照を追加せず、モデル破棄時にslotごとに1回解放します。対応表は画像数の上限を確認して確保し、画像slotへの追加成功後に公開します。役割ごとのUV検査・保存と、GPUの色形式別cacheはそのまま使います。別image項目の内容が同じでもmergeしません。
+
+
+修正後のRelease全45/45は150.07秒で成功しました。追加したcaseを含むnormal画像検査は47.61秒、配布SDKのconsumer GPU smokeを含むpackage検査は3.94秒です。ログは `build/native-validation/model-image-alias-release-{build,tests}.log` に保存しています。CPU RuntimeOFFのDebug・Releaseは各32/32成功（3.63秒・2.90秒）で、`model-image-alias-cpu-{debug,release}-{build,tests}.log` に記録しています。
+
+34 GLB（正常22・拒否12）で、同一imageの別texture indexの共有、別image項目・同PNG内容を別資源として保持、基本色/MR UV0と法線UV1の独立、UV欠損・未対応変換の拒否を検査しました。GPUは38画像（Scene20、UI11、runtime鏡映2、既存stress2、alias stress2、同frame50モデル1）です。1frame50モデルとalias再読込後の2画像は、参照と全画素一致しました。alias3種類のSceneも全画素一致し、UIは差2以下で確認します。
+
+Windows 11 Pro build 26200、NVIDIA GeForce RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133 (MSVC 19.29.30159)、Windows SDK 10.0.22621.0、CMake 4.3.1で実行しました。選択GPUとdriverはCTestのLastTest.logでも確認しました。RuntimeOFFはMSVC 19.51 / SDK 10.0.28000.0です。
+
+独立レビューはsource画像・texture・bufferViewの配列所属、画像数上限、Append成功後のmap公開、初期参照の所有と失敗時cleanup、per-view UV保持、GPUテストの描画保持・handle削除順を確認しました。sampler対応は今回追加せず、固定samplerの既存仕様を維持します。image共有はモデル内だけで、別LoadModel同士や別image項目の内容比較による共有は対象外です。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+textureがsource imageとsamplerを参照する定義は [glTF Texture Data](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#textures) に従います。画像byte数上限、GPU性能、他GPU、device loss復旧、全面画質の評価を追加した結果ではありません。
+
+
+Debugも全45/45成功（158.93秒、normal GPU画像50.83秒、package3.99秒）しました。ログは `model-image-alias-debug-{build,tests}.log` です。最終38枚のPPMはRelease/Debug間でbyte単位に一致し、文書の画像は取得RGBのままPNGへ保存しました。固定clang-format12による変更C++3ファイルの書式検査、BOM/CRLF、ローカル文書リンクと差分検査も通りました。最終の文書整理後もC++の機能要素hashはレビュー時と同じです。

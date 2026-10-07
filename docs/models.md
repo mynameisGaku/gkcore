@@ -119,13 +119,25 @@ ctest --test-dir build/runtime-windows -C Release -R gkcore.model_material --out
 ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material --output-on-failure
 ```
 
+## 同じ画像を使う材質
+
+GLBの `textures[].source` が同じ `images` 項目を指す場合、別々のtexture indexでもPNGを1回だけ読み込んで共有します。共有範囲は1モデルの読み込み内です。別々に `LoadModel` したモデル間で共有するものではありません。基本色はsRGB、MRと法線は線形値として扱い、必要な色形式だけをGPUへ転送します。
+
+画像の共有はUVの選択とは別に扱います。たとえば基本色・MRはUV0、法線はUV1を選べます。選択先のUV欠損や未対応の座標変換は、画像を再利用できる場合も診断します。別の `images` 項目は、PNGの内容が同じでも別画像として保持します。samplerの繰り返し・鏡映指定に関する現在の制約は変わりません。
+
+同じ画像を3種類のtextureから参照するGLBを50回新しく読み込み、同じ位置に重ねて1frameへ描画してから全モデルのhandleをPresent前に削除するケースを検査しています。旧実装は重複したGPU画像が128 entryのcache上限へ達してPresentに失敗しましたが、画像共有後は描画でき、参照画像と全画素一致しました。描画資源の保持とGLB内の画像参照共有を検査するもので、GPU性能は測定していません。
+
+![同じ位置へ重ねた50モデルの最終描画](images/model-image-sharing.png)
+
+textureとimageの関係は [glTF Texture Data](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#textures) を参照してください。
+
 ## GLB の法線マップ
 
 `normalTexture` のRGBを線形値として読み、接線空間の法線へ展開します。Aは使いません。`scale` は横・縦成分に掛ける有限値で、省略時は1、0や負の値にも対応します。基本色・metallic-roughness・法線画像はそれぞれ独立して `texCoord` を選べます。法線画像も埋め込みPNGを使い、UV形式と `KHR_texture_transform` の制約は基本色画像と共通です。
 
 現在はモデルに明示したFLOAT形式の `NORMAL` と `TANGENT` が必要です。`TANGENT` は4成分で、XYZは法線に平行でない有効な方向、Wは+1か-1を指定し、同じ三角形の3頂点で揃えます。接線の自動生成は行いません。属性欠損・不正値・逆変換できないnode行列は読み込み時に診断します。node変換と描画時のモデル変換では法線と接線を別々に変換し、負のscaleによる鏡映も保持します。
 
-内蔵モデル照明で処理するため、SceneとUIの両方で使えます。独自pixel shaderを指定した場合は既存の非照明経路へ切り替わり、法線マップの照明入力は渡されません。基本色・MR・法線に同じtexture indexを指定すると、sRGB用と線形用の2つのGPU画像を使い、MRと法線は線形画像を共有します。
+内蔵モデル照明で処理するため、SceneとUIの両方で使えます。独自pixel shaderを指定した場合は既存の非照明経路へ切り替わり、法線マップの照明入力は渡されません。基本色・MR・法線に同じimageを参照するtextureを指定すると、sRGB用と線形用の2つのGPU画像を使い、MRと法線は線形画像を共有します。texture indexが別でも、同じimageの読み込み結果をモデル内で共有します。
 
 ![法線マップを使った描画](images/model-normal-texture.png)
 
@@ -135,7 +147,7 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material -
 
 ![独立したUV1で法線模様を読む描画](images/model-normal-uv1.png)
 
-正常19・拒否10のGLBをCPUで検査し、Scene17枚、UI8枚、描画時の鏡映2枚、132回読み直した後の2枚を実GPUで確認しました。法線画像のalpha無視、scaleの0・2・負値、接線Wの符号、UV1、共有画像、nodeと描画時の鏡映を参照モデルと比較しています。Release/Debugの29画像は構成間でbyte単位に一致しました。接線Wを意図的に無視したshaderは45,000画素の差（RGB最大18）で拒否できました。
+正常22・拒否12のGLBをCPUで検査し、Scene20枚、UI11枚、描画時の鏡映2枚、2種類のGLBをそれぞれ132回読み直した後の各2枚、同じframeへ50モデルを描く1枚を実GPUで確認しました。法線画像のalpha無視、scaleの0・2・負値、接線Wの符号、UV1、共有画像、nodeと描画時の鏡映を参照モデルと比較しています。Release/Debugの画像一致は[描画検証](render-validation.md)に記録しています。接線Wを意図的に無視したshaderは45,000画素の差（RGB最大18）で拒否できました。
 
 再検査は次で実行します。実行結果と条件は[描画検証](render-validation.md)へ記録しています。
 
