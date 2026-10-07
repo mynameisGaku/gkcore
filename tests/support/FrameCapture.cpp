@@ -27,44 +27,45 @@ bool SetCaptureError(String& error, const char* message)
 }
 
 /**
- * capture枚数の環境設定を読み、1から16の範囲で検証する。
+ * 開発用の数値設定を読み、省略時の値と許可範囲を適用する。
  */
-bool ReadRequestedFrameCount(uint32_t& frameCount, String& error)
+bool ReadUnsignedSetting(const char* name, uint32_t defaultValue, uint32_t minimum, uint32_t maximum, uint32_t& output, String& error)
 {
+    // 不正値にも設定名と許可範囲が分かる診断を返す。
+    char diagnostic[160]{};
+    std::snprintf(diagnostic, sizeof(diagnostic), "%s must be an integer from %u through %u", name, minimum, maximum);
     SetLastError(ERROR_SUCCESS);
-    const DWORD requiredSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_FRAMES", nullptr, 0);
+    const DWORD requiredSize = GetEnvironmentVariableA(name, nullptr, 0);
     const DWORD environmentError = GetLastError();
     if (requiredSize == 0)
     {
         if (environmentError == ERROR_ENVVAR_NOT_FOUND)
         {
-            frameCount = 1;
+            output = defaultValue;
             return true;
         }
-        if (environmentError == ERROR_SUCCESS)
-            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
-        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES could not be read");
+        return SetCaptureError(error, diagnostic);
     }
-
+    // 環境変数をコピーし、途中で変わった値や空の値を拒否する。
     std::vector<char> value(requiredSize);
-    const DWORD copiedSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_FRAMES", value.data(), requiredSize);
+    const DWORD copiedSize = GetEnvironmentVariableA(name, value.data(), requiredSize);
     if (copiedSize == 0 || copiedSize >= requiredSize)
-        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES could not be read completely");
-
-    uint32_t parsedFrameCount = 0;
+        return SetCaptureError(error, diagnostic);
+    uint32_t parsed = 0;
     for (DWORD index = 0; index < copiedSize; ++index)
     {
         const char digit = value[index];
         if (digit < '0' || digit > '9')
-            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
-        parsedFrameCount = parsedFrameCount * 10u + static_cast<uint32_t>(digit - '0');
-        if (parsedFrameCount > 16u)
-            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
+            return SetCaptureError(error, diagnostic);
+        // 各桁で上限を確認するため、長い入力でも整数があふれない。
+        const uint32_t digitValue = static_cast<uint32_t>(digit - '0');
+        if (parsed > maximum / 10u || (parsed == maximum / 10u && digitValue > maximum % 10u))
+            return SetCaptureError(error, diagnostic);
+        parsed = parsed * 10u + digitValue;
     }
-    if (parsedFrameCount == 0)
-        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_FRAMES must be an integer from 1 through 16");
-
-    frameCount = parsedFrameCount;
+    if (parsed < minimum)
+        return SetCaptureError(error, diagnostic);
+    output = parsed;
     return true;
 }
 
@@ -83,33 +84,25 @@ FFrameCapture::~FFrameCapture()
  */
 bool FFrameCapture::ReadRequest(String& error)
 {
-    if (requestChecked_)
-        return completedFrames_ < requestedFrames_ && !outputPath_.Empty();
-
-    if (!ReadRequestedFrameCount(requestedFrames_, error))
+    if (!requestChecked_)
     {
         requestChecked_ = true;
-        return false;
+        if (!ReadUnsignedSetting("GKCORE_TEST_CAPTURE_FRAMES", 1, 1, 16, requestedFrames_, error) || !ReadUnsignedSetting("GKCORE_TEST_CAPTURE_START_FRAME", 0, 0, 65535, firstCaptureFrame_, error))
+            return false;
+        // 終端NULを含む出力先の必要bufferサイズ。
+        const DWORD requiredSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_PATH", nullptr, 0);
+        if (requiredSize == 0)
+            return false;
+        std::vector<char> path(requiredSize);
+        const DWORD copiedSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_PATH", path.data(), requiredSize);
+        if (copiedSize == 0 || copiedSize >= requiredSize)
+            return SetCaptureError(error, "GKCORE_TEST_CAPTURE_PATH could not be read completely");
+        if (!outputPath_.Assign(path.data(), copiedSize))
+            return SetCaptureError(error, "The GPU capture output path could not be copied");
     }
-
-    // 終端NULを含む環境変数の必要bufferサイズ。
-    const DWORD requiredSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_PATH", nullptr, 0);
-    if (requiredSize == 0)
-    {
-        requestChecked_ = true;
-        return false;
-    }
-
-    // 環境変数を一時保持するbuffer。
-    std::vector<char> path(requiredSize);
-    // 実際にコピーされた文字数。終端NULは含まない。
-    const DWORD copiedSize = GetEnvironmentVariableA("GKCORE_TEST_CAPTURE_PATH", path.data(), requiredSize);
-    if (copiedSize == 0 || copiedSize >= requiredSize)
-        return SetCaptureError(error, "GKCORE_TEST_CAPTURE_PATH could not be read completely");
-    if (!outputPath_.Assign(path.data(), copiedSize))
-        return SetCaptureError(error, "The GPU capture output path could not be copied");
-    requestChecked_ = true;
-    return true;
+    // 指定フレームまではreadbackの待機を入れず、通常の描画処理を続ける。
+    const uint64_t frame = observedFrames_++;
+    return frame >= firstCaptureFrame_ && completedFrames_ < requestedFrames_ && !outputPath_.Empty();
 }
 
 /**

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32)
 
@@ -11,16 +11,20 @@
 #include <windows.h>
 #include <stdint.h>
 
+#include "FKeyboardState.h"
+
 /**
  * Native window, module path, and SDK configuration utilities.
  */
-namespace gk::platform {
+namespace gk::platform
+{
 
 /**
  * Owns the Win32 window and dispatches its thread messages.
  */
-class WindowsWindow {
-public:
+class WindowsWindow
+{
+  public:
     /**
      * Creates a resizable window with the requested client size.
      */
@@ -37,6 +41,10 @@ public:
      * Reads the current state of a Win32 virtual key.
      */
     bool IsKeyDown(int virtualKey) const;
+    /**
+     * 直近のイベント処理で受け取った押下を、次の処理まで保持して返す。
+     */
+    bool WasKeyPressed(int virtualKey) const;
     /**
      * Returns the current positive client-area dimensions.
      */
@@ -56,13 +64,26 @@ public:
     /**
      * Returns the native HWND passed to The Forge.
      */
-    HWND NativeHandle() const { return window_; }
+    HWND NativeHandle() const
+    {
+        return window_;
+    }
 
-private:
+  private:
+    /**
+     * Win32のメッセージをキー状態へ反映し、ウィンドウの終了を処理する。
+     */
+    static LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+    /**
+     * focus取得時の押下中キーを、新しい押下として扱わず登録する。
+     */
+    void SeedHeldKeys();
+
     HINSTANCE instance_ = nullptr;
     HWND window_ = nullptr;
     bool classRegistered_ = false;
     bool closing_ = false;
+    FKeyboardState keyboardState_; // ウィンドウのイベント処理で保持する押下履歴。
     MSG message_{};
 };
 
@@ -73,8 +94,7 @@ bool GetModuleDirectory(HMODULE module, wchar_t* directory, uint32_t capacity, u
 /**
  * Selects the bundled Direct3D 12 Agility SDK for this process.
  */
-bool ConfigureAgilitySdk(const wchar_t* runtimeDirectory, uint32_t sdkVersion,
-                         HMODULE& runtimeModule, uint32_t& errorCode);
+bool ConfigureAgilitySdk(const wchar_t* runtimeDirectory, uint32_t sdkVersion, HMODULE& runtimeModule, uint32_t& errorCode);
 
 }
 

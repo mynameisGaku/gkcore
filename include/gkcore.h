@@ -155,6 +155,14 @@ GKCORE_API uint32_t ColorRGB(int red, int green, int blue);
 GKCORE_API bool IsKeyDown(Key key);
 
 /**
+ * 直近のProcessEventsでキーが押された場合にtrueを返す。
+ * アプリのメインスレッドから問い合わせる。
+ * 同じ処理内で押して離したキーも保持し、次のProcessEventsで消去する。
+ * 問い合わせでは値を消費しない。非focus、未初期化、不正なキーはfalseを返す。
+ */
+GKCORE_API bool WasKeyPressed(Key key);
+
+/**
  * Returns whether a mouse button is down while the application window is focused.
  * Query from the application thread.
  * Unsupported backend input reports false and sets a diagnostic.

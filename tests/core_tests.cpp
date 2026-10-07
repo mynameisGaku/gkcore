@@ -1,4 +1,4 @@
-#include <gkcore.h>
+﻿#include <gkcore.h>
 #include "../src/core/Context.h"
 #include "../src/internal/Backend.hpp"
 #include "../src/foundation/Memory.h"
@@ -16,7 +16,8 @@
 #include <fstream>
 #include <string>
 
-namespace gk::tests {
+namespace gk::tests
+{
 bool FoundationContracts();
 bool EffectsContract(gk::String& failure);
 bool ResourceContract(gk::String& failure);
@@ -24,13 +25,20 @@ bool ShaderArtifactContract(gk::String& failure);
 bool PostProcessMathContract(gk::String& failure);
 }
 
-namespace {
-#define CHECK(condition) do { if (!(condition)) { \
-    fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #condition); \
-    return false; \
-} } while (0)
+namespace
+{
+#define CHECK(condition)                                                                    \
+    do                                                                                      \
+    {                                                                                       \
+        if (!(condition))                                                                   \
+        {                                                                                   \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, #condition); \
+            return false;                                                                   \
+        }                                                                                   \
+    } while (0)
 
-struct CaptureState {
+struct CaptureState
+{
     bool failInitialize = false;
     bool initialized = false;
     bool shutdownCalled = false;
@@ -41,6 +49,10 @@ struct CaptureState {
     bool hasFocus = true;
     uint32_t downKey = 0x1b;
     uint32_t lastKey = 0;
+    // 押下中の状態とは別に保持する直近イベントのキー。
+    uint32_t pressedKey = 0xffffffffu;
+    // 押下問い合わせが変換した仮想キー。
+    uint32_t lastPressedKey = 0;
     uint32_t downMouseButton = 1;
     uint32_t lastMouseButton = 0;
     int32_t mouseX = 12;
@@ -124,12 +136,20 @@ struct CaptureState {
     float directionalIntensity[8]{};
 };
 
-class CaptureBackend final : public gk::detail::Backend {
-public:
-    explicit CaptureBackend(CaptureState& state) : state_(state) {}
-    ~CaptureBackend() override { state_.destroyed = true; }
-    bool Initialize(uint32_t width, uint32_t height, uint32_t, gk::String& error) override {
-        if (state_.failInitialize) {
+class CaptureBackend final : public gk::detail::Backend
+{
+  public:
+    explicit CaptureBackend(CaptureState& state) : state_(state)
+    {
+    }
+    ~CaptureBackend() override
+    {
+        state_.destroyed = true;
+    }
+    bool Initialize(uint32_t width, uint32_t height, uint32_t, gk::String& error) override
+    {
+        if (state_.failInitialize)
+        {
             error.Assign("expected initialization failure");
             return false;
         }
@@ -138,52 +158,79 @@ public:
         state_.initialized = true;
         return true;
     }
-    void Shutdown() override {
+    void Shutdown() override
+    {
         state_.initialized = false;
         state_.shutdownCalled = true;
     }
-    int ProcessMessage() override { return state_.eventResult; }
-    bool HasInputFocus() const override { return state_.hasFocus; }
-    bool SupportsMouseInput() const override { return true; }
-    bool IsKeyDown(uint32_t key) const override {
+    int ProcessMessage() override
+    {
+        state_.pressedKey = 0xffffffffu;
+        return state_.eventResult;
+    }
+    bool HasInputFocus() const override
+    {
+        return state_.hasFocus;
+    }
+    bool SupportsMouseInput() const override
+    {
+        return true;
+    }
+    bool IsKeyDown(uint32_t key) const override
+    {
         state_.lastKey = key;
         return key == state_.downKey;
     }
-    bool IsMouseButtonDown(uint32_t button) const override {
+    /**
+     * 現在の押下中状態に依存せず、記録された短い押下を返す。
+     */
+    bool WasKeyPressed(uint32_t key) const override
+    {
+        state_.lastPressedKey = key;
+        return key == state_.pressedKey;
+    }
+    bool IsMouseButtonDown(uint32_t button) const override
+    {
         state_.lastMouseButton = button;
         return button == state_.downMouseButton;
     }
-    bool GetMousePosition(int32_t& x, int32_t& y) const override {
+    bool GetMousePosition(int32_t& x, int32_t& y) const override
+    {
         x = state_.mouseX;
         y = state_.mouseY;
         return true;
     }
-    gk::detail::ImageResource* RasterizeText(const char* text, uint32_t pixelSize,
-                                             uint32_t color, gk::String& error) override {
+    gk::detail::ImageResource* RasterizeText(const char* text, uint32_t pixelSize, uint32_t color, gk::String& error) override
+    {
         ++state_.textRasterizations;
         state_.rasterizedTextSize = pixelSize;
         state_.rasterizedTextColor = color;
         uint32_t i = 0;
-        while (text && text[i] && i + 1 < sizeof(state_.rasterizedText)) {
+        while (text && text[i] && i + 1 < sizeof(state_.rasterizedText))
+        {
             state_.rasterizedText[i] = text[i];
             ++i;
         }
         state_.rasterizedText[i] = '\0';
-        if (state_.failTextRasterization) {
+        if (state_.failTextRasterization)
+        {
             error.Assign("fake font rasterizer failure");
             return nullptr;
         }
         gk::detail::ImageResource* image = gk::detail::CreateImageResource();
-        if (!image) {
+        if (!image)
+        {
             error.Assign("fake image allocation failure");
             return nullptr;
         }
         image->width = state_.textImageWidth;
         image->height = state_.textImageHeight;
         const uint64_t bytes = static_cast<uint64_t>(image->width) * image->height * 4;
-        for (uint64_t byte = 0; byte < bytes; ++byte) {
+        for (uint64_t byte = 0; byte < bytes; ++byte)
+        {
             const uint8_t value = byte % 4 == 3 ? 255 : 255;
-            if (!image->rgba.Append(value)) {
+            if (!image->rgba.Append(value))
+            {
                 gk::Release(&image->reference);
                 error.Assign("fake image allocation failure");
                 return nullptr;
@@ -191,12 +238,14 @@ public:
         }
         return image;
     }
-    bool GetClientSize(uint32_t& width, uint32_t& height) const override {
+    bool GetClientSize(uint32_t& width, uint32_t& height) const override
+    {
         width = state_.clientWidth;
         height = state_.clientHeight;
         return width != 0 && height != 0;
     }
-    bool Present(const gk::detail::FramePacket& frame, gk::String&) override {
+    bool Present(const gk::detail::FramePacket& frame, gk::String&) override
+    {
         state_.drawCount = frame.draws.Count();
         state_.presentedWidth = frame.width;
         state_.bloomEnabled = frame.bloomEnabled;
@@ -204,7 +253,8 @@ public:
         state_.saturation = frame.saturation;
         state_.contrast = frame.contrast;
         state_.fxaaEnabled = frame.fxaaEnabled;
-        if (state_.lightingFrameCount < 8) {
+        if (state_.lightingFrameCount < 8)
+        {
             const uint32_t index = state_.lightingFrameCount++;
             state_.ambientLight[index] = frame.lighting.ambientIntensity;
             state_.directionalDirection[index][0] = frame.lighting.direction.x;
@@ -213,17 +263,20 @@ public:
             state_.directionalIntensity[index] = frame.lighting.directionalIntensity;
         }
         const uint32_t postFrame = state_.postFrameCount++;
-        if (postFrame < 8) {
+        if (postFrame < 8)
+        {
             state_.postShaders[postFrame] = frame.postEffectShader;
             state_.postConstantCounts[postFrame] = frame.postEffectConstantCount;
-            for (uint32_t i = 0; i < frame.postEffectConstantCount && i < 4; ++i) {
+            for (uint32_t i = 0; i < frame.postEffectConstantCount && i < 4; ++i)
+            {
                 state_.postSlots[postFrame][i] = frame.postEffectConstants[i].registerIndex;
                 state_.postValues[postFrame][i] = frame.postEffectConstants[i].value.x;
             }
             if (frame.draws.Count())
                 state_.pixelShaderForPostFrame[postFrame] = frame.draws.At(0).shader.value;
         }
-        for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i) {
+        for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i)
+        {
             const gk::detail::DrawPacket& packet = frame.draws.At(i);
             state_.cameraX[i] = packet.cameraPosition.x;
             state_.shaderIds[i] = packet.shader.value;
@@ -236,47 +289,54 @@ public:
             if (state_.shaderConstantCounts[i])
                 state_.firstShaderConstantX[i] = packet.shaderConstants[0].value.x;
         }
-        if (frame.draws.Count() && frame.draws.At(0).image) {
+        if (frame.draws.Count() && frame.draws.At(0).image)
+        {
             const gk::detail::ImageResource& image = *frame.draws.At(0).image;
             state_.queuedImageValid = image.width == 1 && image.height == 1 && image.rgba.Count() == 4;
-            if (state_.queuedImageValid) state_.queuedImageRed = image.rgba.At(0);
+            if (state_.queuedImageValid)
+                state_.queuedImageRed = image.rgba.At(0);
         }
         if (frame.draws.Count() > 1)
             state_.queuedImageCentered = (frame.draws.At(1).flags & gk::detail::DrawImageCentered) != 0;
-        for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i) {
+        for (uint32_t i = 0; i < frame.draws.Count() && i < 4; ++i)
+        {
             const gk::detail::DrawPacket& packet = frame.draws.At(i);
-            if (packet.kind != gk::detail::DrawKind::Image || !packet.image ||
-                packet.image->width != 2 || packet.image->height != 2 || packet.image->rgba.Count() != 16)
+            if (packet.kind != gk::detail::DrawKind::Image || !packet.image || packet.image->width != 2 || packet.image->height != 2 || packet.image->rgba.Count() != 16)
                 continue;
             const uint32_t textIndex = state_.textPackets++;
-            if (textIndex < 4) state_.textImages[textIndex] = packet.image;
-            state_.textPacketValid = (packet.flags & gk::detail::DrawAlphaBlend) != 0 &&
-                                     packet.layer == static_cast<uint8_t>(gk::DrawLayer::UI);
+            if (textIndex < 4)
+                state_.textImages[textIndex] = packet.image;
+            state_.textPacketValid = (packet.flags & gk::detail::DrawAlphaBlend) != 0 && packet.layer == static_cast<uint8_t>(gk::DrawLayer::UI);
             state_.textImageReferences = packet.image->reference.references;
             state_.textX = packet.rect[0];
             state_.textY = packet.rect[1];
         }
         uint32_t modelDraw = 0;
-        for (uint32_t i = 0; i < frame.draws.Count() && modelDraw < 2; ++i) {
-            if (frame.draws.At(i).kind != gk::detail::DrawKind::Model) continue;
+        for (uint32_t i = 0; i < frame.draws.Count() && modelDraw < 2; ++i)
+        {
+            if (frame.draws.At(i).kind != gk::detail::DrawKind::Model)
+                continue;
             const gk::detail::DrawPacket& draw = frame.draws.At(i);
             state_.queuedModelValid = draw.model && draw.model->indices.Count() == 3;
             state_.queuedModelPositions[modelDraw++] = draw.modelPosition.x;
-            if (draw.model && draw.model->primitives.Count() == 2) {
+            if (draw.model && draw.model->primitives.Count() == 2)
+            {
                 gk::render::ModelDrawPlan plan;
                 gk::String planError;
-                if (gk::render::BuildModelDrawPlan(*draw.model, plan, planError) &&
-                    plan.parts.Count() == 2) {
+                if (gk::render::BuildModelDrawPlan(*draw.model, plan, planError) && plan.parts.Count() == 2)
+                {
                     state_.baseColorGlbModelReferences = draw.model->reference.references;
                     state_.baseColorGlbPrimitiveCount = draw.model->primitives.Count();
                     state_.baseColorGlbMaterialCount = draw.model->materials.Count();
                     state_.baseColorGlbTextureCount = draw.model->textures.Count();
-                    if (state_.baseColorGlbTextureCount && draw.model->textures.At(0)) {
+                    if (state_.baseColorGlbTextureCount && draw.model->textures.At(0))
+                    {
                         const gk::detail::ImageResource* texture = draw.model->textures.At(0);
                         state_.baseColorGlbTextureWidth = texture->width;
                         state_.baseColorGlbTextureHeight = texture->height;
                     }
-                    for (uint32_t part = 0; part < 2; ++part) {
+                    for (uint32_t part = 0; part < 2; ++part)
+                    {
                         const gk::render::ModelPartPlan& source = plan.parts.At(part);
                         state_.baseColorGlbFirstIndices[part] = source.firstIndex;
                         state_.baseColorGlbIndexCounts[part] = source.indexCount;
@@ -287,20 +347,23 @@ public:
                     }
                     state_.baseColorGlbPlanValid = true;
 
-                    if (draw.model->vertices.Count() >= 4 && draw.model->indices.Count() == 6) {
+                    if (draw.model->vertices.Count() >= 4 && draw.model->indices.Count() == 6)
+                    {
                         state_.baseColorFbxModelReferences = draw.model->reference.references;
                         state_.baseColorFbxVertexCount = draw.model->vertices.Count();
                         state_.baseColorFbxIndexCount = draw.model->indices.Count();
                         state_.baseColorFbxPrimitiveCount = draw.model->primitives.Count();
                         state_.baseColorFbxMaterialCount = draw.model->materials.Count();
                         state_.baseColorFbxTextureCount = draw.model->textures.Count();
-                        if (state_.baseColorFbxTextureCount && draw.model->textures.At(0)) {
+                        if (state_.baseColorFbxTextureCount && draw.model->textures.At(0))
+                        {
                             const gk::detail::ImageResource* texture = draw.model->textures.At(0);
                             state_.baseColorFbxTextureReferences = texture->reference.references;
                             state_.baseColorFbxTextureWidth = texture->width;
                             state_.baseColorFbxTextureHeight = texture->height;
                         }
-                        for (uint32_t part = 0; part < 2; ++part) {
+                        for (uint32_t part = 0; part < 2; ++part)
+                        {
                             const gk::render::ModelPartPlan& source = plan.parts.At(part);
                             state_.baseColorFbxFirstIndices[part] = source.firstIndex;
                             state_.baseColorFbxIndexCounts[part] = source.indexCount;
@@ -314,58 +377,78 @@ public:
         }
         return true;
     }
-    gk::ShaderHandle LoadPixelShader(const char*, gk::String&) override {
+    gk::ShaderHandle LoadPixelShader(const char*, gk::String&) override
+    {
         ++state_.shaderLoads;
         if (state_.uniqueNativeShaderHandles)
             return gk::ShaderHandle(state_.nextNativeShaderHandle++);
         return gk::ShaderHandle(1);
     }
-    bool ReleasePixelShader(gk::ShaderHandle, gk::String& error) override {
+    bool ReleasePixelShader(gk::ShaderHandle, gk::String& error) override
+    {
         ++state_.shaderReleases;
-        if (state_.failShaderRelease) {
+        if (state_.failShaderRelease)
+        {
             error.Assign("expected shader release failure");
             return false;
         }
         return true;
     }
-private:
+
+  private:
     CaptureState& state_;
 };
 
-class TemporaryDirectory {
-public:
-    TemporaryDirectory() {
+class TemporaryDirectory
+{
+  public:
+    TemporaryDirectory()
+    {
         const std::filesystem::path base = std::filesystem::temp_directory_path();
         const uint64_t stamp = static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
-        for (uint32_t i = 0; i < 64; ++i) {
+        for (uint32_t i = 0; i < 64; ++i)
+        {
             path_ = base / ("gkcore-core-test-" + std::to_string(stamp) + "-" + std::to_string(i));
             std::error_code error;
-            if (std::filesystem::create_directory(path_, error)) return;
+            if (std::filesystem::create_directory(path_, error))
+                return;
         }
         path_.clear();
     }
-    ~TemporaryDirectory() {
-        if (!path_.empty()) {
+    ~TemporaryDirectory()
+    {
+        if (!path_.empty())
+        {
             std::error_code error;
             std::filesystem::remove_all(path_, error);
         }
     }
-    bool IsValid() const { return !path_.empty(); }
-    std::filesystem::path File(const char* name) const { return path_ / std::filesystem::u8path(name); }
-private:
+    bool IsValid() const
+    {
+        return !path_.empty();
+    }
+    std::filesystem::path File(const char* name) const
+    {
+        return path_ / std::filesystem::u8path(name);
+    }
+
+  private:
     std::filesystem::path path_;
 };
 
-void Put32(unsigned char* bytes, uint32_t offset, uint32_t value) {
+void Put32(unsigned char* bytes, uint32_t offset, uint32_t value)
+{
     bytes[offset] = static_cast<unsigned char>(value);
     bytes[offset + 1] = static_cast<unsigned char>(value >> 8);
     bytes[offset + 2] = static_cast<unsigned char>(value >> 16);
     bytes[offset + 3] = static_cast<unsigned char>(value >> 24);
 }
 
-bool WriteOnePixelBmp(const std::filesystem::path& path) {
+bool WriteOnePixelBmp(const std::filesystem::path& path)
+{
     unsigned char bytes[58]{};
-    bytes[0] = 'B'; bytes[1] = 'M';
+    bytes[0] = 'B';
+    bytes[1] = 'M';
     Put32(bytes, 2, sizeof(bytes));
     Put32(bytes, 10, 54);
     Put32(bytes, 14, 40);
@@ -374,19 +457,23 @@ bool WriteOnePixelBmp(const std::filesystem::path& path) {
     bytes[26] = 1;
     bytes[28] = 24;
     Put32(bytes, 34, 4);
-    bytes[54] = 30; bytes[55] = 20; bytes[56] = 10;
+    bytes[54] = 30;
+    bytes[55] = 20;
+    bytes[56] = 10;
     std::ofstream output(path, std::ios::binary);
     output.write(reinterpret_cast<const char*>(bytes), sizeof(bytes));
     return output.good();
 }
 
-bool WriteTriangleObj(const std::filesystem::path& path) {
+bool WriteTriangleObj(const std::filesystem::path& path)
+{
     std::ofstream output(path);
     output << "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n";
     return output.good();
 }
 
-bool TestColorAndDimensions() {
+bool TestColorAndDimensions()
+{
     CHECK(gk::ColorRGB(-1, 300, 42) == 0x00ff2aU);
     CHECK(gk::SetWindowSize(640, 480) == 0);
     CHECK(gk::SetWindowSize(16384, 16384) == -1);
@@ -396,7 +483,8 @@ bool TestColorAndDimensions() {
     return true;
 }
 
-bool TestDefaultWindowDimensions() {
+bool TestDefaultWindowDimensions()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
@@ -409,7 +497,8 @@ bool TestDefaultWindowDimensions() {
 /**
  * Verifies rectangle outline validation and captures its frame-local state.
  */
-bool TestRectangleOutlineContracts() {
+bool TestRectangleOutlineContracts()
+{
     CaptureState capture;
     capture.uniqueNativeShaderHandles = true;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
@@ -421,13 +510,13 @@ bool TestRectangleOutlineContracts() {
     const gk::ShaderHandle postShader = gk::LoadPixelShader("outline-post.frag");
     CHECK(pixelShader.IsValid() && postShader.IsValid());
     CHECK(gk::SetPixelShader(pixelShader) == 0);
-    CHECK(gk::SetShaderFloat4(pixelShader, 4, {44, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 4, { 44, 0, 0, 1 }) == 0);
     CHECK(gk::SetPostEffectShader(postShader) == 0);
     CHECK(gk::BeginFrame() == 0);
     CHECK(gk::SetDrawLayer(gk::DrawLayer::Scene) == 0);
     CHECK(gk::DrawRect(0, 0, 5, 5, 0x010203, true) == 0);
     CHECK(gk::DrawRectOutline(10, 20, 30, 40, 0x123456, 2.5f) == 0);
-    CHECK(gk::SetShaderFloat4(pixelShader, 4, {55, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 4, { 55, 0, 0, 1 }) == 0);
     CHECK(gk::DrawRect(50, 60, 70, 80, 0x654321, false) == 0);
     CHECK(gk::SetDrawLayer(gk::DrawLayer::UI) == 0);
     CHECK(gk::DrawRectOutline(1, 2, 3, 4, 0xffffff, 1000000.0f) == 0);
@@ -444,30 +533,14 @@ bool TestRectangleOutlineContracts() {
 
     CHECK(gk::Present() == 0);
     CHECK(capture.drawCount == 4);
-    CHECK(capture.kinds[0] == gk::detail::DrawKind::Rect &&
-          capture.kinds[1] == gk::detail::DrawKind::Rect &&
-          capture.kinds[2] == gk::detail::DrawKind::Rect &&
-          capture.kinds[3] == gk::detail::DrawKind::Rect);
-    CHECK(capture.drawFlags[0] == gk::detail::DrawFilled && capture.drawFlags[1] == 0 &&
-          capture.drawFlags[2] == 0 && capture.drawFlags[3] == 0);
-    CHECK(capture.rectOutlineThickness[0] == 1.0f &&
-          capture.rectOutlineThickness[1] == 2.5f &&
-          capture.rectOutlineThickness[2] == 1.0f &&
-          capture.rectOutlineThickness[3] == 1000000.0f);
-    CHECK(capture.drawColors[0] == 0x010203 && capture.drawColors[1] == 0x123456 &&
-          capture.drawColors[2] == 0x654321 && capture.drawColors[3] == 0xffffff);
-    CHECK(capture.layers[0] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
-          capture.layers[1] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
-          capture.layers[2] == static_cast<uint8_t>(gk::DrawLayer::Scene) &&
-          capture.layers[3] == static_cast<uint8_t>(gk::DrawLayer::UI));
-    CHECK(capture.shaderIds[0] == 1 && capture.shaderIds[1] == 1 &&
-          capture.shaderIds[2] == 1 && capture.shaderIds[3] == 1);
-    CHECK(capture.shaderConstantCounts[0] == 1 && capture.shaderConstantCounts[1] == 1 &&
-          capture.shaderConstantCounts[2] == 1 && capture.shaderConstantCounts[3] == 1);
-    CHECK(capture.firstShaderConstantX[0] == 44.0f &&
-          capture.firstShaderConstantX[1] == 44.0f &&
-          capture.firstShaderConstantX[2] == 55.0f &&
-          capture.firstShaderConstantX[3] == 55.0f);
+    CHECK(capture.kinds[0] == gk::detail::DrawKind::Rect && capture.kinds[1] == gk::detail::DrawKind::Rect && capture.kinds[2] == gk::detail::DrawKind::Rect && capture.kinds[3] == gk::detail::DrawKind::Rect);
+    CHECK(capture.drawFlags[0] == gk::detail::DrawFilled && capture.drawFlags[1] == 0 && capture.drawFlags[2] == 0 && capture.drawFlags[3] == 0);
+    CHECK(capture.rectOutlineThickness[0] == 1.0f && capture.rectOutlineThickness[1] == 2.5f && capture.rectOutlineThickness[2] == 1.0f && capture.rectOutlineThickness[3] == 1000000.0f);
+    CHECK(capture.drawColors[0] == 0x010203 && capture.drawColors[1] == 0x123456 && capture.drawColors[2] == 0x654321 && capture.drawColors[3] == 0xffffff);
+    CHECK(capture.layers[0] == static_cast<uint8_t>(gk::DrawLayer::Scene) && capture.layers[1] == static_cast<uint8_t>(gk::DrawLayer::Scene) && capture.layers[2] == static_cast<uint8_t>(gk::DrawLayer::Scene) && capture.layers[3] == static_cast<uint8_t>(gk::DrawLayer::UI));
+    CHECK(capture.shaderIds[0] == 1 && capture.shaderIds[1] == 1 && capture.shaderIds[2] == 1 && capture.shaderIds[3] == 1);
+    CHECK(capture.shaderConstantCounts[0] == 1 && capture.shaderConstantCounts[1] == 1 && capture.shaderConstantCounts[2] == 1 && capture.shaderConstantCounts[3] == 1);
+    CHECK(capture.firstShaderConstantX[0] == 44.0f && capture.firstShaderConstantX[1] == 44.0f && capture.firstShaderConstantX[2] == 55.0f && capture.firstShaderConstantX[3] == 55.0f);
     CHECK(capture.postShaders[0].value == 2);
     CHECK(gk::BeginFrame() == 0);
     CHECK(gk::DrawRectOutline(5, 6, 7, 8, 0xabcdef) == 0);
@@ -481,7 +554,8 @@ bool TestRectangleOutlineContracts() {
     return true;
 }
 
-bool TestFrameStateAndMixedDraws() {
+bool TestFrameStateAndMixedDraws()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::SetBloomEnabled(false) == 0);
@@ -495,16 +569,16 @@ bool TestFrameStateAndMixedDraws() {
     CHECK(gk::SetSaturation(0.75f) == 0);
     CHECK(gk::SetContrast(0.75f) == 0);
     CHECK(gk::SetFxaaEnabled(true) == 0);
-    CHECK(gk::SetCamera({2.0f, 0.0f, -5.0f}, {0.0f, 0.0f, 0.0f}) == 0);
+    CHECK(gk::SetCamera({ 2.0f, 0.0f, -5.0f }, { 0.0f, 0.0f, 0.0f }) == 0);
     CHECK(gk::DrawRect(1, 2, 30, 40, gk::ColorRGB(4, 5, 6)) == 0);
     CHECK(gk::SetDrawLayer(gk::DrawLayer::UI) == 0);
-    CHECK(gk::DrawTriangle3D({0,0,0}, {1,0,0}, {0,1,0}, 0x00ffffff) == 0);
+    CHECK(gk::DrawTriangle3D({ 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, 0x00ffffff) == 0);
     CHECK(gk::SetDrawLayer(gk::DrawLayer::Scene) == 0);
-    CHECK(gk::SetCamera({3.0f, 0.0f, -5.0f}, {0.0f, 0.0f, 0.0f}) == 0);
-    CHECK(gk::DrawTriangle3D({0,0,0}, {1,0,0}, {0,1,0}, 0x00ffffff) == 0);
+    CHECK(gk::SetCamera({ 3.0f, 0.0f, -5.0f }, { 0.0f, 0.0f, 0.0f }) == 0);
+    CHECK(gk::DrawTriangle3D({ 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, 0x00ffffff) == 0);
     CHECK(gk::SetBloomEnabled(true) == 0);
     CHECK(gk::SetExposure(4.0f) == 0);
-    CHECK(gk::SetCamera({0.0f, 2.0f, 0.0f}, {0.0f, 0.0f, 0.0f}) == -1);
+    CHECK(gk::SetCamera({ 0.0f, 2.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }) == -1);
     CHECK(gk::DrawRect(NAN, 0, 1, 1, 0) == -1);
     CHECK(gk::DrawRect(3.4028234e38f, 0, 3.4028234e38f, 1, 0) == -1);
     CHECK(gk::Present() == 0);
@@ -541,7 +615,8 @@ bool TestFrameStateAndMixedDraws() {
     return true;
 }
 
-bool TestInitializationRollback() {
+bool TestInitializationRollback()
+{
     CaptureState capture;
     capture.failInitialize = true;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
@@ -554,7 +629,57 @@ bool TestInitializationRollback() {
     return true;
 }
 
-bool TestInputKeyAndMouseMappings() {
+/**
+ * 短い押下のキー変換、非消費の問い合わせ、focusと初期化の境界を確認する。
+ */
+bool TestKeyPressedContracts()
+{
+    // 公開APIへ入力状態を返すテスト用backendの記録。
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::Init() == 0);
+    capture.downKey = 'A';
+    capture.pressedKey = 0x20;
+    CHECK(gk::WasKeyPressed(gk::Key::Space));
+    CHECK(gk::WasKeyPressed(gk::Key::Space));
+    CHECK(!gk::IsKeyDown(gk::Key::Space));
+    CHECK(gk::IsKeyDown(gk::Key::A));
+    CHECK(!gk::WasKeyPressed(gk::Key::A));
+    CHECK(capture.lastPressedKey == 'A');
+    capture.pressedKey = 0x1b;
+    CHECK(gk::WasKeyPressed(gk::Key::Escape));
+    CHECK(gk::ProcessEvents());
+    CHECK(!gk::WasKeyPressed(gk::Key::Escape));
+    for (uint32_t offset = 0; offset < 26; ++offset)
+    {
+        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::A) + offset);
+        capture.pressedKey = 'A' + offset;
+        CHECK(gk::WasKeyPressed(key));
+        CHECK(capture.lastPressedKey == 'A' + offset);
+    }
+    for (uint32_t offset = 0; offset < 10; ++offset)
+    {
+        const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::Digit0) + offset);
+        capture.pressedKey = '0' + offset;
+        CHECK(gk::WasKeyPressed(key));
+        CHECK(capture.lastPressedKey == '0' + offset);
+    }
+    CHECK(!gk::WasKeyPressed(static_cast<gk::Key>(255)));
+    CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    capture.pressedKey = 0x20;
+    capture.hasFocus = false;
+    const uint32_t lastFocusedKey = capture.lastPressedKey;
+    CHECK(!gk::WasKeyPressed(gk::Key::Space));
+    CHECK(capture.lastPressedKey == lastFocusedKey);
+    CHECK(gk::GetLastErrorMessage()[0] == '\0');
+    gk::Shutdown();
+    CHECK(!gk::WasKeyPressed(gk::Key::Space));
+    CHECK(gk::GetLastErrorMessage()[0] != '\0');
+    return true;
+}
+
+bool TestInputKeyAndMouseMappings()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
@@ -572,12 +697,14 @@ bool TestInputKeyAndMouseMappings() {
     CHECK(!gk::IsKeyDown(gk::Key::Digit7));
     CHECK(capture.lastKey == '7');
     capture.downKey = 0xffffffffu;
-    for (uint32_t i = 0; i < 10; ++i) {
+    for (uint32_t i = 0; i < 10; ++i)
+    {
         const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::Digit0) + i);
         CHECK(!gk::IsKeyDown(key));
         CHECK(capture.lastKey == static_cast<uint32_t>('0') + i);
     }
-    for (uint32_t i = 0; i < 26; ++i) {
+    for (uint32_t i = 0; i < 26; ++i)
+    {
         const gk::Key key = static_cast<gk::Key>(static_cast<uint8_t>(gk::Key::A) + i);
         CHECK(!gk::IsKeyDown(key));
         CHECK(capture.lastKey == static_cast<uint32_t>('A') + i);
@@ -627,7 +754,8 @@ bool TestInputKeyAndMouseMappings() {
     return true;
 }
 
-bool TestJapaneseTextDrawContracts() {
+bool TestJapaneseTextDrawContracts()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
@@ -649,7 +777,8 @@ bool TestJapaneseTextDrawContracts() {
     CHECK(gk::DrawString(1.0f, 2.0f, "text", 0xffffff, 257) == -1);
     CHECK(gk::DrawString(INFINITY, 2.0f, "text", 0xffffff) == -1);
     char tooLong[4100];
-    for (uint32_t i = 0; i + 1 < sizeof(tooLong); ++i) tooLong[i] = 'x';
+    for (uint32_t i = 0; i + 1 < sizeof(tooLong); ++i)
+        tooLong[i] = 'x';
     tooLong[sizeof(tooLong) - 1] = '\0';
     CHECK(gk::DrawString(1.0f, 2.0f, tooLong, 0xffffff) == -1);
     CHECK(capture.textRasterizations == 0);
@@ -676,8 +805,7 @@ bool TestJapaneseTextDrawContracts() {
     CHECK(gk::Present() == 0);
     CHECK(capture.textPacketValid);
     CHECK(capture.textPackets == 3);
-    CHECK(capture.textImages[0] == capture.textImages[1] &&
-          capture.textImages[1] == capture.textImages[2]);
+    CHECK(capture.textImages[0] == capture.textImages[1] && capture.textImages[1] == capture.textImages[2]);
     CHECK(capture.textImageReferences == 2);
     CHECK(capture.textX == 120.0f && capture.textY == 140.0f);
     CHECK(gk::GetLastErrorMessage()[0] == '\0');
@@ -687,7 +815,8 @@ bool TestJapaneseTextDrawContracts() {
     return true;
 }
 
-bool TestTextCacheMemoryBound() {
+bool TestTextCacheMemoryBound()
+{
     CaptureState capture;
     capture.textImageWidth = 2048;
     capture.textImageHeight = 512;
@@ -695,7 +824,8 @@ bool TestTextCacheMemoryBound() {
     CHECK(gk::Init() == 0);
     CHECK(gk::BeginFrame() == 0);
     char label[32];
-    for (uint32_t i = 0; i < 5; ++i) {
+    for (uint32_t i = 0; i < 5; ++i)
+    {
         snprintf(label, sizeof(label), "cache-%u", i);
         CHECK(gk::DrawString(0.0f, static_cast<float>(i * 32), label, 0xffffff, 16) == 0);
     }
@@ -709,13 +839,15 @@ bool TestTextCacheMemoryBound() {
     return true;
 }
 
-bool TestTextCacheEntryBound() {
+bool TestTextCacheEntryBound()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
     CHECK(gk::BeginFrame() == 0);
     char label[32];
-    for (uint32_t i = 0; i < 70; ++i) {
+    for (uint32_t i = 0; i < 70; ++i)
+    {
         snprintf(label, sizeof(label), "entry-%u", i);
         CHECK(gk::DrawString(0.0f, 0.0f, label, 0xffffff, 16) == 0);
     }
@@ -729,7 +861,8 @@ bool TestTextCacheEntryBound() {
     return true;
 }
 
-bool TestQueuedImageSurvivesDeletion() {
+bool TestQueuedImageSurvivesDeletion()
+{
     TemporaryDirectory temporary;
     CHECK(temporary.IsValid());
     const std::filesystem::path imagePath = temporary.File(u8"画像.bmp");
@@ -748,11 +881,11 @@ bool TestQueuedImageSurvivesDeletion() {
     CHECK(gk::BeginFrame() == 0);
     CHECK(gk::DrawImage(image, 4.0f, 5.0f) == 0);
     CHECK(gk::DrawImageRotated(image, 12.0f, 14.0f, 2.0f, 0.75f) == 0);
-    CHECK(gk::SetModelPosition(model, {2.0f, 0.0f, 0.0f}) == 0);
-    CHECK(gk::SetModelRotation(model, {0.0f, 0.25f, 0.0f}) == 0);
-    CHECK(gk::SetModelScale(model, {2.0f, 2.0f, 2.0f}) == 0);
+    CHECK(gk::SetModelPosition(model, { 2.0f, 0.0f, 0.0f }) == 0);
+    CHECK(gk::SetModelRotation(model, { 0.0f, 0.25f, 0.0f }) == 0);
+    CHECK(gk::SetModelScale(model, { 2.0f, 2.0f, 2.0f }) == 0);
     CHECK(gk::DrawModel(model) == 0);
-    CHECK(gk::SetModelPosition(model, {3.0f, 0.0f, 0.0f}) == 0);
+    CHECK(gk::SetModelPosition(model, { 3.0f, 0.0f, 0.0f }) == 0);
     CHECK(gk::DrawModel(model) == 0);
     CHECK(gk::DeleteImage(image) == 0);
     CHECK(gk::DeleteModel(model) == 0);
@@ -766,12 +899,12 @@ bool TestQueuedImageSurvivesDeletion() {
     return true;
 }
 
-bool TestCheckedInBaseColorGlbSurvivesPublicDeletion() {
+bool TestCheckedInBaseColorGlbSurvivesPublicDeletion()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
-    const std::filesystem::path assetPath =
-        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_basecolor.glb";
+    const std::filesystem::path assetPath = std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_basecolor.glb";
     const std::string utf8Path = assetPath.u8string();
     const gk::ModelHandle model = gk::LoadModel(utf8Path.c_str());
     CHECK(model.IsValid());
@@ -790,10 +923,8 @@ bool TestCheckedInBaseColorGlbSurvivesPublicDeletion() {
     CHECK(capture.baseColorGlbFirstIndices[1] == 3 && capture.baseColorGlbIndexCounts[1] == 3);
     CHECK(capture.baseColorGlbMaterialIndices[0] == 0 && capture.baseColorGlbMaterialIndices[1] == 1);
     CHECK(capture.baseColorGlbTextureIndices[0] == 0 && capture.baseColorGlbTextureIndices[1] == -1);
-    CHECK(capture.baseColorGlbFactors[0][0] == 0.8f && capture.baseColorGlbFactors[0][1] == 0.65f &&
-          capture.baseColorGlbFactors[0][2] == 0.35f && capture.baseColorGlbFactors[0][3] == 1.0f);
-    CHECK(capture.baseColorGlbFactors[1][0] == 0.25f && capture.baseColorGlbFactors[1][1] == 0.7f &&
-          capture.baseColorGlbFactors[1][2] == 0.4f && capture.baseColorGlbFactors[1][3] == 0.9f);
+    CHECK(capture.baseColorGlbFactors[0][0] == 0.8f && capture.baseColorGlbFactors[0][1] == 0.65f && capture.baseColorGlbFactors[0][2] == 0.35f && capture.baseColorGlbFactors[0][3] == 1.0f);
+    CHECK(capture.baseColorGlbFactors[1][0] == 0.25f && capture.baseColorGlbFactors[1][1] == 0.7f && capture.baseColorGlbFactors[1][2] == 0.4f && capture.baseColorGlbFactors[1][3] == 0.9f);
     gk::Shutdown();
     return true;
 }
@@ -801,12 +932,12 @@ bool TestCheckedInBaseColorGlbSurvivesPublicDeletion() {
 /**
  * Loads one checked-in FBX through the public API and checks its retained draw payload.
  */
-bool TestCheckedInFbxSurvivesPublicDeletion(const char* filename) {
+bool TestCheckedInFbxSurvivesPublicDeletion(const char* filename)
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
-    const std::filesystem::path assetPath =
-        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models" / filename;
+    const std::filesystem::path assetPath = std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models" / filename;
     const std::string utf8Path = assetPath.u8string();
     const gk::ModelHandle model = gk::LoadModel(utf8Path.c_str());
     CHECK(model.IsValid());
@@ -832,19 +963,21 @@ bool TestCheckedInFbxSurvivesPublicDeletion(const char* filename) {
 /**
  * Exercises importer cleanup at successive allocator failure points and a clean retry.
  */
-bool TestFbxImportAllocationFailuresRecover() {
-    const std::filesystem::path assetPath =
-        std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_ascii.fbx";
+bool TestFbxImportAllocationFailuresRecover()
+{
+    const std::filesystem::path assetPath = std::filesystem::path(GKCORE_TEST_SOURCE_DIR) / "tests/assets/models/gkcore_ascii.fbx";
     const std::string utf8Path = assetPath.u8string();
     uint32_t failedAttempts = 0;
     bool reachedSuccess = false;
-    for (uint32_t allocation = 0; allocation < 256; ++allocation) {
+    for (uint32_t allocation = 0; allocation < 256; ++allocation)
+    {
         gk::String error;
         CHECK(error.Assign("preallocated FBX import diagnostic"));
         gk::SetAllocationFailureAfterForTesting(allocation);
         gk::detail::ModelResource* model = gk::detail::LoadModelPayload(utf8Path.c_str(), error);
         gk::ResetAllocationFailureForTesting();
-        if (model) {
+        if (model)
+        {
             gk::Release(&model->reference);
             reachedSuccess = true;
             break;
@@ -860,7 +993,8 @@ bool TestFbxImportAllocationFailuresRecover() {
     return true;
 }
 
-bool TestShaderLifetimesAndSnapshots() {
+bool TestShaderLifetimesAndSnapshots()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
@@ -878,7 +1012,7 @@ bool TestShaderLifetimesAndSnapshots() {
     const gk::ShaderHandle second = gk::LoadPixelShader("second.bin");
     CHECK(first.IsValid() && second.IsValid() && first != second);
     CHECK(capture.shaderLoads == 3);
-    CHECK(gk::SetShaderFloat4(second, 0, {3, 4, 5, 6}) == 0);
+    CHECK(gk::SetShaderFloat4(second, 0, { 3, 4, 5, 6 }) == 0);
     CHECK(gk::SetPixelShader(first) == 0);
     CHECK(gk::SetPixelShader({}) == 0);
     CHECK(gk::SetPixelShader(second) == 0);
@@ -906,7 +1040,8 @@ bool TestShaderLifetimesAndSnapshots() {
     return true;
 }
 
-bool TestShaderSnapshotsAcrossDrawKinds() {
+bool TestShaderSnapshotsAcrossDrawKinds()
+{
     TemporaryDirectory temporary;
     CHECK(temporary.IsValid());
     const std::filesystem::path imagePath = temporary.File("shader-pixel.bmp");
@@ -924,18 +1059,17 @@ bool TestShaderSnapshotsAcrossDrawKinds() {
     const gk::ShaderHandle shader = gk::LoadPixelShader("sprite-compatible.bin");
     CHECK(shader.IsValid());
     CHECK(gk::SetPixelShader(shader) == 0);
-    CHECK(gk::SetShaderFloat4(shader, 0, {0.5f, 0.0f, 0.0f, 1.0f}) == 0);
+    CHECK(gk::SetShaderFloat4(shader, 0, { 0.5f, 0.0f, 0.0f, 1.0f }) == 0);
     CHECK(gk::BeginFrame() == 0);
     CHECK(gk::DrawImage(image, 2.0f, 3.0f) == 0);
-    CHECK(gk::SetShaderFloat4(shader, 0, {1.0f, 0.0f, 0.0f, 1.0f}) == 0);
-    CHECK(gk::DrawTriangle3D({0,0,0}, {1,0,0}, {0,1,0}, 0xffffff) == 0);
-    CHECK(gk::SetShaderFloat4(shader, 0, {2.0f, 0.0f, 0.0f, 1.0f}) == 0);
+    CHECK(gk::SetShaderFloat4(shader, 0, { 1.0f, 0.0f, 0.0f, 1.0f }) == 0);
+    CHECK(gk::DrawTriangle3D({ 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, 0xffffff) == 0);
+    CHECK(gk::SetShaderFloat4(shader, 0, { 2.0f, 0.0f, 0.0f, 1.0f }) == 0);
     CHECK(gk::DrawModel(model) == 0);
     CHECK(gk::Present() == 0);
     CHECK(capture.drawCount == 3);
     CHECK(capture.shaderIds[0] == 1 && capture.shaderIds[1] == 1 && capture.shaderIds[2] == 1);
-    CHECK(capture.shaderConstantCounts[0] == 1 && capture.shaderConstantCounts[1] == 1 &&
-          capture.shaderConstantCounts[2] == 1);
+    CHECK(capture.shaderConstantCounts[0] == 1 && capture.shaderConstantCounts[1] == 1 && capture.shaderConstantCounts[2] == 1);
     CHECK(capture.firstShaderConstantX[0] == 0.5f);
     CHECK(capture.firstShaderConstantX[1] == 1.0f);
     CHECK(capture.firstShaderConstantX[2] == 2.0f);
@@ -948,7 +1082,8 @@ bool TestShaderSnapshotsAcrossDrawKinds() {
 /**
  * Verifies independent draw/post selections, frame timing, and shader deletion lifetime.
  */
-bool TestPostEffectShaderSnapshotsAndLifecycle() {
+bool TestPostEffectShaderSnapshotsAndLifecycle()
+{
     CaptureState capture;
     capture.uniqueNativeShaderHandles = true;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
@@ -962,13 +1097,13 @@ bool TestPostEffectShaderSnapshotsAndLifecycle() {
     const gk::ShaderHandle postShader = gk::LoadPixelShader("post-effect.bin");
     CHECK(pixelShader.IsValid() && postShader.IsValid());
     CHECK(gk::SetPixelShader(pixelShader) == 0);
-    CHECK(gk::SetShaderFloat4(pixelShader, 3, {31, 0, 0, 1}) == 0);
-    CHECK(gk::SetShaderFloat4(postShader, 7, {7, 0, 0, 1}) == 0);
-    CHECK(gk::SetShaderFloat4(postShader, 1, {1, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(pixelShader, 3, { 31, 0, 0, 1 }) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 7, { 7, 0, 0, 1 }) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 1, { 1, 0, 0, 1 }) == 0);
     CHECK(gk::SetPostEffectShader(postShader) == 0);
 
     CHECK(gk::BeginFrame() == 0);
-    CHECK(gk::SetShaderFloat4(postShader, 7, {70, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 7, { 70, 0, 0, 1 }) == 0);
     CHECK(gk::SetPostEffectShader({}) == 0);
     CHECK(gk::DeleteShader(postShader) == -1);
     CHECK(gk::DrawRect(0, 0, 8, 8, 0xffffff) == 0);
@@ -1011,13 +1146,14 @@ bool TestPostEffectShaderSnapshotsAndLifecycle() {
 /**
  * Verifies that a failed post-constant snapshot leaves BeginFrame retryable.
  */
-bool TestPostEffectBeginFrameSnapshotIsTransactional() {
+bool TestPostEffectBeginFrameSnapshotIsTransactional()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::Init() == 0);
     const gk::ShaderHandle postShader = gk::LoadPixelShader("post-effect-oom.bin");
     CHECK(postShader.IsValid());
-    CHECK(gk::SetShaderFloat4(postShader, 5, {5, 0, 0, 1}) == 0);
+    CHECK(gk::SetShaderFloat4(postShader, 5, { 5, 0, 0, 1 }) == 0);
     CHECK(gk::SetPostEffectShader(postShader) == 0);
 
     gk::SetAllocationFailureAfterForTesting(0);
@@ -1037,18 +1173,19 @@ bool TestPostEffectBeginFrameSnapshotIsTransactional() {
 /**
  * Verifies that lighting settings are sampled once at BeginFrame.
  */
-bool TestLightingBeginFrameSnapshot() {
+bool TestLightingBeginFrameSnapshot()
+{
     CaptureState capture;
     gk::detail::SetBackendForTesting(new CaptureBackend(capture));
     CHECK(gk::SetAmbientLight(-0.1f) == -1);
     CHECK(gk::GetLastErrorMessage() && gk::GetLastErrorMessage()[0] != '\0');
     CHECK(gk::SetAmbientLight(0.35f) == 0);
     CHECK(gk::GetLastErrorMessage() && gk::GetLastErrorMessage()[0] == '\0');
-    CHECK(gk::SetDirectionalLight({3.0f, -4.0f, 0.0f}, 6.0f) == 0);
+    CHECK(gk::SetDirectionalLight({ 3.0f, -4.0f, 0.0f }, 6.0f) == 0);
     CHECK(gk::Init() == 0);
     CHECK(gk::BeginFrame() == 0);
     CHECK(gk::SetAmbientLight(0.75f) == 0);
-    CHECK(gk::SetDirectionalLight({0.0f, 0.0f, -2.0f}, 9.0f) == 0);
+    CHECK(gk::SetDirectionalLight({ 0.0f, 0.0f, -2.0f }, 9.0f) == 0);
     CHECK(gk::Present() == 0);
     CHECK(capture.lightingFrameCount == 1);
     CHECK(capture.ambientLight[0] == 0.35f);
@@ -1077,50 +1214,77 @@ bool TestLightingBeginFrameSnapshot() {
 }
 }
 
-int main() {
+int main()
+{
     int failures = 0;
-    if (!gk::tests::FoundationContracts()) {
+    if (!gk::tests::FoundationContracts())
+    {
         fprintf(stderr, "foundation contract failed\n");
         ++failures;
     }
     gk::String effectFailure;
-    if (!gk::tests::EffectsContract(effectFailure)) {
+    if (!gk::tests::EffectsContract(effectFailure))
+    {
         fprintf(stderr, "effects contract failed: %s\n", effectFailure.CStr());
         ++failures;
     }
     gk::String resourceFailure;
-    if (!gk::tests::ResourceContract(resourceFailure)) {
+    if (!gk::tests::ResourceContract(resourceFailure))
+    {
         fprintf(stderr, "resource contract failed: %s\n", resourceFailure.CStr());
         ++failures;
     }
     gk::String shaderFailure;
-    if (!gk::tests::ShaderArtifactContract(shaderFailure)) {
+    if (!gk::tests::ShaderArtifactContract(shaderFailure))
+    {
         fprintf(stderr, "shader artifact contract failed: %s\n", shaderFailure.CStr());
         ++failures;
     }
     gk::String postProcessFailure;
-    if (!gk::tests::PostProcessMathContract(postProcessFailure)) {
+    if (!gk::tests::PostProcessMathContract(postProcessFailure))
+    {
         fprintf(stderr, "post-process math contract failed: %s\n", postProcessFailure.CStr());
         ++failures;
     }
-    if (!TestDefaultWindowDimensions()) ++failures;
-    if (!TestColorAndDimensions()) ++failures;
-    if (!TestFrameStateAndMixedDraws()) ++failures;
-    if (!TestInitializationRollback()) ++failures;
-    if (!TestInputKeyAndMouseMappings()) ++failures;
-    if (!TestJapaneseTextDrawContracts()) ++failures;
-    if (!TestTextCacheMemoryBound()) ++failures;
-    if (!TestTextCacheEntryBound()) ++failures;
-    if (!TestQueuedImageSurvivesDeletion()) ++failures;
-    if (!TestCheckedInBaseColorGlbSurvivesPublicDeletion()) ++failures;
-    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_ascii.fbx")) ++failures;
-    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_binary.fbx")) ++failures;
-    if (!TestFbxImportAllocationFailuresRecover()) ++failures;
-    if (!TestShaderLifetimesAndSnapshots()) ++failures;
-    if (!TestShaderSnapshotsAcrossDrawKinds()) ++failures;
-    if (!TestPostEffectShaderSnapshotsAndLifecycle()) ++failures;
-    if (!TestPostEffectBeginFrameSnapshotIsTransactional()) ++failures;
-    if (!TestLightingBeginFrameSnapshot()) ++failures;
-    if (!TestRectangleOutlineContracts()) ++failures;
+    if (!TestDefaultWindowDimensions())
+        ++failures;
+    if (!TestColorAndDimensions())
+        ++failures;
+    if (!TestFrameStateAndMixedDraws())
+        ++failures;
+    if (!TestInitializationRollback())
+        ++failures;
+    if (!TestInputKeyAndMouseMappings())
+        ++failures;
+    if (!TestKeyPressedContracts())
+        ++failures;
+    if (!TestJapaneseTextDrawContracts())
+        ++failures;
+    if (!TestTextCacheMemoryBound())
+        ++failures;
+    if (!TestTextCacheEntryBound())
+        ++failures;
+    if (!TestQueuedImageSurvivesDeletion())
+        ++failures;
+    if (!TestCheckedInBaseColorGlbSurvivesPublicDeletion())
+        ++failures;
+    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_ascii.fbx"))
+        ++failures;
+    if (!TestCheckedInFbxSurvivesPublicDeletion("gkcore_binary.fbx"))
+        ++failures;
+    if (!TestFbxImportAllocationFailuresRecover())
+        ++failures;
+    if (!TestShaderLifetimesAndSnapshots())
+        ++failures;
+    if (!TestShaderSnapshotsAcrossDrawKinds())
+        ++failures;
+    if (!TestPostEffectShaderSnapshotsAndLifecycle())
+        ++failures;
+    if (!TestPostEffectBeginFrameSnapshotIsTransactional())
+        ++failures;
+    if (!TestLightingBeginFrameSnapshot())
+        ++failures;
+    if (!TestRectangleOutlineContracts())
+        ++failures;
     return failures == 0 ? 0 : 1;
 }

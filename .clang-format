@@ -16,6 +16,7 @@ BinPackParameters: true
 AllowAllArgumentsOnNextLine: true
 AllowAllParametersOfDeclarationOnNextLine: true
 ColumnLimit: 100000
+AlignEscapedNewlines: Left
 SortIncludes: false
 NamespaceIndentation: None
 FixNamespaceComments: false

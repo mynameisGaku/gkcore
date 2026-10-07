@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../foundation/Array.h"
 #include "../foundation/String.h"
@@ -11,17 +11,25 @@
 /**
  * Internal packets and platform boundary shared by the framework core and renderer.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Describes the primitive operation represented by a draw packet.
  */
-enum class DrawKind : uint8_t { Rect, Image, Triangle3D, Model };
+enum class DrawKind : uint8_t
+{
+    Rect,
+    Image,
+    Triangle3D,
+    Model
+};
 
 /**
  * Bit values stored in DrawPacket::flags.
  */
-enum DrawFlags : uint8_t {
+enum DrawFlags : uint8_t
+{
     DrawFilled = 1u,
     DrawAlphaBlend = 2u,
     DrawImageCentered = 4u
@@ -31,7 +39,8 @@ enum DrawFlags : uint8_t {
  * A POD draw command. Transform, camera, effect, and shader state are captured
  * when the API queues the command. Resource pointers own intrusive references.
  */
-struct DrawPacket {
+struct DrawPacket
+{
     DrawKind kind;
     uint8_t layer;
     uint8_t flags;
@@ -61,7 +70,8 @@ struct DrawPacket {
 /**
  * One frame of ordered draw packets and the effects sampled at BeginFrame.
  */
-struct FramePacket {
+struct FramePacket
+{
     uint32_t width;
     uint32_t height;
     Vec3 cameraPosition;
@@ -83,12 +93,15 @@ struct FramePacket {
 /**
  * Platform boundary for event processing and native rendering.
  */
-class Backend {
-public:
+class Backend
+{
+  public:
     /**
      * Provides polymorphic cleanup for platform and test renderer adapters.
      */
-    virtual ~Backend() {}
+    virtual ~Backend()
+    {
+    }
     /**
      * Creates the native window and renderer state needed for drawing.
      */
@@ -106,21 +119,40 @@ public:
      */
     virtual bool IsKeyDown(uint32_t platformKeyCode) const = 0;
     /**
+     * 直近のイベント処理で記録した押下を返す。未対応のbackendはfalseを返す。
+     */
+    virtual bool WasKeyPressed(uint32_t) const
+    {
+        return false;
+    }
+    /**
      * Reports whether keyboard and mouse input currently belongs to the window.
      */
-    virtual bool HasInputFocus() const { return false; }
+    virtual bool HasInputFocus() const
+    {
+        return false;
+    }
     /**
      * Reports whether the platform adapter implements mouse button and position queries.
      */
-    virtual bool SupportsMouseInput() const { return false; }
+    virtual bool SupportsMouseInput() const
+    {
+        return false;
+    }
     /**
      * Reads a platform mouse button only while the owned window is focused.
      */
-    virtual bool IsMouseButtonDown(uint32_t) const { return false; }
+    virtual bool IsMouseButtonDown(uint32_t) const
+    {
+        return false;
+    }
     /**
      * Reads client-relative pointer coordinates; returns false when unavailable.
      */
-    virtual bool GetMousePosition(int32_t&, int32_t&) const { return false; }
+    virtual bool GetMousePosition(int32_t&, int32_t&) const
+    {
+        return false;
+    }
     /**
      * Renders the captured frame and reports backend failures through error.
      */
@@ -129,14 +161,18 @@ public:
      * Rasterizes UTF-8 text into a caller-owned RGBA image. A renderer without
      * a system-font adapter reports failure instead of silently dropping text.
      */
-    virtual ImageResource* RasterizeText(const char*, uint32_t, uint32_t, String& error) {
+    virtual ImageResource* RasterizeText(const char*, uint32_t, uint32_t, String& error)
+    {
         error.Assign("text rasterization is unsupported by this renderer");
         return nullptr;
     }
     /**
      * Returns current client dimensions when the platform backend tracks resizing.
      */
-    virtual bool GetClientSize(uint32_t&, uint32_t&) const { return false; }
+    virtual bool GetClientSize(uint32_t&, uint32_t&) const
+    {
+        return false;
+    }
     /**
      * Loads a backend-compatible pixel shader or reports why it is unavailable.
      */
@@ -145,7 +181,6 @@ public:
      * Releases a backend shader handle and its dependent state.
      */
     virtual bool ReleasePixelShader(ShaderHandle shader, String& error) = 0;
-
 };
 
 /**

@@ -17,6 +17,9 @@ int main()
         return 1;
     }
 
+    // インストールSDKだけで、新しい押下問い合わせもリンク・呼び出しできることを確認する。
+    static_cast<void>(gk::WasKeyPressed(gk::Key::Space));
+
     // 描画APIがすべて成功したかを記録する。
     bool passed = gk::BeginFrame() == 0;
     if (passed)
@@ -49,6 +52,10 @@ int main()
  */
 int main()
 {
+    if (gk::WasKeyPressed(gk::Key::Space))
+    {
+        return 1;
+    }
     // 無効状態の確認に使うhandle。
     gk::ImageHandle invalid;
     if (invalid)

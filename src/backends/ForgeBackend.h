@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "../internal/Backend.hpp"
 #include "../platform/WindowsWindow.h"
@@ -9,13 +9,15 @@
 /**
  * Production backend factory and platform service coordination.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Coordinates Win32 startup with the native Forge renderer.
  */
-class ForgeBackend final : public Backend {
-public:
+class ForgeBackend final : public Backend
+{
+  public:
     /**
      * Initializes The Forge services, Win32 window, and GPU renderer.
      */
@@ -37,6 +39,10 @@ public:
      */
     bool IsKeyDown(uint32_t keyCode) const override;
     /**
+     * 直近のWin32イベント処理で記録した短いキー押下を返す。
+     */
+    bool WasKeyPressed(uint32_t keyCode) const override;
+    /**
      * Reports whether this runtime window currently owns input focus.
      */
     bool HasInputFocus() const override;
@@ -55,8 +61,7 @@ public:
     /**
      * Rasterizes UTF-8 text into an owned RGBA image for ordinary image drawing.
      */
-    ImageResource* RasterizeText(const char* utf8Text, uint32_t pixelSize,
-                                 uint32_t packedColor, String& error) override;
+    ImageResource* RasterizeText(const char* utf8Text, uint32_t pixelSize, uint32_t packedColor, String& error) override;
     /**
      * Forwards a complete frame snapshot to the renderer.
      */
@@ -70,7 +75,7 @@ public:
      */
     bool ReleasePixelShader(ShaderHandle shader, String& error) override;
 
-private:
+  private:
     bool ConfigureResourcePaths(String& error);
     bool initialized_ = false;
     bool memoryInitialized_ = false;

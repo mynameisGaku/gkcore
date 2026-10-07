@@ -50,6 +50,8 @@ class FFrameCapture
     uint32_t height_ = 0;                // キャプチャ画像の高さ。
     uint32_t rowPitch_ = 0;              // GPU readback buffer上の1行のbyte数。
     bool blueFirst_ = false;             // BGRA resourceならRGB出力時に赤と青を入れ替える。
+    uint32_t firstCaptureFrame_ = 0;     // 通常描画を進めた後に取得を始めるフレーム番号。
+    uint64_t observedFrames_ = 0;        // 最初のPresentを0として数えた処理済みフレーム数。
     uint32_t requestedFrames_ = 1;       // 要求されたcapture枚数。
     uint32_t completedFrames_ = 0;       // 保存済みcapture枚数。
     bool requestChecked_ = false;        // 環境変数の読み取りを済ませたか。

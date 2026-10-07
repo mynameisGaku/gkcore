@@ -22,6 +22,7 @@ set(GKCORE_CORE_SOURCES
     src/core/Context.cpp
     src/core/Frame.cpp
     src/core/Input.cpp
+    src/platform/FKeyboardState.cpp
     src/draw/Draw2D.cpp
     src/draw/Draw3D.cpp
     src/foundation/Memory.cpp
@@ -220,6 +221,11 @@ if(GKCORE_BUILD_TESTS)
     endif()
     gkcore_enable_warnings(gkcore_tests)
     add_test(NAME gkcore.core COMMAND gkcore_tests)
+    add_executable(gkcore_keyboard_state_tests tests/keyboard_state_tests.cpp src/platform/FKeyboardState.cpp)
+    target_compile_features(gkcore_keyboard_state_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_keyboard_state_tests PRIVATE src)
+    gkcore_enable_warnings(gkcore_keyboard_state_tests)
+    add_test(NAME gkcore.keyboard_state COMMAND gkcore_keyboard_state_tests)
     add_executable(gkcore_fbx_tests
         tests/fbx_tests.cpp
         src/foundation/Memory.cpp
@@ -559,6 +565,10 @@ if(GKCORE_BUILD_RUNTIME)
             target_compile_features(gkcore_render_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_render_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_render_capture_tests)
+            add_executable(gkcore_frame_stress_tests tests/frame_stress_tests.cpp)
+            target_compile_features(gkcore_frame_stress_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_frame_stress_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_frame_stress_tests)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -567,6 +577,11 @@ if(GKCORE_BUILD_RUNTIME)
                     --source-dir ${CMAKE_CURRENT_SOURCE_DIR}
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/render-captures/$<CONFIG>)
             set_tests_properties(gkcore.render_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 180 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.frame_stress
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/frame_stress_tests.py
+                    --executable $<TARGET_FILE:gkcore_frame_stress_tests>
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/frame-stress/$<CONFIG>)
+            set_tests_properties(gkcore.frame_stress PROPERTIES LABELS "windows;gpu" TIMEOUT 150 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -600,6 +615,9 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(TARGET gkcore_render_capture_tests)
         add_dependencies(gkcore_render_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_frame_stress_tests)
+        add_dependencies(gkcore_frame_stress_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

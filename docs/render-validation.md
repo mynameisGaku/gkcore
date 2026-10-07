@@ -28,6 +28,12 @@ Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画
 
 ![方向光を90度回した2球](images/render-model-rotated.png)
 
+## 多数の描画を進めた後の確認
+
+毎フレーム1024枚の全画面矩形を重ね、3D三角形とUIを含む描画を123フレーム続けます。通常の描画処理を119フレーム進め、フレーム119と120だけを読み戻します。両画像でSceneの青・赤の切り替え、3Dの水色、UIの緑、日本語文字を検査しています。早いフレームから画像取得のためにGPUを待つ経路は追加しません。
+
+この確認は描画順とフレーム更新の回帰検査です。GPUの使用率、目標FPS、全フレームのちらつきや画質を測る試験ではありません。出力画像は`build/runtime-windows/frame-stress/Release`に保存します。
+
 ## 再実行
 
 ```bat
@@ -42,6 +48,6 @@ ctest --test-dir build/runtime-windows -C Release -R gkcore.render_capture --out
 
 PPM画像と判定値のJSONは`build/runtime-windows/render-captures/Release`へ出力します。取得に使うDLLは開発テスト専用で、配布SDKには含めません。インストール済みSDKの検査では、通常のRuntime DLLを使う別アプリをビルドし、初期化・描画・最初のPresent・終了を確認します。
 
-この検査は代表画素と領域の条件を使います。全面画像の一致、全エフェクトの画質、連続フレームのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。Spaceによる切り替えとEscape終了のキー操作、RuntimeのDebug構成、他のGPU、全モデル形式の描画は未確認です。
+この検査は代表画素と領域の条件を使います。全面画像の一致、全エフェクトの画質、連続フレームのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。輪郭サンプルではSpaceによるBloomのON→OFF→ONと短いEscape入力による終了を確認しました。モデル照明サンプルのキー操作、RuntimeのDebug構成、他のGPU、全モデル形式の描画は未確認です。
 
 実装上の原因と修正前後の記録は[TDD検証ログ](TDD_LOG.md)、対応機能と残作業は[機能とサポート状況](ROADMAP.md)を参照してください。

@@ -95,6 +95,7 @@ def main():
             if path.exists():
                 path.unlink()
         environment = os.environ.copy()
+        environment.pop("GKCORE_TEST_CAPTURE_START_FRAME", None)
         environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
         if name == "default":
             environment.pop("GKCORE_TEST_CAPTURE_FRAMES", None)
@@ -112,6 +113,7 @@ def main():
         if path.exists():
             path.unlink()
     environment = os.environ.copy()
+    environment.pop("GKCORE_TEST_CAPTURE_START_FRAME", None)
     environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
     environment["GKCORE_TEST_CAPTURE_FRAMES"] = "6"
     subprocess.run([str(args.executable.resolve()), "sequence", str(fixture), str(shader)], env=environment, check=True, timeout=45)
@@ -128,6 +130,7 @@ def main():
         if invalid_capture.exists():
             invalid_capture.unlink()
         environment = os.environ.copy()
+        environment.pop("GKCORE_TEST_CAPTURE_START_FRAME", None)
         environment["GKCORE_TEST_CAPTURE_PATH"] = str(invalid_capture)
         environment["GKCORE_TEST_CAPTURE_FRAMES"] = value
         rejected = subprocess.run([str(args.executable.resolve()), "default", str(fixture), str(shader)], env=environment, capture_output=True, timeout=45)
@@ -141,6 +144,7 @@ def main():
         if capture.exists():
             capture.unlink()
         environment = os.environ.copy()
+        environment.pop("GKCORE_TEST_CAPTURE_START_FRAME", None)
         environment["GKCORE_TEST_CAPTURE_PATH"] = str(capture)
         environment["GKCORE_TEST_CAPTURE_FRAMES"] = "1"
         subprocess.run([str(args.executable.resolve()), name, str(model), str(shader)], env=environment, check=True, timeout=45)

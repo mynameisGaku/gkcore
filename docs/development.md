@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeとCTest 32/32が成功しました。GPU画素検査は基本描画・モデル照明に加え、同じアプリの6フレームで効果切り替えとUIの色維持を確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release Runtimeと最新CTest 34/34が成功しました。GPU画素検査は基本描画・モデル照明に加え、同じアプリの6フレームで効果切り替えとUIの色維持を確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。今回のRelease実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -86,3 +86,12 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 ```
 
 2026-10-05 に Windows x64、Visual Studio 18 2026 / MSVC 19.51.36260.0、Windows SDK 10.0.28000.0、CMake 4.3.1、Python 3.11.9 で実行し、Debug と Release の全 target build、および CTest 27/27件が成功しました。Windows コンパイラでの CPU 契約と開発用 target の link を確認した結果です。Runtime を無効にしているため、The Forge を含む Runtime の link、DX12 実行、画面表示を確認した結果ではありません。実行ログは`build/native-validation/cpu-{build,test}-{debug,release}-capture.log`にあります。
+
+
+## 押下の保持と連続描画
+
+`WasKeyPressed`は直近の`ProcessEvents`で受信した押下を次の処理まで保持します。`IsKeyDown`は現在の押下中状態を返します。純CPUテストで短い押下、反復、focusの消去・復帰、範囲外のキーを確認し、輪郭サンプルでもSpace切り替えとEscape終了を操作して確認しました。[キー入力](input.md)を参照してください。
+
+`gkcore.frame_stress`は123フレームの多数描画を実行し、119・120番目だけを取得します。取得前のフレームは通常の描画同期を使います。検査用の`GKCORE_TEST_CAPTURE_START_FRAME`は0〜65535、取得枚数は1〜16で、省略時は最初の1枚を取得します。これは性能の合否判定や全面画質評価ではありません。
+
+2026-10-07のRelease全CTestは34/34、CPU RuntimeOFFのDebug/Releaseは各28/28成功しました。Runtimeはv142 / SDK22621、CPUはMSVC19.51 / SDK28000を使った別構成です。最新ログは`build/native-validation/input-stress-final-{build,tests}.log`、`input-cpu-{debug,release}-{build,tests}.log`です。

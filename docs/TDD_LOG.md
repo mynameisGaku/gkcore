@@ -539,3 +539,27 @@ ctest --test-dir build/runtime-windows -C Release --output-on-failure
 全targetのビルドとCTest 32/32件が成功しました。GPU smokeは2.52秒、画像検査は10.18秒、配布SDK consumerは4.82秒、全体は21.37秒です。ログは`build/native-validation/sequence-final-build.log`と`sequence-final-tests.log`です。変更したC++/PythonはUTF-8 BOM付き・CRLFで、C++はclang-format 12で確認しています。
 
 この検査は各フレームの画像取得時にGPUの完了を待ちます。高負荷時のちらつき、複数フレームがGPU上で同時に処理される状況の競合、入力キー操作を検証した結果ではありません。画像取得の設定はプロセス内で一度読み取り、同じ取得用DLLインスタンスをShutdown後に再Initして取得し直す用途は未対応です。
+
+
+## 2026-10-07: 短いキー押下の保持と、多数描画の連続実行
+
+`IsKeyDown`は問い合わせ時の押下中状態を返すため、イベント処理の間に押して離したキーを検出できませんでした。新しい`WasKeyPressed`は直近の`ProcessEvents`で記録した新しい押下を次の処理まで保持し、問い合わせで消費しません。既存の`IsKeyDown`の意味は維持しました。Spaceの切り替えには新APIを使い、Escape終了は両者を調べて短い押下と押し続けに対応します。
+
+純CPUの`FKeyboardState`は、同じ処理内のdown/upで押下を残す契約をstubが満たさず終了コード1となるREDを確認してから実装しました。focusで既にheld状態を登録していても初回のdownで押下を記録し、状態を消去した後のrepeatで誤った押下を作らない追加契約もREDからGREENへ進めました。Win32の初回押下と反復は[WM_KEYDOWN](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-keydown)と[WM_SYSKEYDOWN](https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-syskeydown)のbit30で区別しています。テストは短い押下、非消費の問い合わせ、次の処理での消去、長押し・反復・再押下、focusでの消去と復帰、仮想キー範囲を検査します。
+
+公開APIのREDは`build/native-validation/input-public-red.log`に記録しました。追加した契約テストが`WasKeyPressed`未宣言でコンパイルに失敗し、公開宣言・キー変換・focus境界・backend転送の実装後にcoreテストが成功しました（`input-public-green-build.log`、`input-public-green.log`）。インストール済みSDK consumerでも新APIをリンク・呼び出す経路を追加し、packageテストが成功しました（`input-package-final.log`）。
+
+連続描画のfixtureは123フレームを処理します。各フレームでSceneの全画面矩形を1024枚重ね、最後の矩形を赤・青へ交互に切り替え、3D三角形とUIを加えます。既存の取得機能が最初の2フレームを保存した際は、期待するフレーム119の青に対して赤 `(232, 0, 0)`が読み戻され、REDとなりました（`frame-stress-red.log`）。開発テスト専用の`GKCORE_TEST_CAPTURE_START_FRAME`を追加し、119フレームまでは画像取得のための待機を入れず、通常の描画同期で進めました。フレーム119はScene `(0, 0, 232)`、120は `(232, 0, 0)`となり、両方で3D `(0, 232, 232)`、UI `(0, 255, 0)`、日本語文字を検査しました。設定値は枚数1〜16・開始番号0〜65535の範囲で読み取り、不正な値には診断を返す実装です。開始番号を省略した場合は0です。
+
+通常Runtimeの輪郭サンプルを起動し、短いSpace入力でBloomのON→OFF→ONと輪郭の明るさの変化を確認しました。短いEscape入力でウィンドウとプロセスが終了することも確認しました。操作にはcomputer-useのskyを使い、SendInputやPostMessageを使うテスト用の操作コードは加えていません。Arrowの長押し、全キー・全サンプルの操作は未確認です。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0のRuntime Releaseで、次を実行しました。
+
+```powershell
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+```
+
+全targetのビルドとCTest 34/34件が成功しました。GPU smokeは2.60秒、連続取得を含む画像検査は11.02秒、多数描画は2.11秒、SDK consumerは3.83秒、全体は22.58秒です。ログは`build/native-validation/input-stress-final-build.log`と`input-stress-final-tests.log`です。新APIを使うconsumerへ更新した後のpackage単独検査も成功しました。CPU RuntimeOFFはMSVC19.51 / SDK28000でDebug/Releaseをビルドし、各28/28件成功しました（`input-cpu-debug-{build,tests}.log`、`input-cpu-release-{build,tests}.log`）。
+
+多数描画の試験は描画順・フレーム更新・終了までの回帰検査です。GPU使用率や目標FPS、全フレームのちらつき、全エフェクトの画質を評価した結果ではありません。Runtime Debug、別GPU、全モデル形式の確認は残っています。

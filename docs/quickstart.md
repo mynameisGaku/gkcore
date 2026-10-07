@@ -11,7 +11,7 @@ int main() {
     if (gk::SetWindowSize(1280, 720) != 0) return 1;
     if (gk::Init() != 0) return 1;
 
-    while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape)) {
+    while (gk::ProcessEvents() && !(gk::IsKeyDown(gk::Key::Escape) || gk::WasKeyPressed(gk::Key::Escape))) {
         if (gk::BeginFrame() != 0 ||
             gk::SetDrawLayer(gk::DrawLayer::Scene) != 0 ||
             gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f,
@@ -26,7 +26,7 @@ int main() {
 }
 ```
 
-失敗した関数の直後に `gk::GetLastErrorMessage()` を使うと、原因の文字列を確認できます。`ProcessEvents()` はウィンドウが閉じられるまで `true` を返します。
+失敗した関数の直後に `gk::GetLastErrorMessage()` を使うと、原因の文字列を確認できます。`ProcessEvents()` はウィンドウが閉じられるまで `true` を返します。短い押下で機能を切り替える場合は`WasKeyPressed`、押し続ける操作には`IsKeyDown`を使います。[キー入力](input.md)に使用例をまとめています。
 
 ## 2D と 3D を同じフレームに描く
 

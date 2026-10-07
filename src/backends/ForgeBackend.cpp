@@ -176,6 +176,14 @@ bool ForgeBackend::HasInputFocus() const
     return initialized_ && window_.HasInputFocus();
 }
 
+/**
+ * 初期化済みのウィンドウから押下イベントを問い合わせる。
+ */
+bool ForgeBackend::WasKeyPressed(uint32_t keyCode) const
+{
+    return initialized_ && window_.WasKeyPressed(static_cast<int>(keyCode));
+}
+
 bool ForgeBackend::SupportsMouseInput() const
 {
     return initialized_;
