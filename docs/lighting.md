@@ -44,6 +44,6 @@ gk::SetDirectionalLight(gk::Vec3{0.4f, -0.8f, 0.4f}, 3.0f);
 
 2D の図形・画像・文字と、公開カスタム pixel shader は照明されず従来どおり描画します。`DrawModel` のモデルは選択中の描画層に従い、UI 層に置いたモデルも材質照明を受けます。モデル材質用の公開 shader ABI はまだありません。
 
-影、環境マップ / image-based lighting、metallic-roughness texture、normal map、alpha mode の切り替えは未対応です。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER での GPU smoke は確認済みです。smoke は照明設定を変更した後、model-only の Scene/UI 描画 API と Present が成功することを確認します。画素の読み戻しや照明の見た目・品質は検証していません。
+影、環境マップ / image-based lighting、metallic-roughness texture、normal map、alpha mode の切り替えは未対応です。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER での GPU smoke は確認済みです。smoke は照明設定を変更した後、model-only の Scene/UI 描画 API と Present が成功することを確認します。追加のGPU画素テストでは、サンプルGLBの暖色・寒色の球の表示と、照明方向を90度変えた際の明暗変化を確認しました。サンプルの起動と材質の見た目も確認しています。全面的な画質評価とキー操作は未確認です。[実際の描画画像](render-validation.md)を参照してください。
 
 詳細な現在の確認範囲は [機能サポート状況](ROADMAP.md) を参照してください。

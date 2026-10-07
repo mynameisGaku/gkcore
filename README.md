@@ -80,7 +80,7 @@ flowchart LR
 
 開発には Windows 10/11 x64、Python 3.9 以降、Windows SDK 10.0.22621.0、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は The Forge と DXC 1.8.2405 の SHA-256 を確かめ、依存物と gkcore の FSL シェーダーをビルドした後、ライブラリ、サンプル、テストをビルドします。Runtime から STL を除く方針で、テストや開発ツールは別に保ちます。[開発ガイド](docs/development.md) と [機能サポート状況](docs/ROADMAP.md) を参照してください。
 
-Windows 11 Pro x64、Visual Studio 2026/v142、Windows SDK 22621、CMake 4.3.1、RTX 4070 SUPER で `PRE_SETUP.bat --gpu-check` が成功し、Release Runtime と CTest 30/30を確認しました。画面の見た目と画質は未検証です。CPU-only の Debug/Release CTest と、インストール SDK consumer の build/run も成功しています。GPU smoke と consumer の確認範囲、CPU-only 検証の toolchain、未確認事項は[機能とサポート状況](docs/ROADMAP.md)と[TDD 検証ログ](docs/TDD_LOG.md)を参照してください。
+Windows 11 Pro x64、Visual Studio 2026/v142、Windows SDK 22621、CMake 4.3.1、RTX 4070 SUPERでRelease Runtimeと`PRE_SETUP.bat --gpu-check`を実行し、最終確認でCTest 32/32が成功しました。GPU画素検査では5 modeの固定領域・色・照明変化を確認し、mixed_sceneとmodel_lightingを目視しました。これは全面的な画質判定ではありません。CPU-only Debug/Release CTestと、Initから最初のPresentまでを行うSDK consumer smokeも確認済みです。詳細と未確認事項は[GPU描画検証](docs/render-validation.md)、[機能とサポート状況](docs/ROADMAP.md)、[TDD 検証ログ](docs/TDD_LOG.md)を参照してください。
 
 ## 詳細
 

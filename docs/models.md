@@ -1,6 +1,6 @@
 # モデルを読み込む
 
-`gk::LoadModel` にファイルの場所を渡すと、モデルハンドルが返ります。OBJ、GLB 2.0、FBX の静的メッシュを読み込めます。位置・回転・大きさを設定し、`gk::DrawModel` で描画します。FBX の読み込みと材質・画像の取り込みは CPU テストで確認しています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では GLB fixture に対する `LoadModel`、`DrawModel`、`Present` の成功を確認していますが、画素の読み戻しやモデルの見た目は検証していません。FBX の GPU 描画確認を意味するものではありません。
+`gk::LoadModel` にファイルの場所を渡すと、モデルハンドルが返ります。OBJ、GLB 2.0、FBX の静的メッシュを読み込めます。位置・回転・大きさを設定し、`gk::DrawModel` で描画します。FBX の読み込みと材質・画像の取り込みは CPU テストで確認しています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では GLB fixture に対する `LoadModel`、`DrawModel`、`Present` の成功を確認していますが、サンプルGLBについては、別のGPU画素テストで2球の色と照明方向による変化を確認し、起動画面も目視しました。[確認した画像](render-validation.md)を参照してください。FBX の GPU 描画確認を意味するものではありません。
 
 ```cpp
 #include <stdio.h>
@@ -67,4 +67,4 @@ FBX は ASCII 形式とバイナリ形式の両方に対応します。`.fbx` �
 
 GLB の metallic / roughness scalar factor と base-color factor / texture はモデル材質に使われます。OBJ と FBX は metallic `0`、roughness `1` の材質値で描画します。モデルには方向光と一様な環境光による材質照明を設定できます。使い方は[モデル照明ガイド](lighting.md)を参照してください。影、環境マップ / IBL、metallic-roughness texture、normal map、alpha mode の切り替えは未対応です。
 
-アニメーション、スキニング、モーフターゲット、レイヤー合成や手続き的に生成する画像、UV 変換も対象外です。FBX の CPU 読み込みは確認済みです。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。GPU smoke は GLB fixture の描画 API 呼び出しと Present までを確認し、画素出力や見た目、FBX 個別の GPU 描画は未確認です。形式ごとの最新状態は[機能一覧](ROADMAP.md)を参照してください。
+アニメーション、スキニング、モーフターゲット、レイヤー合成や手続き的に生成する画像、UV 変換も対象外です。FBX の CPU 読み込みは確認済みです。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。GPU smoke は GLB fixture の描画 API 呼び出しと Present までを確認し、サンプルGLBの画素出力と見た目は追加の画像テストで確認しました。FBX個別のGPU描画は未確認です。形式ごとの最新状態は[機能一覧](ROADMAP.md)を参照してください。

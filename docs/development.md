@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeのビルドとGPU smokeを含むCTest 30件が成功しています。画素の読み戻し、見た目の確認、RuntimeのDebug構成、別GPUでの実行は未検証です。CPUテストとGPU smokeだけでは表示結果の正しさを保証しません。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPERで、Release RuntimeとCTest 32/32が成功しました。GPU画素検査はdefault/direct/tint/model/model_rotatedの5 modeを固定領域・色・照明変化で確認し、mixed_sceneとmodel_lightingの表示も目視しました。全面画像による画質acceptance、Runtime Debug、別GPUでの実行は未確認です。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。今回のRelease実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -41,13 +41,13 @@ DX12 対応 GPU を搭載した Windows PC で次を実行すると、通常の 
 PRE_SETUP.bat --gpu-check
 ```
 
-2026-10-05に`PRE_SETUP.bat --gpu-check`を実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプルのビルド、全CTest 30件が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。実行ログは`build/native-validation/pre-setup-gpu-final.log`にあります。
+2026-10-05に`PRE_SETUP.bat --gpu-check`を再実行し、依存物の照合、Forgeとshaderのビルド、Release Runtimeとサンプル、全CTest 32/32が成功して`BUILD READY`になりました。GPUはRTX 4070 SUPER、driverは610.74です。GPU smokeは2.46秒、5 modeの画素検査は5.95秒、SDK consumer GPU smokeは3.77秒、全体は15.05秒でした。最終ログは`build/native-validation/pre-setup-render-final.log`です。
 
-この smoke は初期化、カスタムポスト shader の有効化、960×540 へのサイズ変更、Scene と UI を含む描画命令の `Present`、ポスト shader の無効化・再有効化、無効化後の削除、終了と再初期化を確認します。API の戻り値とウィンドウの client size を検査しますが、画素の読み戻しは行わないため、色や UI が期待どおりに見えることまでは判定しません。
+`gkcore.backend_smoke`は初期化、カスタムポスト shader、960×540へのresize、Scene/UI描画のPresent、shaderの無効化・再有効化と削除、終了・再初期化をAPIとclient sizeで確認します。別の`gkcore.render_capture`が最終swapchain画像を読み戻し、2D/3D、UI、日本語文字、tint、モデル球の色と照明変化を検査します。固定領域の画素検査は全面画像の画質判定ではありません。取得画像と方法は[GPU描画検証](render-validation.md)を参照してください。
 
 色の変化を目で確かめるには、同じ build が作る `build\runtime-windows\Release\gkcore_custom_post_effect.exe` を起動します。ウィンドウを 960×540 以上に保ち、Space キーでポスト効果を切り替えてください。有効時には Scene の三角形と矩形の色が変わり、無効時には元の色に戻ります。緑の UI 矩形と画面下部の ON/OFF 表示は Scene の効果に影響されず、ウィンドウをリサイズしても表示されることを目で確認します。Escape キーで終了します。
 
-輪郭矩形の例 `build\runtime-windows\Release\gkcore_rectangle_outline.exe` では、塗りつぶし矩形、`DrawRect(..., false)` の 1 ピクセル幅、`gk::DrawRectOutline` の太線、Scene と UI の描画を見比べられます。Space キーで Bloom を切り替え、Escape キーで終了します。
+輪郭矩形サンプル `build\runtime-windows\Release\gkcore_rectangle_outline.exe` では、塗りつぶし矩形、`DrawRect(..., false)` の 1 ピクセル幅、`gk::DrawRectOutline` の太線、Scene と UI の描画を見比べられます。Space キーで Bloom を切り替え、Escape キーで終了します。
 
 モデル照明サンプル `build\runtime-windows\Release\gkcore_model_lighting.exe` は、サンプルの GLB を読み込み、非金属・滑らかな球と金属・やや粗い球を並べて描きます。左 / 右キーで方向光を回し、Space で光の方向を約 90 度切り替えます。明るい側と暗い側が移動すること、2 種の材質で反射の色や広がりが異なることを確認します。Escape キーで終了します。
 
@@ -58,7 +58,7 @@ cd build\runtime-windows\Release
 gkcore_model_lighting.exe
 ```
 
-この操作手順で、法線による明暗と材質の違いが表示されることを目視で確認してください。Windows/MSVCでのReleaseビルドとリンク、実GPUでのAPI呼び出しは確認済みですが、このサンプルの見た目は未確認です。GPU smokeは画素を読み戻さないため、表示の正しさは別に確認する必要があります。
+2026-10-05に通常Runtime DLLでmodel_lightingを起動し、左右の球の色、明暗、反射を目視確認しました。GPU画素検査でも基準方向と90度回転方向の色画素と変化量を確認しています。Spaceによる方向切り替えとEscape終了の自動操作は未確認です。検査範囲と画像は[GPU描画検証](render-validation.md)を参照してください。
 
 ## 開発テストの実行
 
@@ -85,4 +85,4 @@ cmake --build build/dev-windows --config Release --parallel 8
 ctest --test-dir build/dev-windows -C Release --output-on-failure
 ```
 
-2026-10-05 に Windows x64、Visual Studio 18 2026 / MSVC 19.51.36260.0、Windows SDK 10.0.28000.0、CMake 4.3.1、Python 3.11.9 で実行し、Debug と Release の全 target build、および CTest 26/26 件が成功しました。Windows コンパイラでの CPU 契約と開発用 target の link を確認した結果です。Runtime を無効にしているため、The Forge を含む Runtime の link、DX12 実行、画面表示を確認した結果ではありません。実行ログは `build/dev-windows/` にあります。
+2026-10-05 に Windows x64、Visual Studio 18 2026 / MSVC 19.51.36260.0、Windows SDK 10.0.28000.0、CMake 4.3.1、Python 3.11.9 で実行し、Debug と Release の全 target build、および CTest 27/27件が成功しました。Windows コンパイラでの CPU 契約と開発用 target の link を確認した結果です。Runtime を無効にしているため、The Forge を含む Runtime の link、DX12 実行、画面表示を確認した結果ではありません。実行ログは`build/native-validation/cpu-{build,test}-{debug,release}-capture.log`にあります。

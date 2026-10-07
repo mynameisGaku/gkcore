@@ -15,4 +15,4 @@ gk::DrawRectOutline(40.0f, 32.0f, 240.0f, 120.0f,
 
 ![輪郭の太さと描画層](images/rectangle-outline.svg)
 
-公開 API と packet 契約、および図形展開の外枠・内側・太さ・UV を focused CPU test で確認しています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では Scene/UI の矩形描画 API と Present の成功を確認していますが、画素出力や見た目の品質は検証していません。最新状況は[機能一覧](ROADMAP.md)を参照してください。
+公開 API と packet 契約、および図形展開の外枠・内側・太さ・UV を focused CPU test で確認しています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では Scene/UI の矩形描画 API と Present の成功を確認していますが、別の画素テストでScene/UIの塗り矩形の色と位置を確認しました。輪郭サンプルでは細線・太線・Bloomの表示も目視しています。全条件の画質評価は未実施です。[描画確認](render-validation.md)を参照してください。最新状況は[機能一覧](ROADMAP.md)を参照してください。

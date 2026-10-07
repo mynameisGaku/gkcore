@@ -39,6 +39,6 @@ Scene 層に描いた 2D スプライトや図形と 3D 描画をまとめて処
 
 `BeginFrame()` を呼ぶ前に効果の値を設定し、フレーム内では `Scene` 層へ 2D/3D のゲーム描画、`UI` 層へ HUD や文字を追加します。最後に `Present()` を呼びます。各関数の戻り値を確認し、失敗したときは `gk::GetLastErrorMessage()` で原因を調べてください。
 
-この順序と設定 API は実装されています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では効果を切り替えた描画 API と Present の成功を確認していますが、画素の読み戻しや見た目の品質は検証していません。現在の適用状況と検証範囲は [機能とサポート状況](ROADMAP.md) を参照してください。
+この順序と設定 API は実装されています。Windows/MSVC Runtime Release build/link と COM reflection は確認済みです。RTX 4070 SUPER の GPU smoke では効果を切り替えた描画 API と Present の成功を確認していますが、別のGPU画素テストではFXAA有効・無効の両経路で2D/3D・画像・日本語文字を確認しました。輪郭サンプルのBloom表示も目視しています。全面的な画質評価は未実施です。現在の適用状況と検証範囲は [機能とサポート状況](ROADMAP.md) を参照してください。
 
-Scene へ独自の HLSL 処理を追加する方法は[ポストエフェクト用シェーダーのガイド](post-effect-shader.md)を参照してください。API と CPU 契約は統合済みです。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で独自 post-effect shader を使う GPU smoke は確認済みです。smoke では API 戻り値と Present を検査し、画素出力や見た目は判定していません。
+Scene へ独自の HLSL 処理を追加する方法は[ポストエフェクト用シェーダーのガイド](post-effect-shader.md)を参照してください。API と CPU 契約は統合済みです。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で独自 post-effect shader を使う GPU smoke は確認済みです。smokeに加え、GPU画素テストでtintによるSceneの色の変化とUIの色の維持を確認しました。[描画確認](render-validation.md)に実際の画像と判定範囲を記載しています。

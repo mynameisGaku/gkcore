@@ -500,3 +500,23 @@ GPU smokeは初期化、PNG画像とGLBモデルの読み込み、2D・3D・文�
 同日のRuntimeOFF構成はDebugとReleaseの全targetを再ビルドし、CTestが各26/26成功しました。ログは`build/native-validation/cpu-debug-final-{build,tests}.log`と`cpu-release-final-{build,tests}.log`にあります。
 
 画素読み戻し、サンプルの見た目と品質、FBXなど全形式の実GPU表示、Runtime Debug、他のGPUとWindows 10での検証は未実施です。固定Forgeの開発用shader reloadは`reload-server.txt`がないエラーを出しますが、今回のRelease実行は継続して成功しました。Runtimeの設定項目に無効化の指定がないため、依存物のビルド設定として今後整理します。配布ライセンスの最終確認と初学者による導入確認も残っています。
+
+## 2026-10-05: Windows画素読み戻しによる描画確認
+
+NVIDIA GeForce RTX 4070 SUPER / driver 610.74、Windows 11 build 26200、Visual Studio 18 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、Python 3.11.9で、開発用のGPU画素読み戻しを使い、最終swapchain画像を検査しました。Sceneの代表画素が灰色 `(188, 188, 188)` のままになる問題を、default/direct/tintの画像検査で再現しました（RED: `build/native-validation/render-capture-red.log`）。
+
+原因調査では、固定FSL compilerが文字列register名をPythonの`is`で比較し、配列registerの割り当てを飛ばすことを確認しました。製品に含めない一時copy上で比較を`==`へ変え、texture配列`t0[2]`、sampler `s2`、constant buffer `b3`の割り当てを確認しました。既存のreflection期待値も実際の割り当てに合わせました。変更したFSL一時copyから13 shader artifactを再生成した後、default/direct/tintの画素検査が成功しました（GREEN: `build/native-validation/render-capture-green.log`）。Sceneの赤は `(232, 0, 0)`、tint適用後は `(149, 0, 0)`、UIの緑 `(0, 255, 0)`は維持されました。3D三角形は青 `(0, 0, 232)`、fixture PNGはmagenta `(232, 0, 232)`、日本語UI文字は719個の白画素として検出されました。
+
+画素検査専用のRuntime DLLは通常の配布SDKに含めない構成です。別途、Runtimeを無効にしたWindows開発構成をMSVC 19.51 / SDK 10.0.28000.0でDebugとRelease再buildし、CTestは各27/27件成功しました。ログは`build/native-validation/cpu-{build,test}-{debug,release}-capture.log`にあります。mixed_sceneは通常表示と最大化表示で目視し、custom shaderとrectangle outline / Bloomを有効にした描画を確認しました。
+
+この時点では、model_lightingの球が黒く小さな反射点だけ見える別問題を調査していました。default/direct/tintの結果はモデル照明を検証しません。続く節にモデルの修正と最終検証を記録しています。SpaceとEscapeのキー操作は未確認です。
+
+## 2026-10-05: モデル材質のGPU画素検査と白textureの修正
+
+Windows 11 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 18 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0で、モデル照明サンプルと同じ`model_lighting.glb`、camera、model transform、ambient/directional lightを使うGPU画像検査を実行しました。基準方向と90度回転方向を別々にcaptureし、既存のdefault/direct/tintを含む5 modeがすべて成功しました（`build/native-validation/model-texture-green.log`）。
+
+RED調査では、白の1x1 fallback imageを作るTextureCacheに`TEXTURE_CREATION_FLAG_FORCE_2D`がなく、D3D12でTexture1Dとして分類される一方、shaderはTexture2Dとしてsampleしていました。比較診断ではColor描画に有色画素が26,570個あるのにTexture描画は0個で、色付きgeometryとtexture経路の問題を分離しました。TextureCacheに2D指定を加えた後のcaptureでは、基準方向の非金属球/金属球の色画素が9,461/12,551個、90度回転時が9,041/12,563個でした。方向間で色が変わった画素は非金属側9,687個、金属側7,945個です。
+
+同じWindows PCでmixed_sceneを通常表示と最大化表示で確認し、カスタムポストエフェクト、輪郭矩形、Bloomを有効にした描画を目視しました。通常Runtime DLLでモデル照明サンプルも再起動し、左右の球の色・明暗・反射を確認しました。Alt+F4による終了を確認しました。画素判定は固定画像の領域・色優勢・差分画素数による回帰検査であり、全画面の基準画像比較や全GPUに対する画質acceptanceではありません。Spaceによる照明切り替えとEscape終了の自動操作も未確認です。
+
+画素capture用Runtime DLLは開発テスト専用で、通常の配布SDKに含みません。install済みSDK consumerには`GKCORE_PACKAGE_GPU_SMOKE`のopt-in経路があり、Init、Scene/UI描画、Present、Shutdownを呼びます。従来の通常consumer検査はGPUを使わない構成です。最終の`PRE_SETUP.bat --gpu-check`は`BUILD READY`となり、Release全CTestが32/32件成功しました。GPU smokeは2.46秒、5 modeの画像検査は5.95秒、インストールSDK consumerは3.77秒、全体は15.05秒でした。ログは`build/native-validation/pre-setup-render-final.log`です。通常の`gkcore.dll`には画像取得用の環境変数文字列がなく、検査用DLLだけに含まれることも確認しました。RuntimeOFFのWindows CPU構成はMSVC 19.51 / SDK 10.0.28000.0でDebug/Release各27/27件成功し、ログは`build/native-validation/cpu-{build,test}-{debug,release}-capture.log`にあります。
