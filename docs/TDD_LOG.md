@@ -587,3 +587,29 @@ Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026
 Debugの全34テストが成功し、画像取得13回すべてでInfoQueue activeを記録しました。GPU smokeは2.48秒、画像検査は11.05秒、連続描画は1.73秒、Debug SDK consumerは3.77秒、全体は21.59秒です。ログは`build/native-validation/pre-setup-debug-validated.log`です。Releaseも全34テストが成功し、同じ順に2.32秒、10.17秒、1.63秒、3.62秒、全体20.31秒でした（`pre-setup-release-after-debug.log`）。Release/Debugで取得した通常・FXAA無効・tint・モデル照明2方向・連続6フレームの計11画像はbyte単位で一致しました。これは同一GPUとdriverの回帰結果です。
 
 RuntimeOFFのCPU構成もDebug/Releaseで再ビルドし、各28/28テストが成功しました。MSVC19.51 / SDK28000の別toolchainで、ログは`build/native-validation/key-coverage-cpu-{debug,release}-{build,tests}.log`です。Debugのビルド出力をReleaseと混ぜた場合の動作、別GPU、GPU-based validation、全キー・全モデル形式の実操作は未確認です。
+
+
+## 2026-10-07: 各ポストエフェクトのGPU画像確認
+
+独立した実GPU fixtureを追加し、基準、露出低・高、トーンマッピング無効、彩度0・2、コントラスト0・2、Bloom強度0・4、FXAA有効の11設定を比較しました。HDR式やCPU側のreference式を期待画像へ再実装せず、効果の方向・境界条件とUIの不変を検査しています。
+
+初回検査では、露出0.25の白い三角形が `(165, 165, 165)`となり、共通の『白180超』という条件で失敗しました（`build/native-validation/post-effects-first.log`）。これは露出による正しい明度低下をテストが拒否したもので、Runtimeの不具合ではありません。彩度0・コントラスト0で色を失う場合にも橙色の固定条件を当てないよう、描画存在の確認を基準画像へ限定しました。コントラストの比較も、共に暗い2領域の差ではなく、白い三角形と灰色領域の明暗差を検査します。Runtimeの係数・アルゴリズムは変更していません。
+
+露出0.25/1/4で橙色は `(63, 17, 3)`、`(154, 61, 19)`、`(227, 150, 67)`となり、全成分が順に増えました。彩度0は `(90, 90, 90)`、2は `(195, 0, 0)`でした。コントラスト0の基準領域は188の共通中間値、2では白255・灰0となりました。トーンマッピング無効時は白が232から255へ変わりました。
+
+Bloomの有効・強度0は無効時の基準と全画素一致しました。強度4では白い矩形の外側で1,188画素が明るくなり、最大RGB差は156でした。FXAAは斜辺を含む局所領域で558画素が変わり、中央の平坦部は232を維持しました。11設定のすべてで緑の不透明UI矩形と、黒背景を含む文字領域の画像データは同一でした。透明UI一般を検証した結果ではありません。
+
+設定の保持は3フレームで確認しました。BeginFrame後に露出を4へ変更した最初の画像は基準設定、次のBeginFrame後に0.25へ変更した画像は露出4、3枚目は露出0.25の個別画像と全画素一致しました。独立レビューを受け、tone-offの質的方向の検査と、失敗実行で余分な画像が残った際の再実行性も改善しました。
+
+Windows 11 Pro build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29.30133（MSVC 19.29.30159）、Windows SDK 10.0.22621.0のRuntimeで、両構成をbuildして全CTestを実行しました。
+
+```powershell
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+```
+
+Releaseは全35/35件成功、追加画像テスト14.14秒、全体35.59秒でした。Debugも35/35件成功、追加画像テスト15.45秒、全体38.72秒でした。ログは`build/native-validation/post-effects-{release,debug}-final-{build,tests}.log`です。DebugはInfoQueue取得を必須とする既存画像取得経路を使います。設定11枚・設定保持3枚の計14画像はRelease/Debugでbyte単位に一致しました。同じGPUとdriverの回帰結果です。
+
+新しい取得コードとテストは開発用で、Runtime SDKのinstall対象には含めません。全面画像の画質、ちらつき、GPU負荷や目標FPS、他GPU、透明UI全般の評価は別に行います。ユーザー向け文書には実GPU画像を色変換せずPNGとして掲載しました。

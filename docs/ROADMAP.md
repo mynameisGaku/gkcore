@@ -29,9 +29,11 @@ FSL artifact の検査テストは `python3 tests/shader_contract_tests.py` で�
 
 公開47キーの固定した期待値と、仮想キー256個すべての押下・反復・消去をCPUテストで確認しました。RuntimeのDebug構成も標準セットアップからビルドし、Debug LayerのInfoQueueが有効な状態で全34テストが成功しました。Releaseも全34テストが成功し、同じGPU・driverで取得した11枚の画像はbyte単位で一致しました。DebugとReleaseのForgeライブラリ・Runtime出力は別フォルダーへ保存します。GPU-based validationと全キーの実操作は未確認です。
 
+効果別の追加GPUテストで、露出・トーンマッピング・彩度・コントラスト・Bloom・FXAAの個別設定、2つの不透明なUI領域の維持、BeginFrame時の設定保持を確認しました。Release/Debugの全CTestは各35/35件成功し、効果別の計14画像は同じGPUとdriverでbyte単位で一致しました。[実際の効果画像](effects.md)を参照してください。
+
 ## 次に進める内容
 
-1. 高負荷での連続描画、入力操作、各エフェクトの個別設定をGPU画像と起動画面で確認し、画質評価を進める。現在の画像テストは代表画素・領域、6フレームの設定切り替え、多数の矩形を123フレーム描いた後の出力を検査する。
+1. 高負荷での連続描画、入力操作、各エフェクトの個別設定をGPU画像と起動画面で確認し、画質評価を進める。現在の画像テストは代表画素・領域、各効果の個別設定とUI保持、6フレームの設定切り替え、多数の矩形を123フレーム描いた後の出力を検査する。
 2. 初学者向け手引きを使った導入確認と、他GPU・全モデル形式の実機表示を検証する。インストールSDK consumerのInit・最初のPresentは確認済み。
 3. 依存物の再配布条件と gkcore 自身の配布ライセンスを確定し、必要な notice を整える。
 4. 影、環境マップ / IBL、metallic-roughness texture、normal map、alpha mode とモデル材質用 shader ABI を設計・実装・検証する。

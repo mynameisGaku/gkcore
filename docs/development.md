@@ -105,3 +105,8 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 `gkcore.frame_stress`は123フレームの多数描画を実行し、119・120番目だけを取得します。取得前のフレームは通常の描画同期を使います。検査用の`GKCORE_TEST_CAPTURE_START_FRAME`は0〜65535、取得枚数は1〜16で、省略時は最初の1枚を取得します。これは性能の合否判定や全面画質評価ではありません。
 
 2026-10-07のRelease全CTestは34/34、CPU RuntimeOFFのDebug/Releaseは各28/28成功しました。Runtimeはv142 / SDK22621、CPUはMSVC19.51 / SDK28000を使った別構成です。最新ログは`build/native-validation/input-stress-final-{build,tests}.log`、`input-cpu-{debug,release}-{build,tests}.log`です。
+
+
+## 効果別のGPU画像テスト
+
+`gkcore.post_effect_capture`は各効果の個別設定と、BeginFrameの前後での設定取り込みを実GPU画像で比較します。露出の明暗順、彩度0の無彩色化、Contrast0の共通中間値、Bloomのにじみ、FXAAの斜辺処理、UI領域の保持を独立した条件で判定します。新しい画像テストを含むRelease/Debugの全CTestは各35/35成功しました。対応する14画像も同GPU・driver内で一致しました。内容と再実行コマンドは[効果の使い方](effects.md)を参照してください。
