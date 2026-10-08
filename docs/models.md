@@ -256,7 +256,7 @@ textureとimageの関係は [glTF Texture Data](https://registry.khronos.org/glT
 
 `normalTexture` のRGBを線形値として読み、接線空間の法線へ展開します。Aは使いません。`scale` は横・縦成分に掛ける有限値で、省略時は1、0や負の値にも対応します。基本色・metallic-roughness・法線画像はそれぞれ独立して `texCoord` を選べます。法線画像も埋め込みPNGを使い、UV形式と `KHR_texture_transform` の制約は基本色画像と共通です。
 
-現在はモデルに明示したFLOAT形式の `NORMAL` と `TANGENT` が必要です。`TANGENT` は4成分で、XYZは法線に平行でない有効な方向、Wは+1か-1を指定し、同じ三角形の3頂点で揃えます。接線の自動生成は行いません。属性欠損・不正値・逆変換できないnode行列は読み込み時に診断します。node変換と描画時のモデル変換では法線と接線を別々に変換し、負のscaleによる鏡映も保持します。
+FLOAT形式の `NORMAL` は必要です。`TANGENT` を省略したGLBは、法線画像が選ぶUVから接線を自動生成します。`TANGENT` は4成分で、XYZは法線に平行でない有効な方向、Wは+1か-1を指定し、同じ三角形の3頂点で揃えます。明示した接線がある場合はその値を使い、不正な値を自動生成で置き換えることはありません。属性欠損・不正値・逆変換できないnode行列は読み込み時に診断します。node変換と描画時のモデル変換では法線と接線を別々に変換し、負のscaleによる鏡映も保持します。
 
 内蔵モデル照明で処理するため、SceneとUIの両方で使えます。独自pixel shaderを指定した場合は既存の非照明経路へ切り替わり、法線マップの照明入力は渡されません。基本色・MR・法線に同じimageを参照するtextureを指定すると、sRGB用と線形用の2つのGPU画像を使い、MRと法線は線形画像を共有します。texture indexが別でも、同じimageの読み込み結果をモデル内で共有します。
 
@@ -268,7 +268,7 @@ textureとimageの関係は [glTF Texture Data](https://registry.khronos.org/glT
 
 ![独立したUV1で法線模様を読む描画](images/model-normal-uv1.png)
 
-正常22・拒否12のGLBをCPUで検査し、Scene20枚、UI11枚、描画時の鏡映2枚、2種類のGLBをそれぞれ132回読み直した後の各2枚、同じframeへ50モデルを描く1枚を実GPUで確認しました。法線画像のalpha無視、scaleの0・2・負値、接線Wの符号、UV1、共有画像、nodeと描画時の鏡映を参照モデルと比較しています。Release/Debugの画像一致は[描画検証](render-validation.md)に記録しています。接線Wを意図的に無視したshaderは45,000画素の差（RGB最大18）で拒否できました。
+既存の法線マップGLBをCPUで検査し、Scene20枚、UI11枚、描画時の鏡映2枚、2種類のGLBをそれぞれ132回読み直した後の各2枚、同じframeへ50モデルを描く1枚を実GPUで確認しました。法線画像のalpha無視、scaleの0・2・負値、接線Wの符号、UV1、共有画像、nodeと描画時の鏡映を参照モデルと比較しています。Release/Debugの画像一致は[描画検証](render-validation.md)に記録しています。接線Wを意図的に無視したshaderは45,000画素の差（RGB最大18）で拒否できました。
 
 再検査は次で実行します。実行結果と条件は[描画検証](render-validation.md)へ記録しています。
 
@@ -277,7 +277,29 @@ ctest --test-dir build/runtime-windows -C Release -R gkcore.model_normal --outpu
 ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_normal --output-on-failure
 ```
 
-仕様の読み方は [glTF normalTexture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_normaltexture) を参照してください。未対応の接線自動生成を含めたglTF全体への対応を意味するものではありません。
+仕様の読み方は [glTF normalTexture](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_normaltexture) を参照してください。glTF全体への対応を意味するものではありません。
+
+### 接線を省略したGLB
+
+接線は、法線画像の横方向と縦方向をモデル表面へ対応させるデータです。`TANGENT` がない場合、primitiveの位置・明示法線・`normalTexture.texCoord` が選ぶUVを使い、固定したMikkTSpaceの標準設定で生成します。node変換前に計算し、その後に法線と接線を別々に変換して、非一様scaleと鏡映の向きを保持します。
+
+UVの鏡映や接線の向きが異なる三角形では、同じsource vertexでも必要な頂点分割を行います。同じframeは再利用し、頂点を参照するindexを付け直します。参照されない頂点は生成結果から除きます。基本色・MR・法線・自己発光・遮蔽の各UVや材質は維持します。
+
+三角形やUVの面積が0で接線を定められない場合、参照法線が0または不正な場合、数値範囲を保って計算できない場合、出力上限を越える場合は読み込みが失敗します。任意の軸へ置き換える処理は行いません。`NORMAL` 自体の欠損はまだ補完しません。明示 `TANGENT` の読込みは従来のままです。
+
+![自動生成した接線で法線マップを描いたモデル](images/model-tangent-generated.png)
+
+![非一様node変換後の角度加重接線モデル](images/model-tangent-weighted.png)
+
+取得した32画像と判定JSONはRelease/Debugで完全一致しました。検査は単純な平面、鏡映UV、UVの回転、UV1、非indexed mesh、共有辺、nodeと描画時の変換、未参照頂点を含みます。角度加重で作る接線は解析的な参照を用意し、非一様変換の前に生成する順序も比較します。詳細は[描画検証](render-validation.md#glbの接線自動生成)を参照してください。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R "gkcore.model_tangent|gkcore.model_normal" --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.model_tangent|gkcore.model_normal" --output-on-failure
+```
+
+生成方法の指定は[glTF geometry仕様](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#meshes)を参照してください。固定コードと配布noticeは[第三者コンポーネント](THIRD_PARTY_NOTICES.md#mikktspace)に記録しています。
+
 
 ## GLB の透明部分
 
@@ -322,4 +344,4 @@ FBXのモデルは右手系のY-up、メートル単位へそろえ、階層変�
 
 モデルの材質では基本色係数とGLBのmetallic / roughness係数を使います。OBJとFBXはmetallic `0`、roughness `1` で描画します。方向光と一様な環境光による材質照明を設定できます。使い方は[モデル照明ガイド](lighting.md)を参照してください。
 
-影、環境マップ / IBL、接線の自動生成、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。
+影、環境マップ / IBL、欠損NORMALの生成、`BLEND`、アニメーション、スキニング、モーフターゲット、レイヤー合成、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。

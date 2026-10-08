@@ -985,3 +985,46 @@ Release全53/53は343.66秒で成功しました。遮蔽GPU56.54秒、SDK consu
 Debugも全53/53成功（371.43秒）しました。取得43画像と判定JSONはRelease/Debugで完全一致、全参照比較は307,200画素・差0でした。従来normal38・sampler34・mip28画像もbyte単位一致しています。ログは `model-occlusion-debug-final-{build,tests}.log` です。Debug画像テストはD3D12 InfoQueueの取得を必須にしており、その条件を通過しました。GPU-based validationは有効にしていません。
 
 検証PCはWindows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026 / v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51 / SDK10.0.28000.0です。新規ライブラリや公開shader ABIの変更はありません。画像生成からの動的なAO、全面画質、FPS、他GPU、GPU-based validation、device loss復旧は今回の確認範囲外です。
+
+## 2026-10-08 GLBの接線自動生成
+
+normalTextureを持ち、TANGENTがないGLB primitiveの接線を生成します。FLOAT NORMALと、法線画像が選ぶUVは必要です。明示TANGENTの検証・変換は従来経路を保ち、無効な明示値を生成で置き換えません。source primitiveの位置・法線・UVとlocal indexをnode変換前に一時保持し、生成後にnodeの位置・法線・接線変換を適用します。
+
+helperをスタブにした状態でmodel_tangent_generationの平面接線契約をREDにしました。GLB loader契約はtangent-canonicalを「requires matching FLOAT NORMAL and TANGENT」で拒否し、native Release GPUも同じGLBの読込みで失敗しました。ログは `model-tangent-generation-red-{build,tests}.log`、`model-tangent-loader-red-{build,tests}.log`、`model-tangent-gpu-red-{build,tests}.log` です。
+
+固定MikkTSpace commit `3e895b49d05ea07e4c2133156cfa94369e19e409` の原文を使用します。header/sourceを改変せず、専用wrapperがmalloc/freeをfoundationへ接続します。共通Arrayが入力とcornerごとの結果を保持し、同じsource vertexと完全に同じ接線frameだけをまとめ、異なるframeは頂点を分けます。source indexだけで上書き・平均は行いません。候補のvertices/indicesが完成したときだけ出力へ移し、途中失敗で既存出力を変えません。
+
+入力位置とUVを参照頂点だけの共通平行移動・正の縮尺で整え、法線を正規化して計算範囲を保ちます。三角形またはUVの面積0、参照法線の零・非有限、生成frameの不正、上限超過は拒否します。出力へ使われない頂点は除きます。基本色・MR・normal・emissive・occlusionの各UVとmaterialを保ちます。
+
+初回helper検査は割当失敗時の診断検査で失敗しました。診断Stringも動的領域を使うため、注入前に診断用容量を用意しました。上流の任意内部割当が失敗しても正常fallbackできる場合は成功を認め、解析基準と比較します。失敗時にはsourceとsentinel出力の保持、容量のある診断Stringへの理由を要求します。固定した確保回数に合わせる検査にはしていません。
+
+独立レビューで、未参照頂点も先に法線を正規化していた不具合を修正しました。未使用判定を前へ移し、極端な未参照座標・零法線を計算へ参加させない単体テストと、GLBで5入力頂点から4出力頂点へ除外する契約を追加しました。source arraysは不変です。別の指摘を受け、平面の一様接線だけでは生成順を検証できないため、共有辺の角度重みが非一様変換で変わるモデルを加えました。
+
+共有辺の解析モデルは2面の接線がXとY、共有cornerの角度が両面等しいため、sourceの共有接線が `(1,1,0)/sqrt(2)` です。node scale `(2,1,1)` では先に生成した接線を変換した `(2,1,0)/sqrt(5)` を参照にします。変換後に平均すると角度重みが変わります。この参照はMikkTSpaceを呼んで作らず、独立な幾何から明示TANGENTへ保存しました。面順序の反転でもsource frameが変わらないことをCPUで確認します。
+
+旧missing-tangent fixtureはgeometryの巻き方向とNORMALが反転しているため、旧uniform-normalの明示W+1を生成の参照には使いません。新しい平面fixtureは位置・巻き方向・NORMAL・UVを揃え、既知のframeを明示したGLBへCPU corner payloadとGPU画像を比較します。Source-normalの反転自体を新規に禁止する変更はしていません。
+
+初回native focused4/4（33.00秒）に続き、追加モデル込みfocused6/6が90.32秒で成功しました。接線GPU39.78秒、従来normal GPU50.30秒です。8基本対と角度重み2対、未使用頂点1対、no-normal-mapと6不正fixtureを含む29 GLBを使用しました。GPU取得31画像の参照差は0、normal-map有無には45,000画素で最大24の差がありました。UV鏡映、回転、UV1、nodeの非一様scale・回転・鏡映、tiny node、非indexed、共有境界、Scene/UI、runtime鏡映、132回再読込とPresent前のhandle削除後frame130/131を確認しています。
+
+配布noticeを必須にするtest_allowlistの新契約を先にREDにし、CMake installとmanifestへ `mikktspace-LICENSE.txt` を追加して成功しました。Runtime SDKへsource/headerは入れず、新DLL依存もありません。固定source bytesとnotice原文は `gkcore.mikktspace_lock` で確認します。gkcore全体の配布条件が確定したという意味ではありません。
+
+RuntimeOFF Debug/Releaseは各39/39成功しました。Release Runtime全57/57は376.92秒、接線GPU39.59秒、SDK consumerを含むpackage4.09秒で成功しました。最新ログは `model-tangent-cpu-{debug,release}-final-{build,tests}.log`、`model-tangent-release-final-tests.log`、ビルドは `model-tangent-release-focused-build.log` です。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+生成順を誤った場合のGPU感度も確認するため、変換後の角度重みを使うvalid authored tangentの反例を追加しました。node scale2の後に共有頂点0で153.435°/116.565°、頂点1で12.529°/18.435°を使って平均したframeを、そのnodeの逆変換でsource TANGENTへ保存します。この期待値にはMikkTSpaceを使いません。30 GLBを使う最終strict CPU2/GPU1は41.37秒（GPU41.27秒）で成功しました。新しいCPU3追加pairとunused vertex数の契約もnative Releaseで再ビルドして通過しています。ログは `model-tangent-release-strict-{build,tests}.log` です。
+
+誤順序反例との比較はmodel領域45,000画素のうち3,462画素で差2超、最大11でした。normal-map無しとの反例は45,000画素に10超、最大24です。現在の最終取得は32画像で、全参照の最大差0でした。画像の再現性と参照の幾何一致を検証するもので、全面画質の評価にはしていません。
+
+Debugも全57/57成功（407.18秒）しました。取得32画像と判定JSONはRelease/Debugで完全一致し、すべての参照比較の最大差は0です。誤順序とnormal-map無しの反例の検出結果も両構成で一致しました。最新ログは `model-tangent-debug-final-{build,tests}.log` です。Debug画像検査はD3D12 InfoQueueの取得を必須にしており、GPU-based validationは有効にしていません。
+
+検証PCはWindows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026/v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51/SDK10.0.28000.0です。PNGは最終PPMのRGBを変更せず保存し、decode後の一致を確認しました。authored sourceのfixed clang-format12/UTF-8 BOM/CRLF、Runtime STLなし、機能token hash、vendor原文SHA、文書リンクも確認しました。NORMAL補完、アニメーション、全面画質、FPS、他GPU、device loss復旧はこの追加検証の対象外です。

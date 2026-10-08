@@ -38,6 +38,8 @@ set(GKCORE_CORE_SOURCES
     src/model/ModelLoader.cpp
     src/model/ObjLoader.cpp
     src/model/GlbLoader.cpp
+    src/model/ModelTangents.cpp
+    src/model/MikkTSpace.cpp
     src/model/Cgltf.cpp
     src/model/FbxLoader.cpp
     src/model/FbxGeometry.cpp
@@ -244,6 +246,8 @@ if(GKCORE_BUILD_TESTS)
         src/model/ModelLoader.cpp
         src/model/ObjLoader.cpp
         src/model/GlbLoader.cpp
+    src/model/ModelTangents.cpp
+    src/model/MikkTSpace.cpp
         src/model/Cgltf.cpp
         src/model/FbxLoader.cpp
         src/model/FbxGeometry.cpp
@@ -401,6 +405,35 @@ if(GKCORE_BUILD_TESTS)
         DEPENDS tests/support/model_mip_fixtures.py
         VERBATIM)
     add_custom_target(gkcore_model_mip_fixtures DEPENDS ${_gkcore_model_mip_fixture_files})
+
+    set(_gkcore_model_tangent_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-tangent-fixtures")
+    set(_gkcore_model_tangent_fixture_files)
+    foreach(_fixture_name IN ITEMS tangent-canonical tangent-canonical-reference tangent-degenerate-uv tangent-malformed-authored tangent-mirror-u tangent-mirror-u-reference tangent-missing-normal tangent-missing-normal-uv tangent-no-normal-map tangent-node-transform tangent-node-transform-reference tangent-non-indexed tangent-non-indexed-reference tangent-nonfinite-normal tangent-rotated-uv tangent-rotated-uv-reference tangent-shared-seam tangent-shared-seam-reference tangent-tiny-node-scale tangent-tiny-node-scale-reference tangent-unused-source-vertex tangent-unused-source-vertex-reference tangent-uv1 tangent-uv1-reference tangent-weighted-node tangent-weighted-node-reference tangent-weighted-node-wrong-order tangent-weighted-source tangent-weighted-source-reference tangent-zero-area)
+        list(APPEND _gkcore_model_tangent_fixture_files "${_gkcore_model_tangent_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_tangent_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_tangent_fixtures.py
+            --output-dir "${_gkcore_model_tangent_fixture_dir}"
+        DEPENDS tests/support/model_tangent_fixtures.py tests/support/model_normal_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_tangent_fixtures DEPENDS ${_gkcore_model_tangent_fixture_files})
+    add_executable(gkcore_model_tangent_tests tests/model_tangent_tests.cpp ${_gkcore_resource_test_sources})
+    target_compile_features(gkcore_model_tangent_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_tangent_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_model_tangent_tests)
+    add_dependencies(gkcore_model_tangent_tests gkcore_model_tangent_fixtures)
+    add_test(NAME gkcore.model_tangent COMMAND gkcore_model_tangent_tests "${_gkcore_model_tangent_fixture_dir}")
+
+    add_test(NAME gkcore.mikktspace_lock COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_mikktspace_lock.py)
+
+    add_executable(gkcore_model_tangent_generation_tests
+        tests/model_tangent_generation_tests.cpp src/model/ModelTangents.cpp src/model/MikkTSpace.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_tangent_generation_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_tangent_generation_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_tangent_generation_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_tangent_generation_tests)
+    add_test(NAME gkcore.model_tangent_generation COMMAND gkcore_model_tangent_generation_tests)
 
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
@@ -802,6 +835,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_occlusion_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_occlusion_capture_tests)
             add_dependencies(gkcore_model_occlusion_capture_tests gkcore_model_occlusion_fixtures)
+            add_executable(gkcore_model_tangent_capture_tests tests/model_tangent_capture_tests.cpp)
+            target_compile_features(gkcore_model_tangent_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_tangent_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_tangent_capture_tests)
+            add_dependencies(gkcore_model_tangent_capture_tests gkcore_model_tangent_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -880,6 +918,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --fixture-dir "${_gkcore_model_occlusion_fixture_dir}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-occlusion-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_occlusion_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_tangent_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_tangent_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_tangent_capture_tests>
+                    --fixture-dir "${_gkcore_model_tangent_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-tangent-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_tangent_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -957,6 +1001,10 @@ if(GKCORE_BUILD_RUNTIME)
         add_dependencies(gkcore_model_occlusion_capture_tests gkcore_stage_runtime_payload)
     endif()
 
+    if(TARGET gkcore_model_tangent_capture_tests)
+        add_dependencies(gkcore_model_tangent_capture_tests gkcore_stage_runtime_payload)
+    endif()
+
     install(TARGETS gkcore EXPORT gkcoreTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
         LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT Runtime
@@ -993,6 +1041,9 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES
         third_party/ufbx/LICENSE
         DESTINATION ${_gkcore_licenses} RENAME ufbx-LICENSE.txt COMPONENT Runtime)
+    install(FILES
+        third_party/mikktspace/LICENSE
+        DESTINATION ${_gkcore_licenses} RENAME mikktspace-LICENSE.txt COMPONENT Runtime)
     install(EXPORT gkcoreTargets NAMESPACE gkcore:: FILE gkcoreTargets.cmake
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/gkcore COMPONENT Runtime)
     configure_package_config_file(cmake/gkcoreConfig.cmake.in

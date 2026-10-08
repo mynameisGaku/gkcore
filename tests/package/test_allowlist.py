@@ -28,6 +28,12 @@ DEBUG_LAYER = "bin/d3d12SDKLayers.dll"
 
 
 class RuntimeAllowlistTests(unittest.TestCase):
+
+    def test_requires_mikktspace_license(self):
+        # 静的に組み込む接線生成コードの原文noticeを配布物へ必須にする。
+        with self.assertRaises(PackageError):
+            validate(BASE - {"share/licenses/gkcore/mikktspace-LICENSE.txt"})
+
     def test_accepts_minimal_runtime(self):
         self.assertEqual(validate(BASE), BASE)
 

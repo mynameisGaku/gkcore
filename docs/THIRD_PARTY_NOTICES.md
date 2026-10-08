@@ -46,6 +46,12 @@ Agility、NVAPI、DXC の条項では配布先に課す契約条件が定めら�
 - 上流の [`LICENSE`](https://github.com/ufbx/ufbx/blob/26a482ae66871d7de36eb722aa060bce95bce274/LICENSE) は MIT License または Unlicense のいずれかを選べる二重ライセンスです。gkcore は MIT alternative の下で ufbx を使用します。Runtime SDK には `ufbx-LICENSE.txt` として原文を含め、parser source/header は含めません。
 - ufbx は gkcore の FBX import 実装へ静的に組み込まれます。MIT 条項に従い、著作権表示と許諾文を Runtime package に含めます。
 
+## MikkTSpace
+
+- 固定commit: [`3e895b49d05ea07e4c2133156cfa94369e19e409`](https://github.com/mmikk/MikkTSpace/tree/3e895b49d05ea07e4c2133156cfa94369e19e409)。`third_party/mikktspace/` のsource/headerは上流の原文を変更せず保存し、READMEにSHA-256を記録しています。
+- 許諾と条件は上流の [mikktspace.h](https://github.com/mmikk/MikkTSpace/blob/3e895b49d05ea07e4c2133156cfa94369e19e409/mikktspace.h) 冒頭にあります。原著者を偽らないこと、改変したsourceはその旨を明示すること、source配布からnoticeを削除・変更しないことが条件です。
+- 接線生成処理へ静的に組み込み、Runtime SDKには原文の著作権表示と許諾を `mikktspace-LICENSE.txt` として保存します。source/headerは開発checkoutへ置き、Runtime SDKには入れません。
+
 ## Forge の Renderer / OS 静的ライブラリ
 
 固定 The Forge の `Renderer.vcxproj` と `OS.vcxproj` は静的ライブラリを build し、gkcore はその両方をリンクします。`OS.vcxproj` には ImGui、Lua 5.3.5、cpu_features、hidapi、bstrlib、LZ4、Zstandard の source が含まれます。これらの一部は MIT、BSD、Apache-2.0 のライセンス文書を持ちますが、実際に gkcore.dll へ取り込まれた object は Windows/MSVC の link map を確認するまで特定できません。

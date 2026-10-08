@@ -510,7 +510,7 @@ int main(int argc, char** argv)
         }
     }
     // 必須属性、画像座標、接線基底、scale、未対応変換の拒否を確認するloop。
-    const char* rejected[] = { "missing-tangent.glb", "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb", "alias-missing-uv.glb", "alias-transform.glb" };
+    const char* rejected[] = { "missing-normal.glb", "missing-normal-uv.glb", "bad-tangent-w.glb", "tangent-w-mismatch.glb", "parallel-tangent.glb", "zero-tangent.glb", "singular-node.glb", "bad-normal-scale.glb", "transform-normal.glb", "alias-missing-uv.glb", "alias-transform.glb" };
     // 不正normal入力を拒否するloop。
     for (const char* filename : rejected)
     {
