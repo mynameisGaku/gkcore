@@ -17,6 +17,14 @@ set(GKCORE_FORGE_BUILD_DIR "${CMAKE_BINARY_DIR}/forge" CACHE PATH "Development-o
 set(GKCORE_DXC_ROOT "" CACHE PATH "Path to the matching pinned DirectX Shader Compiler package")
 set(GKCORE_SHADER_BUILD_DIR "${CMAKE_BINARY_DIR}/gkcore_shaders" CACHE PATH "Development-only output from tools/build_gkcore_shaders.py")
 
+set(GKCORE_MODEL_ANIMATION_LOADER_SOURCES
+    src/model/animation/FModelAnimationAsset.cpp
+    src/model/animation/ModelAnimationResources.cpp
+    src/model/animation/ModelPose.cpp
+    src/model/animation/GlbAnimation.cpp
+    src/model/animation/GlbMorphGeometry.cpp
+    src/model/animation/FbxAnimation.cpp)
+
 set(GKCORE_CORE_SOURCES
     src/api/gkcore.cpp
     src/core/Context.cpp
@@ -46,6 +54,13 @@ set(GKCORE_CORE_SOURCES
     src/model/FbxGeometry.cpp
     src/model/FbxMaterial.cpp
     src/model/Ufbx.cpp
+    ${GKCORE_MODEL_ANIMATION_LOADER_SOURCES}
+    src/model/animation/ModelIk.cpp
+    src/model/animation/ObjSequence.cpp
+    src/model/animation/FModelPlayback.cpp
+    src/model/animation/ModelAnimationBinding.cpp
+    src/model/animation/ModelSnapshot.cpp
+    src/model/animation/ModelAnimation.cpp
     src/text/Text.cpp
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
@@ -78,6 +93,24 @@ endfunction()
 if(GKCORE_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    set(_gkcore_animation_math_sources src/model/animation/ModelPose.cpp src/model/animation/ModelIk.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    foreach(_animation_test pose ik)
+        add_executable(gkcore_model_${_animation_test}_tests tests/model_${_animation_test}_tests.cpp ${_gkcore_animation_math_sources})
+        target_compile_features(gkcore_model_${_animation_test}_tests PRIVATE cxx_std_17)
+        target_include_directories(gkcore_model_${_animation_test}_tests PRIVATE include src)
+        gkcore_enable_warnings(gkcore_model_${_animation_test}_tests)
+        add_test(NAME gkcore.model_${_animation_test} COMMAND gkcore_model_${_animation_test}_tests)
+    endforeach()
+    add_executable(gkcore_model_animation_binding_tests tests/model_animation_binding_tests.cpp
+        src/model/animation/ModelAnimationBinding.cpp src/model/animation/FModelAnimationAsset.cpp
+        src/model/animation/ModelPose.cpp src/foundation/RefCount.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_animation_binding_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_animation_binding_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_animation_binding_tests)
+    add_test(NAME gkcore.model_animation_binding COMMAND gkcore_model_animation_binding_tests)
 
     # Arrayが通常境界を超える型を拒否し、意図した診断で止まることを確認する。
     set(_gkcore_foundation_alignment_compile_options)
@@ -227,6 +260,18 @@ if(GKCORE_BUILD_TESTS)
     endif()
     gkcore_enable_warnings(gkcore_tests)
     add_test(NAME gkcore.core COMMAND gkcore_tests)
+    add_executable(gkcore_model_animation_api_tests tests/model_animation_api_tests.cpp ${GKCORE_CORE_SOURCES})
+    target_compile_features(gkcore_model_animation_api_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_animation_api_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_animation_api_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_animation_api_tests)
+    add_test(NAME gkcore.model_animation_api COMMAND gkcore_model_animation_api_tests "${CMAKE_CURRENT_BINARY_DIR}/model-animation-api-fixtures")
+    add_executable(gkcore_model_animation_rig_api_tests tests/model_animation_rig_api_tests.cpp ${GKCORE_CORE_SOURCES})
+    target_compile_features(gkcore_model_animation_rig_api_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_animation_rig_api_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_animation_rig_api_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_animation_rig_api_tests)
+    add_test(NAME gkcore.model_animation_rig_api COMMAND gkcore_model_animation_rig_api_tests)
     add_executable(gkcore_keyboard_state_tests tests/keyboard_state_tests.cpp src/platform/FKeyboardState.cpp)
     target_compile_features(gkcore_keyboard_state_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_keyboard_state_tests PRIVATE src)
@@ -254,13 +299,37 @@ if(GKCORE_BUILD_TESTS)
         src/model/FbxLoader.cpp
         src/model/FbxGeometry.cpp
         src/model/FbxMaterial.cpp
-        src/model/Ufbx.cpp)
+        src/model/Ufbx.cpp
+        ${GKCORE_MODEL_ANIMATION_LOADER_SOURCES})
     target_compile_features(gkcore_fbx_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_fbx_tests PRIVATE include src third_party/ufbx)
     target_compile_definitions(gkcore_fbx_tests PRIVATE
         GKCORE_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
     gkcore_enable_warnings(gkcore_fbx_tests)
     add_test(NAME gkcore.fbx COMMAND gkcore_fbx_tests)
+    get_target_property(_gkcore_animation_loader_sources gkcore_fbx_tests SOURCES)
+    list(REMOVE_ITEM _gkcore_animation_loader_sources tests/fbx_tests.cpp)
+    foreach(_format glb fbx)
+        set(_animation_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-${_format}-animation-fixtures")
+        if(_format STREQUAL "glb")
+            set(_animation_script tests/support/model_animation_fixtures.py)
+            set(_animation_fixture_options)
+            set(_animation_fixture_dependencies tests/support/model_normal_fixtures.py)
+        else()
+            set(_animation_script tests/support/fbx_animation_fixtures.py)
+            set(_animation_fixture_options --source-model "${CMAKE_CURRENT_SOURCE_DIR}/tests/assets/models/gkcore_ascii.fbx")
+            set(_animation_fixture_dependencies tests/assets/models/gkcore_ascii.fbx)
+        endif()
+        add_custom_target(gkcore_model_${_format}_animation_fixtures
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/${_animation_script} --output-dir "${_animation_fixture_dir}" ${_animation_fixture_options}
+            DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_animation_script}" ${_animation_fixture_dependencies})
+        add_executable(gkcore_model_${_format}_animation_tests tests/model_${_format}_animation_tests.cpp ${_gkcore_animation_loader_sources})
+        target_compile_features(gkcore_model_${_format}_animation_tests PRIVATE cxx_std_17)
+        target_include_directories(gkcore_model_${_format}_animation_tests PRIVATE include src third_party/ufbx)
+        gkcore_enable_warnings(gkcore_model_${_format}_animation_tests)
+        add_dependencies(gkcore_model_${_format}_animation_tests gkcore_model_${_format}_animation_fixtures)
+        add_test(NAME gkcore.model_${_format}_animation COMMAND gkcore_model_${_format}_animation_tests "${_animation_fixture_dir}")
+    endforeach()
     # GLBの材質が選んだ画像座標を、描画部を使わずに検査する。
     set(_gkcore_glb_texture_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/glb-texture-fixtures")
     set(_gkcore_glb_texture_fixture_files)
@@ -834,6 +903,18 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_alpha_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_alpha_capture_tests)
             add_dependencies(gkcore_model_alpha_capture_tests gkcore_model_alpha_fixtures)
+            add_executable(gkcore_model_animation_capture_tests tests/model_animation_capture_tests.cpp)
+            target_compile_features(gkcore_model_animation_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_animation_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_animation_capture_tests)
+            add_dependencies(gkcore_model_animation_capture_tests gkcore_model_fbx_animation_fixtures)
+            add_test(NAME gkcore.model_animation_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_animation_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_animation_capture_tests>
+                    --fixture-dir "${CMAKE_CURRENT_BINARY_DIR}/model-animation-capture-fixtures"
+                    --fbx-fixture-dir "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures"
+                    --output-dir "${CMAKE_CURRENT_BINARY_DIR}/model-animation-captures/$<CONFIG>")
+            set_tests_properties(gkcore.model_animation_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
             add_executable(gkcore_model_material_capture_tests tests/model_material_capture_tests.cpp)
             target_compile_features(gkcore_model_material_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_model_material_capture_tests PRIVATE gkcore_capture_runtime)
@@ -1048,6 +1129,9 @@ if(GKCORE_BUILD_RUNTIME)
     if(TARGET gkcore_model_generated_normal_capture_tests)
         add_dependencies(gkcore_model_generated_normal_capture_tests gkcore_stage_runtime_payload)
     endif()
+    if(TARGET gkcore_model_animation_capture_tests)
+        add_dependencies(gkcore_model_animation_capture_tests gkcore_stage_runtime_payload)
+    endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
@@ -1056,6 +1140,7 @@ if(GKCORE_BUILD_RUNTIME)
         INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelAnimation.h include/gkcore/EHumanoidBone.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES docs/THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/gkcore COMPONENT Runtime)
     install(FILES ${_gkcore_runtime_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)

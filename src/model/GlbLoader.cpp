@@ -4,6 +4,8 @@
 #include "../resources/TextureSampler.h"
 #include "ModelNormals.h"
 #include "ModelTangents.h"
+#include "animation/GlbAnimation.h"
+#include "animation/ModelPose.h"
 #include "../../third_party/cgltf/cgltf.h"
 #include <math.h>
 #include <stdint.h>
@@ -576,17 +578,19 @@ bool SelectTextureUv(const cgltf_primitive& primitive, const cgltf_texture_view&
 /**
  * index付き三角形primitiveを検証し、変換済み頂点・index・材質を追加する。
  */
-bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const float matrix[16], ModelResource& model, uint32_t* imageMap, String& error)
+bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const float matrix[16], ModelResource& model, uint32_t* imageMap, uint32_t& nextSourceIndex, String& error)
 {
-    if (primitive->type != cgltf_primitive_type_triangles || primitive->targets_count || primitive->has_draco_mesh_compression)
+    if (primitive->type != cgltf_primitive_type_triangles || primitive->has_draco_mesh_compression)
     {
-        error.Assign("GLB supports static triangle primitives without morph or Draco data");
+        error.Assign("GLB supports triangle primitives without Draco data");
         return false;
     }
     // primitiveが持つ位置属性。
     const cgltf_accessor* position = cgltf_find_accessor(primitive, cgltf_attribute_type_position, 0);
     // primitiveが持つ法線属性。
     const cgltf_accessor* normal = cgltf_find_accessor(primitive, cgltf_attribute_type_normal, 0);
+    const cgltf_accessor* joints = cgltf_find_accessor(primitive, cgltf_attribute_type_joints, 0);
+    const cgltf_accessor* weights = cgltf_find_accessor(primitive, cgltf_attribute_type_weights, 0);
     // 基本色画像へ渡す座標accessor。画像がなければ従来どおりUV0を保持する。
     const cgltf_accessor* baseColorUv = cgltf_find_accessor(primitive, cgltf_attribute_type_texcoord, 0);
     // 金属度・粗さ画像へ渡す独立した座標accessor。
@@ -602,6 +606,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     const cgltf_accessor* tangent = hasNormalTexture && !generateNormals ? cgltf_find_accessor(primitive, cgltf_attribute_type_tangent, 0) : nullptr;
     // normal mapを使う場合、NORMAL生成後は明示TANGENTがあっても接線を作る。
     const bool generateTangents = hasNormalTexture && (generateNormals || !tangent);
+    const bool generateMorphedFrame = primitive->targets_count != 0 && (generateNormals || generateTangents);
     const bool stageGeneratedVertices = generateNormals || generateTangents;
     const cgltf_accessor* normalUv = nullptr;
     double normalMapDeterminant = 1.0;
@@ -636,9 +641,14 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         normalMapDeterminantSign = normalMapDeterminant < 0.0 ? -1.0f : 1.0f;
     }
     const uint32_t availableVertices = stageGeneratedVertices ? maxOutputVertices : maxOutputVertices - model.vertices.Count();
-    if (!position || position->type != cgltf_type_vec3 || position->component_type != cgltf_component_type_r_32f || position->is_sparse || !position->buffer_view || position->count == 0 || position->count > availableVertices)
+    if (!position || position->type != cgltf_type_vec3 || position->component_type != cgltf_component_type_r_32f || position->is_sparse || !position->buffer_view || position->count == 0 || position->count > availableVertices || position->count > maxSourceValues - nextSourceIndex)
     {
         error.Assign("GLB primitive has invalid or excessive positions");
+        return false;
+    }
+    if ((joints || weights) && (!joints || !weights || joints->type != cgltf_type_vec4 || joints->count != position->count || joints->is_sparse || !joints->buffer_view || weights->type != cgltf_type_vec4 || weights->count != position->count || weights->is_sparse || !weights->buffer_view))
+    {
+        error.Assign("GLB skin vertex joints and weights are incompatible");
         return false;
     }
     if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (baseColorUv && (baseColorUv->type != cgltf_type_vec2 || baseColorUv->count != position->count || baseColorUv->is_sparse || !baseColorUv->buffer_view)) || (metallicRoughnessUv && (metallicRoughnessUv->type != cgltf_type_vec2 || metallicRoughnessUv->count != position->count || metallicRoughnessUv->is_sparse || !metallicRoughnessUv->buffer_view)) || (emissiveUv && (emissiveUv->type != cgltf_type_vec2 || emissiveUv->count != position->count || emissiveUv->is_sparse || !emissiveUv->buffer_view)) || (occlusionUv && (occlusionUv->type != cgltf_type_vec2 || occlusionUv->count != position->count || occlusionUv->is_sparse || !occlusionUv->buffer_view)))
@@ -666,6 +676,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     {
         // 現在処理している出力頂点。
         ModelVertex vertex{};
+        vertex.sourceIndex = nextSourceIndex + static_cast<uint32_t>(i);
         // cgltf accessorから属性を読む一時配列。
         float value[4]{};
         if (!cgltf_accessor_read_float(position, i, value, 3))
@@ -834,7 +845,8 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             generatedSourceVertices = &generatedTangentVertices;
             generatedSourceIndices = &generatedTangentIndices;
         }
-        if (generatedSourceIndices->Count() != indexCount || generatedSourceVertices->Count() > maxOutputVertices - model.vertices.Count() || generatedSourceIndices->Count() > maxOutputIndices - model.indices.Count())
+        const uint32_t outputVertexCount = generateMorphedFrame ? static_cast<uint32_t>(indexCount) : generatedSourceVertices->Count();
+        if (generatedSourceIndices->Count() != indexCount || outputVertexCount > maxOutputVertices - model.vertices.Count() || generatedSourceIndices->Count() > maxOutputIndices - model.indices.Count())
         {
             error.Assign("GLB generated normal or tangent data exceeds model limits");
             return false;
@@ -842,37 +854,72 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
 
         // 生成したsource-spaceの位置と法線をnode変換してモデルへ追加する。
         const uint32_t generatedFirstVertex = model.vertices.Count();
-        for (uint32_t i = 0; i < generatedSourceVertices->Count(); ++i)
+        if (generateMorphedFrame)
         {
-            ModelVertex vertex = generatedSourceVertices->At(i);
-            const float sourceNormal[3] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
-            float transformedPosition[3]{};
-            TransformPosition(matrix, vertex.position, transformedPosition);
-            const bool transformedNormal = TransformMappedNormal(matrix, normalMapDeterminant, sourceNormal, vertex.normal);
-            const bool transformedTangent = !generateTangents || TransformMappedTangent(matrix, vertex.tangent, vertex.normal, normalMapDeterminantSign, vertex.tangent);
-            if (!transformedNormal || !transformedTangent || !IsFinite(transformedPosition[0]) || !IsFinite(transformedPosition[1]) || !IsFinite(transformedPosition[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]))
+            for (uint32_t corner = 0; corner < generatedSourceIndices->Count(); ++corner)
             {
-                error.Assign("GLB generated normal or tangent cannot be transformed");
-                return false;
-            }
-            vertex.position[0] = transformedPosition[0];
-            vertex.position[1] = transformedPosition[1];
-            vertex.position[2] = transformedPosition[2];
-            if (!model.vertices.Append(vertex))
-            {
-                error.Assign("GLB generated tangent vertex allocation failed");
-                return false;
+                const uint32_t sourceVertex = generatedSourceIndices->At(corner);
+                if (sourceVertex >= generatedSourceVertices->Count())
+                {
+                    error.Assign("GLB morph corner references an invalid generated vertex");
+                    return false;
+                }
+                ModelVertex vertex = generatedSourceVertices->At(sourceVertex);
+                const float sourceNormal[3] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
+                float transformedPosition[3]{};
+                TransformPosition(matrix, vertex.position, transformedPosition);
+                const bool transformedNormal = TransformMappedNormal(matrix, normalMapDeterminant, sourceNormal, vertex.normal);
+                const bool transformedTangent = !generateTangents || TransformMappedTangent(matrix, vertex.tangent, vertex.normal, normalMapDeterminantSign, vertex.tangent);
+                if (!transformedNormal || !transformedTangent || !IsFinite(transformedPosition[0]) || !IsFinite(transformedPosition[1]) || !IsFinite(transformedPosition[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]))
+                {
+                    error.Assign("GLB generated normal or tangent cannot be transformed");
+                    return false;
+                }
+                vertex.position[0] = transformedPosition[0];
+                vertex.position[1] = transformedPosition[1];
+                vertex.position[2] = transformedPosition[2];
+                if (!model.vertices.Append(vertex) || !model.indices.Append(generatedFirstVertex + corner))
+                {
+                    error.Assign("GLB morph corner allocation failed");
+                    return false;
+                }
             }
         }
-        for (uint32_t i = 0; i < generatedSourceIndices->Count(); ++i)
+        else
         {
-            if (generatedSourceIndices->At(i) >= generatedSourceVertices->Count() || !model.indices.Append(generatedFirstVertex + generatedSourceIndices->At(i)))
+            for (uint32_t i = 0; i < generatedSourceVertices->Count(); ++i)
             {
-                error.Assign("GLB generated tangent index is invalid or could not be stored");
-                return false;
+                ModelVertex vertex = generatedSourceVertices->At(i);
+                const float sourceNormal[3] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
+                float transformedPosition[3]{};
+                TransformPosition(matrix, vertex.position, transformedPosition);
+                const bool transformedNormal = TransformMappedNormal(matrix, normalMapDeterminant, sourceNormal, vertex.normal);
+                const bool transformedTangent = !generateTangents || TransformMappedTangent(matrix, vertex.tangent, vertex.normal, normalMapDeterminantSign, vertex.tangent);
+                if (!transformedNormal || !transformedTangent || !IsFinite(transformedPosition[0]) || !IsFinite(transformedPosition[1]) || !IsFinite(transformedPosition[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]))
+                {
+                    error.Assign("GLB generated normal or tangent cannot be transformed");
+                    return false;
+                }
+                vertex.position[0] = transformedPosition[0];
+                vertex.position[1] = transformedPosition[1];
+                vertex.position[2] = transformedPosition[2];
+                if (!model.vertices.Append(vertex))
+                {
+                    error.Assign("GLB generated tangent vertex allocation failed");
+                    return false;
+                }
+            }
+            for (uint32_t i = 0; i < generatedSourceIndices->Count(); ++i)
+            {
+                if (generatedSourceIndices->At(i) >= generatedSourceVertices->Count() || !model.indices.Append(generatedFirstVertex + generatedSourceIndices->At(i)))
+                {
+                    error.Assign("GLB generated tangent index is invalid or could not be stored");
+                    return false;
+                }
             }
         }
     }
+    nextSourceIndex += static_cast<uint32_t>(position->count);
     if (hasNormalTexture)
     {
         // 各三角形の3頂点で接線handednessが揃うか確認するloop。
@@ -907,11 +954,11 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
 /**
  * nodeのworld変換を使ってmesh内の全primitiveを追加する。
  */
-bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], ModelResource& model, uint32_t* imageMap, String& error)
+bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], ModelResource& model, uint32_t* imageMap, uint32_t& nextSourceIndex, String& error)
 {
     // mesh内のprimitiveを順番に追加するloop。
     for (cgltf_size i = 0; i < mesh->primitives_count; ++i)
-        if (!AppendGlbPrimitive(data, &mesh->primitives[i], matrix, model, imageMap, error))
+        if (!AppendGlbPrimitive(data, &mesh->primitives[i], matrix, model, imageMap, nextSourceIndex, error))
             return false;
     return true;
 }
@@ -919,21 +966,21 @@ bool AppendGlbMesh(cgltf_data* data, cgltf_mesh* mesh, const float matrix[16], M
 /**
  * 選択sceneのnode subtreeをたどり、階層深度とskin制約を守る。
  */
-bool VisitGlbNode(cgltf_data* data, cgltf_node* node, uint32_t depth, ModelResource& model, uint32_t* imageMap, String& error)
+bool VisitGlbNode(cgltf_data* data, cgltf_node* node, uint32_t depth, ModelResource& model, uint32_t* imageMap, uint32_t& nextSourceIndex, String& error)
 {
-    if (!node || depth > 64 || node->skin)
+    if (!node || depth > 64)
     {
-        error.Assign("GLB node tree is invalid or uses unsupported skinning");
+        error.Assign("GLB node tree is invalid or too deep");
         return false;
     }
     // nodeから子へ適用するworld変換行列。
     float matrix[16];
     cgltf_node_transform_world(node, matrix);
-    if (node->mesh && !AppendGlbMesh(data, node->mesh, matrix, model, imageMap, error))
+    if (node->mesh && !AppendGlbMesh(data, node->mesh, matrix, model, imageMap, nextSourceIndex, error))
         return false;
     // 子nodeを深さを進めて再帰処理するloop。
     for (cgltf_size i = 0; i < node->children_count; ++i)
-        if (!VisitGlbNode(data, node->children[i], depth + 1, model, imageMap, error))
+        if (!VisitGlbNode(data, node->children[i], depth + 1, model, imageMap, nextSourceIndex, error))
             return false;
     return true;
 }
@@ -1036,21 +1083,37 @@ bool ValidateParentGraph(cgltf_data* data, String& error)
  */
 bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& error)
 {
+    if (!bytes || !size || size > maxModelFileBytes)
+    {
+        error.Assign("GLB bytes are invalid or too large");
+        return false;
+    }
+    // cgltf documentはJSONとBINの参照元byte列を保持するため、sourceへ移譲できるcopyを使う。
+    uint8_t* ownedBytes = static_cast<uint8_t*>(Allocate(size));
+    if (!ownedBytes)
+    {
+        error.Assign("GLB source byte allocation failed");
+        return false;
+    }
+    memcpy(ownedBytes, bytes, size);
     // cgltfにGLB形式を指定するparse option。
     cgltf_options options{};
     options.type = cgltf_file_type_glb;
     // cgltfがparseしたGLB document。
     cgltf_data* data = nullptr;
-    if (cgltf_parse(&options, bytes, size, &data) != cgltf_result_success || !data)
+    if (cgltf_parse(&options, ownedBytes, size, &data) != cgltf_result_success || !data)
     {
+        Deallocate(ownedBytes);
         error.Assign("GLB 2.0 parsing failed");
         return false;
     }
     // finishで返す最終読み込み結果。
     bool success = false;
+    // 元頂点に一意なsourceIndexを割り当てる次の値。
+    uint32_t nextSourceIndex = 0;
     // glTF image recordからdecoded resource slotへの対応表。
     uint32_t* imageMap = nullptr;
-    if (data->file_type != cgltf_file_type_glb || !data->asset.version || strcmp(data->asset.version, "2.0") != 0 || data->buffers_count != 1 || data->buffers[0].uri || data->skins_count || !ValidateParentGraph(data, error) || cgltf_load_buffers(&options, data, nullptr) != cgltf_result_success || cgltf_validate(data) != cgltf_result_success)
+    if (data->file_type != cgltf_file_type_glb || !data->asset.version || strcmp(data->asset.version, "2.0") != 0 || data->buffers_count != 1 || data->buffers[0].uri || !ValidateParentGraph(data, error) || cgltf_load_buffers(&options, data, nullptr) != cgltf_result_success || cgltf_validate(data) != cgltf_result_success)
     {
         if (error.Empty())
             error.Assign("GLB must be valid version 2.0 with one embedded static buffer");
@@ -1077,7 +1140,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
     {
         // 選択sceneのroot nodeを順に変換するloop。
         for (cgltf_size i = 0; i < data->scene->nodes_count; ++i)
-            if (!VisitGlbNode(data, data->scene->nodes[i], 0, model, imageMap, error))
+            if (!VisitGlbNode(data, data->scene->nodes[i], 0, model, imageMap, nextSourceIndex, error))
                 goto finish;
     }
     else
@@ -1090,7 +1153,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
             if (!data->nodes[i].parent)
             {
                 foundRoot = true;
-                if (!VisitGlbNode(data, &data->nodes[i], 0, model, imageMap, error))
+                if (!VisitGlbNode(data, &data->nodes[i], 0, model, imageMap, nextSourceIndex, error))
                     goto finish;
             }
         }
@@ -1101,7 +1164,7 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
             {
                 // node transformがないmeshに適用する単位行列。
                 const float identity[16] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
-                if (!AppendGlbMesh(data, &data->meshes[i], identity, model, imageMap, error))
+                if (!AppendGlbMesh(data, &data->meshes[i], identity, model, imageMap, nextSourceIndex, error))
                     goto finish;
             }
         }
@@ -1111,10 +1174,61 @@ bool LoadGlb(const uint8_t* bytes, uint32_t size, ModelResource& model, String& 
         error.Assign("GLB contains no static triangles");
         goto finish;
     }
+    if (data->animations_count || data->skins_count || data->nodes_count)
+    {
+        // shearを持つ静的nodeは従来の行列描画を許し、source TRSが必要なデータだけ拒否する。
+        bool requiresTrsSource = data->animations_count != 0 || data->skins_count != 0;
+        bool deformsRest = data->skins_count != 0;
+        for (cgltf_size i = 0; i < data->meshes_count && !deformsRest; ++i)
+            for (cgltf_size p = 0; p < data->meshes[i].primitives_count; ++p)
+                if (data->meshes[i].primitives[p].targets_count)
+                {
+                    deformsRest = true;
+                    break;
+                }
+        for (cgltf_size i = 0; i < data->meshes_count && !requiresTrsSource; ++i)
+            for (cgltf_size p = 0; p < data->meshes[i].primitives_count; ++p)
+                if (data->meshes[i].primitives[p].targets_count)
+                {
+                    requiresTrsSource = true;
+                    break;
+                }
+        for (cgltf_size i = 0; i < data->nodes_count && !requiresTrsSource; ++i)
+            if (data->nodes[i].weights_count)
+                requiresTrsSource = true;
+        gk::model::AModelAnimationSource* source = gk::model::CreateGlbAnimationSource(data, ownedBytes, size, model, error);
+        data = nullptr;
+        ownedBytes = nullptr;
+        if (!source)
+        {
+            const bool staticMatrixFallback = !requiresTrsSource && (strcmp(error.CStr(), "GLB animated node matrix contains shear") == 0 || strcmp(error.CStr(), "GLB animated node matrix cannot be decomposed") == 0);
+            if (staticMatrixFallback)
+                error.Clear();
+            else
+                goto finish;
+        }
+        if (!source)
+        {
+            success = true;
+            goto finish;
+        }
+        model.animation = gk::model::CreateModelAnimationAsset(source, error);
+        if (!model.animation)
+            goto finish;
+        // 初期morph係数とbind姿勢も、通常の変形経路で表示形状へ反映する。
+        if (deformsRest)
+        {
+            gk::model::animation::FModelPose restPose;
+            if (!gk::model::animation::InitializeModelPose(source->Skeleton(), restPose, error) || !source->Deform(restPose, model, error))
+                goto finish;
+        }
+    }
     success = true;
 finish:
     Deallocate(imageMap);
-    cgltf_free(data);
+    if (data)
+        cgltf_free(data);
+    Deallocate(ownedBytes);
     return success;
 }
 }

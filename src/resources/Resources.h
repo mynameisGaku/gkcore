@@ -10,6 +10,14 @@
 #include <stdint.h>
 
 /**
+ * model resourceが参照するanimation asset型。
+ */
+namespace gk::model
+{
+struct FModelAnimationAsset;
+}
+
+/**
  * gkcoreが所有する画像・モデルのデータと操作。
  */
 namespace gk::detail
@@ -51,6 +59,8 @@ struct ModelVertex
     float emissiveUv[2]{};
     // 環境遮蔽画像に使う独立した画像座標。
     float occlusionUv[2]{};
+    // split前のsource頂点番号。読み込み時の変形属性との対応に使う。
+    uint32_t sourceIndex = 0;
 };
 
 /**
@@ -128,6 +138,8 @@ struct ModelResource
     Array<ModelMaterial> materials;
     // 材質が参照する保持中の画像。
     Array<ImageResource*> textures;
+    // 共有する元の骨格・clip・変形属性。静的モデルはnull。
+    model::FModelAnimationAsset* animation = nullptr;
 };
 
 /**
@@ -147,6 +159,10 @@ ImageResource* FindImage(ImageHandle handle);
  */
 ModelHandle LoadModel(const char* path, String& error);
 /**
+ * モデル参照を消費してhandleを登録する。失敗時も参照を解放する。
+ */
+ModelHandle RegisterModelResource(ModelResource* model, String& error);
+/**
  * model handleを登録解除する。描画側が保持する参照は有効なまま残る。
  */
 bool DeleteModel(ModelHandle handle, String& error);
@@ -159,7 +175,7 @@ ModelResource* FindModel(ModelHandle handle);
  */
 void ClearResources();
 
-// namespace gk::detail
+// gk::detail namespace終端
 }
 
 #endif

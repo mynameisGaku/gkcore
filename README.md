@@ -54,6 +54,8 @@ HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する
 
 Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガイド](docs/post-effect-shader.md)にまとめています。
 
+モデルはGLB/FBXのclipと連番OBJを再生し、外部clip、ブレンド、人型ボーンの役割対応、IKを設定できます。[モデルアニメーションの使い方](docs/model-animation.md)を参照してください。
+
 ## 2D・3D とエフェクト
 
 矩形は塗りつぶしと輪郭を選べます。線幅は `gk::DrawRectOutline` で指定します。[使い方とサンプル](docs/rectangles.md)を参照してください。

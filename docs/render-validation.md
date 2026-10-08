@@ -183,3 +183,19 @@ PPM画像と判定値のJSONはReleaseでは`build/runtime-windows/render-captur
 この検査は代表画素と領域の条件を使います。全面画像の画質、連続フレームすべてのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。輪郭サンプルではSpaceによるBloomのON→OFF→ONと短いEscape入力による終了を確認しました。全キーを実画面から操作する検査、モデル照明サンプルのキー操作、GPU-based validation、他のGPU、全モデル形式の描画は未確認です。Runtime DebugのInfoQueueと画像検査は確認済みです。
 
 実装上の原因と修正前後の記録は[TDD検証ログ](TDD_LOG.md)、対応機能と残作業は[機能とサポート状況](ROADMAP.md)を参照してください。
+
+## 2026-10-08〜09 モデルアニメーション
+
+OBJ連番・GLB・FBXのアニメーション、2clipブレンド、初期morph姿勢、外部clipの解放後適用、同一frameの異なる姿勢とmodel削除後の描画、IKをNVIDIA RTX 4070 SUPERで検査しました。独立した静的形状/モデル変換を参照にし、SourceのDeformを期待値の生成に使っていません。
+
+12組と、132frame連続描画のframe130/131は最大RGB差0でした。静止との変化は1319〜4422画素、連続frame間は1655画素です。単にcaptureが繰り返し一致するだけでなく、指定した時刻・IK目標の形状に一致し、実際に動いていることを確認しています。
+
+![IKでendボーンを動かしたモデル](images/model-animation-ik.png)
+
+![時刻変更と削除後も保持した2つの予約姿勢](images/model-animation-snapshot.png)
+
+![FBXのskin移動](images/model-animation-fbx-skin.png)
+
+PNGはPPMのRGBを変更せず保存し、decode後も全画素一致しました。基本形状を使う機能検査であり、人型モデルの外観品質・全面画質・FPS・他GPUの確認ではありません。操作と入力条件は[モデルアニメーション](model-animation.md)を参照してください。
+
+RuntimeはRelease/Debug各68/68のCTestが成功し、SDKだけのconsumerも実行できました。DebugではD3D12 InfoQueueの取得を確認し、GPU-based validationは有効にしていません。最後のGLB入力検証修正後にはCPU各48件とnative animation/packageを再検査しています。実行ログはbuild/native-validation/model-animation-*、画像と結果JSONは各Runtime buildのmodel-animation-capturesにあります。

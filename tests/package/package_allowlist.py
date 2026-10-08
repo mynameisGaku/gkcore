@@ -41,6 +41,8 @@ RUNTIME_SHADERS = {
 _FIXED = {
     "include/gkcore.h",
     "include/gkcore/Handle.h",
+    "include/gkcore/ModelAnimation.h",
+    "include/gkcore/EHumanoidBone.h",
     "include/gkcore/Shader.hlsl",
     "lib/cmake/gkcore/gkcoreConfig.cmake",
     "lib/cmake/gkcore/gkcoreConfigVersion.cmake",

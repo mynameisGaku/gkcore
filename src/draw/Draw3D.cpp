@@ -1,24 +1,32 @@
-#include "Draw3D.h"
+﻿#include "Draw3D.h"
 
 #include "../core/Context.h"
 #include "../core/Frame.h"
 #include "../resources/Resources.h"
+#include "../model/animation/ModelSnapshot.h"
 
 #include <float.h>
 #include <math.h>
 
-namespace gk {
-namespace {
 /**
- * Checks handle validity and confirms that its model resource still exists.
+ * 3D描画とmodel instance変換を扱う公開API実装。
  */
-bool Valid(ModelHandle handle) {
+namespace gk
+{
+namespace
+{
+/**
+ * handleが有効でmodel resourceが存在するか確認する。
+ */
+bool Valid(ModelHandle handle)
+{
     return handle.IsValid() && detail::FindModel(handle) != nullptr;
 }
 
 }
 
-int SetCamera(Vec3 position, Vec3 target) {
+int SetCamera(Vec3 position, Vec3 target)
+{
     if (!detail::IsFinite(position) || !detail::IsFinite(target))
         return detail::SetError("camera values must be finite");
     const double dx = static_cast<double>(target.x) - position.x;
@@ -38,7 +46,8 @@ int SetCamera(Vec3 position, Vec3 target) {
     return 0;
 }
 
-int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color, bool filled) {
+int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color, bool filled)
+{
     if (!detail::IsFinite(a) || !detail::IsFinite(b) || !detail::IsFinite(c))
         return detail::SetError("triangle vertices must be finite");
     detail::DrawPacket packet{};
@@ -51,50 +60,69 @@ int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color, bool filled) {
     return detail::QueueDraw(packet);
 }
 
-int DrawModel(ModelHandle model) {
-    if (!Valid(model)) return detail::SetError("invalid model handle");
+int DrawModel(ModelHandle model)
+{
+    if (!Valid(model))
+        return detail::SetError("invalid model handle");
     detail::ModelTransform* transform = detail::FindModelTransform(model);
-    if (!transform) return detail::SetError("model transform state is unavailable");
+    if (!transform)
+        return detail::SetError("model transform state is unavailable");
     detail::DrawPacket packet{};
     packet.kind = detail::DrawKind::Model;
     packet.resource = model.value;
-    packet.model = detail::FindModel(model);
+    String error;
+    packet.model = model::EvaluateModelSnapshot(*detail::FindModel(model), transform->playback, error);
+    if (!packet.model)
+        return detail::SetError(error.CStr());
     packet.color = 0x00ffffffu;
     packet.modelPosition = transform->position;
     packet.modelRotation = transform->rotation;
     packet.modelScale = transform->scale;
-    return detail::QueueDraw(packet);
+    const int result = detail::QueueDraw(packet);
+    Release(&packet.model->reference);
+    return result;
 }
 
-int SetModelPosition(ModelHandle model, Vec3 position) {
-    if (!Valid(model)) return detail::SetError("invalid model handle");
-    if (!detail::IsFinite(position)) return detail::SetError("model position must be finite");
+int SetModelPosition(ModelHandle model, Vec3 position)
+{
+    if (!Valid(model))
+        return detail::SetError("invalid model handle");
+    if (!detail::IsFinite(position))
+        return detail::SetError("model position must be finite");
     detail::ModelTransform* transform = detail::FindModelTransform(model);
-    if (!transform) return detail::SetError("model transform state is unavailable");
+    if (!transform)
+        return detail::SetError("model transform state is unavailable");
     transform->position = position;
     detail::ClearError();
     return 0;
 }
 
-int SetModelRotation(ModelHandle model, Vec3 rotationRadians) {
-    if (!Valid(model)) return detail::SetError("invalid model handle");
-    if (!detail::IsFinite(rotationRadians)) return detail::SetError("model rotation must be finite");
+int SetModelRotation(ModelHandle model, Vec3 rotationRadians)
+{
+    if (!Valid(model))
+        return detail::SetError("invalid model handle");
+    if (!detail::IsFinite(rotationRadians))
+        return detail::SetError("model rotation must be finite");
     detail::ModelTransform* transform = detail::FindModelTransform(model);
-    if (!transform) return detail::SetError("model transform state is unavailable");
+    if (!transform)
+        return detail::SetError("model transform state is unavailable");
     transform->rotation = rotationRadians;
     detail::ClearError();
     return 0;
 }
 
-int SetModelScale(ModelHandle model, Vec3 scale) {
-    if (!Valid(model)) return detail::SetError("invalid model handle");
+int SetModelScale(ModelHandle model, Vec3 scale)
+{
+    if (!Valid(model))
+        return detail::SetError("invalid model handle");
     if (!detail::IsFinite(scale) || scale.x == 0.0f || scale.y == 0.0f || scale.z == 0.0f)
         return detail::SetError("model scale must be finite and nonzero on every axis");
     detail::ModelTransform* transform = detail::FindModelTransform(model);
-    if (!transform) return detail::SetError("model transform state is unavailable");
+    if (!transform)
+        return detail::SetError("model transform state is unavailable");
     transform->scale = scale;
     detail::ClearError();
     return 0;
 }
 
-} // namespace gk
+} // gk namespace終端

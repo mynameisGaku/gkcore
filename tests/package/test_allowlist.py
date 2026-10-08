@@ -5,7 +5,7 @@ import unittest
 from package_allowlist import PackageError, RUNTIME_DLLS, _FIXED, validate
 
 
-PUBLIC_HEADERS = {"include/gkcore.h", "include/gkcore/Handle.h", "include/gkcore/Shader.hlsl"}
+PUBLIC_HEADERS = {"include/gkcore.h", "include/gkcore/Handle.h", "include/gkcore/Shader.hlsl", "include/gkcore/ModelAnimation.h", "include/gkcore/EHumanoidBone.h"}
 SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_color.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_color.frag",

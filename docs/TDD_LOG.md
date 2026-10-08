@@ -1061,3 +1061,23 @@ Release全60/60成功（430.37秒、生成法線GPU44.25秒、SDK consumer packa
 Debugも全60/60成功（454.33秒）しました。生成法線35画像と判定JSONはRelease/Debugで完全一致し、全参照は最大差0でした。ログは `model-generated-normal-debug-final-{build,tests}.log` です。Debug画像検査はD3D12 InfoQueueの取得を必須にして通過しています。GPU-based validationは有効にしていません。
 
 検証PCはWindows 11 Pro build26200、RTX 4070 SUPER/driver610.74、VS2026/v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51/SDK10.0.28000.0です。PNGは最終PPMのRGBを変更せず保存し、decode後も一致を確認しました。sourceのfixed clang-format12、UTF-8 BOM/CRLF、Runtime STLなし、機能token hash、文書リンクも確認しました。全面画質、FPS、他GPU、GPU-based validation、device loss復旧は今回追加検証していません。
+
+## 2026-10-08〜09 モデルアニメーション・ブレンド・ボーン対応・IK
+
+GLB/FBXのclip・skin・morph、連番OBJ、外部アニメーション、独立したモデルinstance、2clipブレンド、人型ボーンの役割対応、2ボーン/汎用chainのIKを共通APIへ接続しました。再生時刻はアプリが渡し、DrawModelはその時点の変形結果を独立したモデルとして保持します。画像・材質は参照保持してコピーし、元の形状や他instanceを変更しません。
+
+姿勢初期化とIKの未実装stubで2 CPUテストのREDを確認しました。OBJの公開再生APIは未宣言のcompile RED、GLBはskin/morph拒否、FBXはsourceを保持していない状態でREDでした。最小実装後に、固定時刻の補間、逆再生・loop、単一frameの長さ0、非有限値と有限overflow時の両slot保持、handle削除後の再生・描画予約を確認しました。
+
+共通姿勢は位置・scaleを線形補間し、quaternionを最短経路で補間します。外部clipは名前または人型の役割で一対一に対応付け、初期姿勢のモデル空間差分を転送します。親の回転・scaleを含む位置変換、異なる骨長、morph名の順序違いと、曖昧な名前・役割重複で出力を保持する契約を検査しています。
+
+IKは極小/極大・異なる骨長、回転・平行移動したroot、到達不能・反平行の目標、poleが目標と平行な場合を検査しました。投影の丸め残差を相対判定し、必要時は一定の軸から曲げ方向を選びます。公開APIからブレンド→IK→変形→予約まで通すテストも追加しました。
+
+GLBは生成法線/接線を使うmorphだけ初期からcornerを分け、初期形状と各targetのframeを別々に計算して差分を係数合成します。weight 1、0.5、2targetの0.25/0.25を三角形の解析値へ照合しました。初期morph重み、生成法線のskin、TANGENTを無視すべき入力、skin付き/なしnodeのmesh共有、元byte列の解放後にclip評価できることも確認しました。FBXはufbxの評価と補助nodeを使い、単位変換、node/skin移動、morphと初期重み、固定rootの変更拒否を実データで検査しました。
+
+独立レビューでtarget属性数の一致を要求して正当なGLBを拒否する問題を発見しました。POSITIONのみのtargetとPOSITION+NORMALのtargetを持つfixtureをREDにして、一致条件を削除し、省略した属性の差分を0とする動作を確認しました。仕様に合わなかったtangent生成fixtureも修正しました。固定cgltfのprimitive間morph個数制限は残るため、対応範囲に明記しています。
+
+RuntimeOFFの最終CPUテストはDebug/Release各48/48成功（最終review後3.65秒/3.24秒）です。Runtime全体はRelease68/68成功（472.44秒）、Debug68/68成功（508.13秒）。この全体実行後の入力検証修正は描画計算を変えず、CPU全体とnative animation/packageを再実行しました。ログはbuild/native-validationのmodel-animation-*-final-*とmodel-animation-*-post-review-*です。
+
+実GPUのアニメーション検査は12組の静的参照と132frame連続描画のframe130/131を比較し、すべて最大RGB差0でした。静止との画素差は1319〜4422画素、連続frame間は1655画素です。失敗時も結果JSONを残し、Debug/Releaseの判定JSONと代表PPMが一致することを確認しました。DebugはD3D12 InfoQueue取得が必須のcapture runtimeで実行しています。
+
+検証PCはWindows 11 Pro x64 build26200、RTX 4070 SUPER / driver610.74、VS2026 / v14214.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。CPU構成はMSVC19.51/SDK10.0.28000.0です。SDK consumerもInit・描画・Present・Shutdownまで成功しました。固定vendorソースは変更せず、自作sourceのBOM/CRLF、clang-format12、差分・文書リンクを確認しています。

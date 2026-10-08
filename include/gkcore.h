@@ -1,4 +1,6 @@
-﻿#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_PUBLIC_GKCORE_H
+#define GKCORE_PUBLIC_GKCORE_H
 
 #include <stdint.h>
 #include <gkcore/Handle.h>
@@ -19,138 +21,192 @@
 #endif
 
 /**
- * Simple global API and value types for application window and draw state.
+ * ウィンドウ、描画、入力に使う公開APIと値型。
  */
 namespace gk
 {
 
 /**
- * A three-component value for positions, rotations, directions, and scales.
+ * 位置、回転、方向、拡大率に使う3成分の値。
  */
 struct Vec3
 {
+    // X軸の値。
     float x, y, z;
 };
 
 /**
- * Four floating-point components, used for shader constants.
+ * シェーダー定数などに使う4つの浮動小数点値。
  */
 struct Float4
 {
+    // shaderへ渡す順序付き4値。
     float x, y, z, w;
 };
 
 /**
- * Escape, arrows, common editing keys, Shift/Control, digits, and Latin letters.
+ * Escape、矢印、編集キー、Shift/Control、数字、英字のキー。
  */
 enum class Key : uint8_t
 {
+    // Escape。
     Escape = 1,
+    // 左矢印。
     ArrowLeft,
+    // 上矢印。
     ArrowUp,
+    // 右矢印。
     ArrowRight,
+    // 下矢印。
     ArrowDown,
+    // Space。
     Space,
+    // Enter。
     Enter,
+    // Tab。
     Tab,
+    // Backspace。
     Backspace,
+    // 数字0。
     Digit0,
+    // 数字1。
     Digit1,
+    // 数字2。
     Digit2,
+    // 数字3。
     Digit3,
+    // 数字4。
     Digit4,
+    // 数字5。
     Digit5,
+    // 数字6。
     Digit6,
+    // 数字7。
     Digit7,
+    // 数字8。
     Digit8,
+    // 数字9。
     Digit9,
+    // 英字A。
     A,
+    // 英字B。
     B,
+    // 英字C。
     C,
+    // 英字D。
     D,
+    // 英字E。
     E,
+    // 英字F。
     F,
+    // 英字G。
     G,
+    // 英字H。
     H,
+    // 英字I。
     I,
+    // 英字J。
     J,
+    // 英字K。
     K,
+    // 英字L。
     L,
+    // 英字M。
     M,
+    // 英字N。
     N,
+    // 英字O。
     O,
+    // 英字P。
     P,
+    // 英字Q。
     Q,
+    // 英字R。
     R,
+    // 英字S。
     S,
+    // 英字T。
     T,
+    // 英字U。
     U,
+    // 英字V。
     V,
+    // 英字W。
     W,
+    // 英字X。
     X,
+    // 英字Y。
     Y,
+    // 英字Z。
     Z,
+    // Shift。
     Shift,
+    // Control。
     Control
 };
 
 /**
- * Mouse buttons supported by the input query API.
+ * 入力問い合わせAPIで扱うマウスボタン。
  */
 enum class MouseButton : uint8_t
 {
+    // 左ボタン。
     Left = 0,
+    // 右ボタン。
     Right,
+    // 中ボタン。
     Middle
 };
 
 /**
- * Selects whether queued draws receive scene post-processing.
+ * 描画予約へシーン用の後処理を適用するか選ぶ層。
  */
 enum class DrawLayer : uint8_t
 {
+    // 後処理対象のシーン。
     Scene = 0,
+    // 後処理を適用しないUI。
     UI = 1
 };
 
 /**
- * Initializes the window and renderer. Returns 0 on success and -1 on failure.
+ * ウィンドウと描画機能を初期化する。成功時は0、失敗時は-1。
  */
 GKCORE_API int Init();
 
 /**
- * Shuts down the renderer and invalidates all resource handles.
+ * 描画機能を終了し、登録済みのresource handleをすべて無効にする。
  */
 GKCORE_API void Shutdown();
 
 /**
- * Configures the window before Init. Invalid dimensions return -1.
+ * Init前にウィンドウ寸法を設定する。不正な寸法では-1を返す。
  */
 GKCORE_API int SetWindowSize(uint32_t width, uint32_t height);
 
 /**
- * Processes platform events. Returns true while the application should run.
+ * OSイベントを処理し、アプリを続ける間はtrueを返す。
  */
 GKCORE_API bool ProcessEvents();
 
 /**
- * Opens a frame for drawing. Returns 0 on success and -1 on failure.
+ * 描画frameを開始する。成功時は0、失敗時は-1を返す。
  */
 GKCORE_API int BeginFrame();
 
 /**
- * Submits and presents the open frame. Returns 0 on success and -1 on failure.
+ * 開いているframeを描画して表示する。成功時は0、失敗時は-1を返す。
  */
 GKCORE_API int Present();
 
 /**
- * Packs clamped 8-bit RGB values as 0xRRGGBB.
+ * 0から255へ制限したRGB値を0xRRGGBB形式へまとめる。
  */
 GKCORE_API uint32_t ColorRGB(int red, int green, int blue);
 
 /**
- * Returns whether the selected framework key is currently down.
- * Query from the application thread; unfocused windows report false.
+ * 指定キーが押されているか返す。アプリのメインthreadから問い合わせる。
+ * windowにfocusがない場合はfalseを返す。
  */
 GKCORE_API bool IsKeyDown(Key key);
 
@@ -163,182 +219,180 @@ GKCORE_API bool IsKeyDown(Key key);
 GKCORE_API bool WasKeyPressed(Key key);
 
 /**
- * Returns whether a mouse button is down while the application window is focused.
- * Query from the application thread.
- * Unsupported backend input reports false and sets a diagnostic.
+ * windowにfocusがある間、指定ボタンが押されているか返す。
+ * アプリのメインthreadから問い合わせる。backend非対応時はfalseと診断を返す。
  */
 GKCORE_API bool IsMouseButtonDown(MouseButton button);
 
 /**
- * Reads client-area mouse coordinates while the application window is focused.
- * Query from the application thread.
- * Returns false and writes zero coordinates when the window is unfocused,
- * uninitialized, or the backend cannot provide pointer coordinates.
+ * window内のマウス座標をアプリのメインthreadから読み取る。
+ * 非focus、未初期化、座標取得非対応時はfalseを返し、両座標を0にする。
  */
 GKCORE_API bool GetMousePosition(int32_t& x, int32_t& y);
 
 /**
- * Loads an image and returns an invalid handle on failure.
+ * 画像を読み込む。失敗時は無効handleを返す。
  */
 GKCORE_API ImageHandle LoadImage(const char* utf8Path);
 
 /**
- * Queues an image at a top-left pixel coordinate.
+ * 画像を左上pixel座標へ描画予約する。
  */
 GKCORE_API int DrawImage(ImageHandle image, float x, float y, bool alphaBlend = true);
 
 /**
- * Queues a centered image; angle is in radians and scale must be positive.
+ * 画像を中心座標へ描画予約する。角度はradian、拡大率は正の値を使う。
  */
 GKCORE_API int DrawImageRotated(ImageHandle image, float centerX, float centerY, float scale, float angleRadians, bool alphaBlend = true);
 
 /**
- * Releases an image handle; queued draws retain its pixels through Present.
+ * 画像handleを解放する。予約済み描画はPresentまで画素を保持する。
  */
 GKCORE_API int DeleteImage(ImageHandle image);
 
 /**
- * Loads a static OBJ, GLB 2.0, or FBX model from a UTF-8 path. Returns an invalid handle on failure.
+ * UTF-8 pathから静的OBJ、GLB 2.0、FBXを読み込む。失敗時は無効handleを返す。
  */
 GKCORE_API ModelHandle LoadModel(const char* utf8Path);
 
 /**
- * Queues a model draw with the transform values set at this call.
+ * 呼び出し時点の変換値でモデル描画を予約する。
  */
 GKCORE_API int DrawModel(ModelHandle model);
 
 /**
- * Sets a model's world-space position for subsequent DrawModel calls.
+ * 以後のDrawModelに使うmodelのworld位置を設定する。
  */
 GKCORE_API int SetModelPosition(ModelHandle model, Vec3 position);
 
 /**
- * Sets XYZ Euler rotation in radians for subsequent DrawModel calls.
+ * 以後のDrawModelに使うXYZ Euler回転をradianで設定する。
  */
 GKCORE_API int SetModelRotation(ModelHandle model, Vec3 rotationRadians);
 
 /**
- * Sets nonzero scale on all model axes for subsequent DrawModel calls.
+ * 以後のDrawModelに使う各軸の0以外の拡大率を設定する。
  */
 GKCORE_API int SetModelScale(ModelHandle model, Vec3 scale);
 
 /**
- * Releases a model handle; queued draws retain its geometry through Present.
+ * model handleを解放する。予約済み描画はPresentまで形状を保持する。
  */
 GKCORE_API int DeleteModel(ModelHandle model);
 
 /**
- * Sets a finite camera position and target using a Y-up coordinate system.
+ * Y-up座標系で有限なcamera位置と注視点を設定する。
  */
 GKCORE_API int SetCamera(Vec3 position, Vec3 target);
 
 /**
- * Queues a screen-space rectangle in the selected draw layer. With filled=false,
- * queues a one-pixel stroke just inside the rectangle bounds.
+ * 選択中の層へ画面座標の矩形を予約する。filled=falseでは内側へ1pixelの線を描く。
  */
 GKCORE_API int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled = true);
 
 /**
- * Queues an inward screen-space stroke. Thickness must be finite and positive;
- * a thickness at least half the smaller dimension covers the whole rectangle.
+ * 矩形の内側へ画面座標の枠線を予約する。太さは有限かつ正の値を使い、
+ * 短辺の半分以上なら矩形全体を塗る。
  */
 GKCORE_API int DrawRectOutline(float x, float y, float width, float height, uint32_t color, float thickness = 1.0f);
 
 /**
- * Queues UTF-8 text using the platform's default system font. The default
- * pixel size is 24; accepted sizes are 1 through 256. Repeated strings with
- * the same color and size share a bounded main-thread image cache. Text uses
- * the current draw layer and remains alive through Present.
+ * OS標準fontを使ってUTF-8文字列を予約する。初期pixel寸法は24、指定範囲は1から256。
+ * 同じ色と寸法の文字列はmain thread上の上限付き画像cacheを共有する。
+ * 現在の描画層に属し、画像はPresentまで保持される。
  */
 GKCORE_API int DrawString(float x, float y, const char* utf8Text, uint32_t color, uint32_t pixelSize = 24);
 
 /**
- * Queues a world-space triangle for 3D drawing.
+ * 3D描画用のworld座標三角形を予約する。
  */
 GKCORE_API int DrawTriangle3D(Vec3 a, Vec3 b, Vec3 c, uint32_t color, bool filled = true);
 
 /**
- * Returns a pointer to the latest diagnostic string.
+ * 最後に記録した診断文字列へのpointerを返す。
  */
 GKCORE_API const char* GetLastErrorMessage();
 
 /**
- * Enables or disables bloom for subsequent frames.
+ * 以後のframeでbloomを使うか設定する。
  */
 GKCORE_API int SetBloomEnabled(bool enabled);
 
 /**
- * Sets bloom strength to a finite value in [0, 4].
+ * bloom強度を範囲[0, 4]の有限値へ設定する。
  */
 GKCORE_API int SetBloomIntensity(float intensity);
 
 /**
- * Sets exposure to a finite value in (0, 16].
+ * exposureを範囲(0, 16]の有限値へ設定する。
  */
 GKCORE_API int SetExposure(float exposure);
 
 /**
- * Sets scene saturation to a finite factor in [0, 2]; 1 preserves saturation.
+ * sceneの彩度倍率を[0, 2]の有限値へ設定する。1は彩度を保つ。
  */
 GKCORE_API int SetSaturation(float factor);
 
 /**
- * Sets scene contrast to a finite factor in [0, 2]; 1 preserves contrast.
+ * sceneのcontrast倍率を[0, 2]の有限値へ設定する。1はcontrastを保つ。
  */
 GKCORE_API int SetContrast(float factor);
 
 /**
- * Enables or disables FXAA for subsequent frames; it is enabled by default.
+ * 以後のframeでFXAAを使うか設定する。初期状態では有効。
  */
 GKCORE_API int SetFxaaEnabled(bool enabled);
 
 /**
- * Enables or disables tone mapping for subsequent frames.
+ * 以後のframeでtone mappingを使うか設定する。
  */
 GKCORE_API int SetToneMappingEnabled(bool enabled);
 
 /**
- * Selects whether subsequent draw commands belong to scene or UI.
+ * 以後の描画命令をsceneまたはUIのどちらへ送るか設定する。
  */
 GKCORE_API int SetDrawLayer(DrawLayer layer);
 
 /**
- * Sets built-in model ambient light to a finite value in [0, 4]. Defaults to 0.2.
- * The value is sampled by BeginFrame and restored to its default by Shutdown.
+ * 内蔵modelの環境光を[0, 4]の有限値へ設定する。初期値は0.2。
+ * BeginFrameで値を読み取り、Shutdownで初期値へ戻す。
  */
 GKCORE_API int SetAmbientLight(float intensity);
 
 /**
- * Sets built-in model directional light using a finite nonzero world-space travel direction,
- * normalized when stored, and intensity in [0, 16]. Intensity defaults to 3. BeginFrame
- * samples the values and Shutdown restores their defaults.
+ * 内蔵modelの方向光を設定する。方向は有限な非zeroのworld移動方向を使い、保存時に正規化する。
+ * 強度は[0, 16]、初期値は3。BeginFrameで読み取り、Shutdownで初期値へ戻す。
  */
 GKCORE_API int SetDirectionalLight(Vec3 direction, float intensity = 3.0f);
 
 /**
- * Loads a compiled pixel shader and returns an invalid handle on failure.
+ * compile済みpixel shaderを読み込む。失敗時は無効handleを返す。
  */
 GKCORE_API ShaderHandle LoadPixelShader(const char* compiledPath);
 
 /**
- * Selects a custom shader; an invalid handle selects the built-in shader.
+ * 使用するcustom shaderを選ぶ。無効handleでは内蔵shaderを使う。
  */
 GKCORE_API int SetPixelShader(ShaderHandle shader);
 
 /**
- * Selects a loaded pixel shader for the post-process pass; an invalid handle disables it.
- * Requires Init. The selection is copied at BeginFrame, and a stale handle leaves it unchanged.
+ * 後処理passで使うpixel shaderを選ぶ。無効handleでは後処理shaderを使わない。
+ * Init後に呼ぶ。選択はBeginFrameで複製し、古いhandleなら現在値を保つ。
  */
 GKCORE_API int SetPostEffectShader(ShaderHandle shader);
 
 /**
- * Releases a shader handle; fails while an open frame uses it, so call after Present.
+ * shader handleを解放する。open frameで使用中は失敗するためPresent後に呼ぶ。
  */
 GKCORE_API int DeleteShader(ShaderHandle shader);
 
 /**
- * Sets a finite four-float value in a custom shader constant slot.
+ * custom shader定数slotへ有限な4成分値を設定する。
  */
 GKCORE_API int SetShaderFloat4(ShaderHandle shader, uint32_t slot, Float4 value);
 
 }
+
+#include <gkcore/ModelAnimation.h>
+
+#endif

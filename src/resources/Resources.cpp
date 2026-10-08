@@ -1,33 +1,47 @@
-#include "Resources.h"
+﻿#include "Resources.h"
 #include "../foundation/HandleTable.h"
 #include "../foundation/Memory.h"
 #include "../image/ImageLoader.h"
 #include "../model/ModelLoader.h"
+#include "../model/animation/ModelAnimationResources.h"
 
-namespace gk::detail {
-namespace {
+/**
+ * image・model registryとresource寿命を扱う内部処理。
+ */
+namespace gk::detail
+{
+namespace
+{
 HandleTable<ImageTag, ImageResource> imageHandles;
 HandleTable<ModelTag, ModelResource> modelHandles;
 Array<ImageResource*> imageObjects;
 Array<ModelResource*> modelObjects;
 uint32_t nextResourceHandle = 1;
 
-bool AllocateHandle(uint32_t& value) {
-    if (nextResourceHandle == 0) return false;
+bool AllocateHandle(uint32_t& value)
+{
+    if (nextResourceHandle == 0)
+        return false;
     value = nextResourceHandle++;
     return true;
 }
-void RemoveImageObject(ImageResource* image) {
-    for (uint32_t i = 0; i < imageObjects.Count(); ++i) {
-        if (imageObjects.At(i) == image) {
+void RemoveImageObject(ImageResource* image)
+{
+    for (uint32_t i = 0; i < imageObjects.Count(); ++i)
+    {
+        if (imageObjects.At(i) == image)
+        {
             imageObjects.RemoveAt(i);
             return;
         }
     }
 }
-void RemoveModelObject(ModelResource* model) {
-    for (uint32_t i = 0; i < modelObjects.Count(); ++i) {
-        if (modelObjects.At(i) == model) {
+void RemoveModelObject(ModelResource* model)
+{
+    for (uint32_t i = 0; i < modelObjects.Count(); ++i)
+    {
+        if (modelObjects.At(i) == model)
+        {
             modelObjects.RemoveAt(i);
             return;
         }
@@ -35,14 +49,18 @@ void RemoveModelObject(ModelResource* model) {
 }
 }
 
-ImageHandle LoadImage(const char* path, String& error) {
+ImageHandle LoadImage(const char* path, String& error)
+{
     ImageResource* image = LoadImagePayload(path, error);
-    if (!image) return ImageHandle();
+    if (!image)
+        return ImageHandle();
     uint32_t value = 0;
     const ImageHandle handle(AllocateHandle(value) ? value : 0);
-    if (!handle.IsValid() || !imageHandles.Insert(handle, image) || !imageObjects.Append(image)) {
+    if (!handle.IsValid() || !imageHandles.Insert(handle, image) || !imageObjects.Append(image))
+    {
         ImageResource* removed = nullptr;
-        if (handle.IsValid()) imageHandles.Remove(handle, removed);
+        if (handle.IsValid())
+            imageHandles.Remove(handle, removed);
         Release(&image->reference);
         error.Assign("image resource handle allocation failed");
         return ImageHandle();
@@ -51,9 +69,11 @@ ImageHandle LoadImage(const char* path, String& error) {
     return handle;
 }
 
-bool DeleteImage(ImageHandle handle, String& error) {
+bool DeleteImage(ImageHandle handle, String& error)
+{
     ImageResource* image = nullptr;
-    if (!imageHandles.Remove(handle, image) || !image) {
+    if (!imageHandles.Remove(handle, image) || !image)
+    {
         error.Assign("invalid or stale image handle");
         return false;
     }
@@ -63,18 +83,28 @@ bool DeleteImage(ImageHandle handle, String& error) {
     return true;
 }
 
-ImageResource* FindImage(ImageHandle handle) {
+ImageResource* FindImage(ImageHandle handle)
+{
     return imageHandles.Find(handle);
 }
 
-ModelHandle LoadModel(const char* path, String& error) {
+ModelHandle LoadModel(const char* path, String& error)
+{
     ModelResource* model = LoadModelPayload(path, error);
-    if (!model) return ModelHandle();
+    return RegisterModelResource(model, error);
+}
+
+ModelHandle RegisterModelResource(ModelResource* model, String& error)
+{
+    if (!model)
+        return ModelHandle();
     uint32_t value = 0;
     const ModelHandle handle(AllocateHandle(value) ? value : 0);
-    if (!handle.IsValid() || !modelHandles.Insert(handle, model) || !modelObjects.Append(model)) {
+    if (!handle.IsValid() || !modelHandles.Insert(handle, model) || !modelObjects.Append(model))
+    {
         ModelResource* removed = nullptr;
-        if (handle.IsValid()) modelHandles.Remove(handle, removed);
+        if (handle.IsValid())
+            modelHandles.Remove(handle, removed);
         Release(&model->reference);
         error.Assign("model resource handle allocation failed");
         return ModelHandle();
@@ -83,9 +113,11 @@ ModelHandle LoadModel(const char* path, String& error) {
     return handle;
 }
 
-bool DeleteModel(ModelHandle handle, String& error) {
+bool DeleteModel(ModelHandle handle, String& error)
+{
     ModelResource* model = nullptr;
-    if (!modelHandles.Remove(handle, model) || !model) {
+    if (!modelHandles.Remove(handle, model) || !model)
+    {
         error.Assign("invalid or stale model handle");
         return false;
     }
@@ -95,15 +127,20 @@ bool DeleteModel(ModelHandle handle, String& error) {
     return true;
 }
 
-ModelResource* FindModel(ModelHandle handle) {
+ModelResource* FindModel(ModelHandle handle)
+{
     return modelHandles.Find(handle);
 }
 
-void ClearResources() {
+void ClearResources()
+{
+    model::ClearAnimations();
     imageHandles.Clear();
     modelHandles.Clear();
-    for (uint32_t i = 0; i < imageObjects.Count(); ++i) Release(&imageObjects.At(i)->reference);
-    for (uint32_t i = 0; i < modelObjects.Count(); ++i) Release(&modelObjects.At(i)->reference);
+    for (uint32_t i = 0; i < imageObjects.Count(); ++i)
+        Release(&imageObjects.At(i)->reference);
+    for (uint32_t i = 0; i < modelObjects.Count(); ++i)
+        Release(&modelObjects.At(i)->reference);
     imageObjects.Clear();
     modelObjects.Clear();
 }

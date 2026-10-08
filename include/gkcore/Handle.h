@@ -1,68 +1,98 @@
-#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_PUBLIC_HANDLE_H
+#define GKCORE_PUBLIC_HANDLE_H
 
 #include <stdint.h>
 
 /**
- * Typed resource identifiers used by public gkcore calls.
+ * 公開gkcore APIで使う型付きresource識別子。
  */
-namespace gk {
+namespace gk
+{
 
 /**
- * A small typed identifier. Value zero is reserved as invalid.
+ * 小さな型付き識別子。値0は無効値として予約する。
  */
-template<class Tag>
-struct Handle {
+template <class Tag> struct Handle
+{
+    // 0を無効値として使うresource番号。
     uint32_t value;
 
     /**
-     * Constructs an invalid handle.
+     * 無効handleを作る。
      */
-    Handle() : value(0) {}
+    Handle() : value(0)
+    {
+    }
     /**
-     * Constructs a handle from its nonzero identifier.
+     * 0以外の識別番号からhandleを作る。
      */
-    explicit Handle(uint32_t id) : value(id) {}
+    explicit Handle(uint32_t id) : value(id)
+    {
+    }
     /**
-     * Returns whether this identifier refers to a resource.
+     * resourceを指す有効な番号か返す。
      */
-    bool IsValid() const { return value != 0; }
+    bool IsValid() const
+    {
+        return value != 0;
+    }
     /**
-     * Converts to true when this identifier is valid.
+     * 有効な番号ならtrueへ変換する。
      */
-    explicit operator bool() const { return IsValid(); }
+    explicit operator bool() const
+    {
+        return IsValid();
+    }
     /**
-     * Compares two identifiers.
+     * 2つの識別子が等しいか調べる。
      */
-    bool operator==(Handle other) const { return value == other.value; }
+    bool operator==(Handle other) const
+    {
+        return value == other.value;
+    }
     /**
-     * Compares two identifiers.
+     * 2つの識別子が異なるか調べる。
      */
-    bool operator!=(Handle other) const { return value != other.value; }
+    bool operator!=(Handle other) const
+    {
+        return value != other.value;
+    }
 };
 
 /**
- * Tag used to distinguish image handles from other resource IDs.
+ * 画像handleを他のresource番号と区別するtag。
  */
 struct ImageTag;
 /**
- * Tag used to distinguish model handles from other resource IDs.
+ * model handleを他のresource番号と区別するtag。
  */
 struct ModelTag;
 /**
- * Tag used to distinguish shader handles from other resource IDs.
+ * shader handleを他のresource番号と区別するtag。
  */
 struct ShaderTag;
 /**
- * Typed identifier for a loaded image.
+ * アニメーションデータのhandleを区別するタグ。
+ */
+struct ModelAnimationTag;
+/**
+ * 読み込んだ画像を識別する型付きhandle。
  */
 using ImageHandle = Handle<ImageTag>;
 /**
- * Typed identifier for a loaded model.
+ * 読み込んだmodelを識別する型付きhandle。
  */
 using ModelHandle = Handle<ModelTag>;
 /**
- * Typed identifier for a loaded custom shader.
+ * 読み込んだcustom shaderを識別する型付きhandle。
  */
 using ShaderHandle = Handle<ShaderTag>;
+/**
+ * 独立して読み込んだclip・骨格を識別するhandle。
+ */
+using ModelAnimationHandle = Handle<ModelAnimationTag>;
 
 } // namespace gk
+
+#endif
