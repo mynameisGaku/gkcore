@@ -29,7 +29,7 @@ Windows APIも使うコードでは、Windows.hを先に読み込み、その後
 
 ## 現在の制限
 
-Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各57/57件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像と画像共有の38画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
+Windows 11 Pro、Visual Studio 2026 / v142、Windows SDK 10.0.22621.0、RTX 4070 SUPER / driver 610.74で、Release・Debug Runtimeの全CTestは各60/60件が成功しました。Debugの画像取得ではD3D12 InfoQueueの取得を必須確認しています。金属度・粗さの25画像に加え、明示NORMAL/TANGENTを使う法線画像と画像共有の38画像も検査し、Release/Debug間でbyte単位に一致しました。これは全面画像の画質やGPU-based validationの確認ではありません。他GPUでの実行と異常終了・device loss時の復旧は未検証です。最新の結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
 固定したThe Forgeでは開発用のshader reloadが有効で、Runtimeには含めない`reload-server.txt`がない旨のエラーがログに出ます。ReleaseとDebugの実行はその後も継続し、全テストが成功しました。現在はこの開発用機能の無効化を整理していません。
 
@@ -129,3 +129,5 @@ python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The
 GLBの接線生成は `src/model/ModelTangents.cpp` がprimitive-local位置・法線・法線画像のUVからcorner frameを作り、`GlbLoader.cpp` がnode変換と出力indexへの再割当を担当します。固定MikkTSpaceは `MikkTSpace.cpp` で一度だけコンパイルし、sourceの改変なしで割当をfoundationへ接続します。`gkcore.model_tangent_generation` と `gkcore.model_tangent` はCPU契約、`gkcore.model_tangent_capture` は実GPU画像、`gkcore.mikktspace_lock` とpackage検査は固定コードと配布noticeを確認します。
 
 GLB接線自動生成の追加後、Runtime Release/Debugは全CTest各57/57、RuntimeOFF Debug/Releaseは各39/39成功しました。追加32画像と判定JSONは両Runtime構成で完全一致しています。SDK consumerとnotice必須の配布物検査も両構成で確認しました。条件と結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
+
+GLBの法線欠損は `ModelNormals.cpp` で面法線を作り、法線画像を使う場合だけ `ModelTangents.cpp` へ接続します。NORMAL/TANGENT生成はnode変換前、変換・index再登録は `GlbLoader.cpp` で行います。追加後のRuntime Release/Debugは各60/60、RuntimeOFFは各41/41、取得35画像とJSONは両構成で完全一致しました。実行条件と限界は[TDDログ](TDD_LOG.md)へ記録しています。

@@ -212,7 +212,7 @@ int main(int argc, char** argv)
     }
     if (!CheckNoNormalMapFixture(directory))
         return 1;
-    const char* const rejectedFixtures[] = { "tangent-missing-normal.glb", "tangent-missing-normal-uv.glb", "tangent-degenerate-uv.glb", "tangent-zero-area.glb", "tangent-nonfinite-normal.glb", "tangent-malformed-authored.glb" };
+    const char* const rejectedFixtures[] = { "tangent-missing-normal-uv.glb", "tangent-degenerate-uv.glb", "tangent-zero-area.glb", "tangent-nonfinite-normal.glb", "tangent-malformed-authored.glb" };
     for (const char* fixture : rejectedFixtures)
     {
         if (!CheckRejectedFixture(directory, fixture))

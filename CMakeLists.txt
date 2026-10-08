@@ -39,6 +39,7 @@ set(GKCORE_CORE_SOURCES
     src/model/ObjLoader.cpp
     src/model/GlbLoader.cpp
     src/model/ModelTangents.cpp
+    src/model/ModelNormals.cpp
     src/model/MikkTSpace.cpp
     src/model/Cgltf.cpp
     src/model/FbxLoader.cpp
@@ -247,6 +248,7 @@ if(GKCORE_BUILD_TESTS)
         src/model/ObjLoader.cpp
         src/model/GlbLoader.cpp
     src/model/ModelTangents.cpp
+    src/model/ModelNormals.cpp
     src/model/MikkTSpace.cpp
         src/model/Cgltf.cpp
         src/model/FbxLoader.cpp
@@ -424,7 +426,34 @@ if(GKCORE_BUILD_TESTS)
     add_dependencies(gkcore_model_tangent_tests gkcore_model_tangent_fixtures)
     add_test(NAME gkcore.model_tangent COMMAND gkcore_model_tangent_tests "${_gkcore_model_tangent_fixture_dir}")
 
+    set(_gkcore_model_generated_normal_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-generated-normal-fixtures")
+    set(_gkcore_model_generated_normal_fixture_files)
+    foreach(_fixture_name IN ITEMS generated-normal-authored-normal-nonfinite generated-normal-authored-normal-zero generated-normal-authored-singular-no-map generated-normal-coplanar-shared generated-normal-coplanar-shared-reference generated-normal-degenerate-position generated-normal-degenerate-uv-no-map generated-normal-degenerate-uv-no-map-reference generated-normal-degenerate-uv-with-map generated-normal-flat generated-normal-flat-reference generated-normal-no-map generated-normal-no-map-reference generated-normal-no-map-tangent-ignored generated-normal-no-map-tangent-ignored-reference generated-normal-node-transform generated-normal-node-transform-reference generated-normal-non-indexed generated-normal-non-indexed-reference generated-normal-sharp-fold generated-normal-sharp-fold-averaged generated-normal-sharp-fold-reference generated-normal-singular-no-map generated-normal-tangent-ignored generated-normal-tangent-ignored-reference generated-normal-tiny-node generated-normal-tiny-node-reference generated-normal-unused-source-vertex generated-normal-unused-source-vertex-reference generated-normal-uv1 generated-normal-uv1-reference)
+        list(APPEND _gkcore_model_generated_normal_fixture_files "${_gkcore_model_generated_normal_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_generated_normal_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_generated_normal_fixtures.py
+            --output-dir "${_gkcore_model_generated_normal_fixture_dir}"
+        DEPENDS tests/support/model_generated_normal_fixtures.py tests/support/model_tangent_fixtures.py tests/support/model_normal_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_generated_normal_fixtures DEPENDS ${_gkcore_model_generated_normal_fixture_files})
+    add_executable(gkcore_model_generated_normal_tests tests/model_generated_normal_tests.cpp ${_gkcore_resource_test_sources})
+    target_compile_features(gkcore_model_generated_normal_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_generated_normal_tests PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_model_generated_normal_tests)
+    add_dependencies(gkcore_model_generated_normal_tests gkcore_model_generated_normal_fixtures)
+    add_test(NAME gkcore.model_generated_normal COMMAND gkcore_model_generated_normal_tests "${_gkcore_model_generated_normal_fixture_dir}")
+
     add_test(NAME gkcore.mikktspace_lock COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_mikktspace_lock.py)
+
+    add_executable(gkcore_model_normal_generation_tests
+        tests/model_normal_generation_tests.cpp src/model/ModelNormals.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_normal_generation_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_normal_generation_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_normal_generation_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_normal_generation_tests)
+    add_test(NAME gkcore.model_normal_generation COMMAND gkcore_model_normal_generation_tests)
 
     add_executable(gkcore_model_tangent_generation_tests
         tests/model_tangent_generation_tests.cpp src/model/ModelTangents.cpp src/model/MikkTSpace.cpp
@@ -840,6 +869,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_tangent_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_tangent_capture_tests)
             add_dependencies(gkcore_model_tangent_capture_tests gkcore_model_tangent_fixtures)
+            add_executable(gkcore_model_generated_normal_capture_tests tests/model_generated_normal_capture_tests.cpp)
+            target_compile_features(gkcore_model_generated_normal_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_generated_normal_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_generated_normal_capture_tests)
+            add_dependencies(gkcore_model_generated_normal_capture_tests gkcore_model_generated_normal_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -924,6 +958,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --fixture-dir "${_gkcore_model_tangent_fixture_dir}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-tangent-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_tangent_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_generated_normal_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_generated_normal_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_generated_normal_capture_tests>
+                    --fixture-dir "${_gkcore_model_generated_normal_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-generated-normal-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_generated_normal_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -1003,6 +1043,10 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(TARGET gkcore_model_tangent_capture_tests)
         add_dependencies(gkcore_model_tangent_capture_tests gkcore_stage_runtime_payload)
+    endif()
+
+    if(TARGET gkcore_model_generated_normal_capture_tests)
+        add_dependencies(gkcore_model_generated_normal_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

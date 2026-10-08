@@ -2,6 +2,7 @@
 #include "../image/ImageLoader.h"
 #include "../foundation/Memory.h"
 #include "../resources/TextureSampler.h"
+#include "ModelNormals.h"
 #include "ModelTangents.h"
 #include "../../third_party/cgltf/cgltf.h"
 #include <math.h>
@@ -596,9 +597,12 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     const cgltf_accessor* occlusionUv = nullptr;
     // normal textureの有無でのみ必要となる属性と変換条件。
     const bool hasNormalTexture = primitive->material && primitive->material->normal_texture.texture;
-    const cgltf_accessor* tangent = hasNormalTexture ? cgltf_find_accessor(primitive, cgltf_attribute_type_tangent, 0) : nullptr;
-    // 明示接線がないnormal map primitiveだけ、接線を生成する。
-    const bool generateTangents = hasNormalTexture && !tangent;
+    // NORMAL欠損時はTANGENTも無視するためaccessorを参照しない。
+    const bool generateNormals = normal == nullptr;
+    const cgltf_accessor* tangent = hasNormalTexture && !generateNormals ? cgltf_find_accessor(primitive, cgltf_attribute_type_tangent, 0) : nullptr;
+    // normal mapを使う場合、NORMAL生成後は明示TANGENTがあっても接線を作る。
+    const bool generateTangents = hasNormalTexture && (generateNormals || !tangent);
+    const bool stageGeneratedVertices = generateNormals || generateTangents;
     const cgltf_accessor* normalUv = nullptr;
     double normalMapDeterminant = 1.0;
     float normalMapDeterminantSign = 1.0f;
@@ -619,16 +623,19 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     {
         if (!SelectTextureUv(*primitive, primitive->material->normal_texture, "normal", normalUv, error))
             return false;
+    }
+    if (hasNormalTexture || generateNormals)
+    {
         // normalと接線を一意に変換できるnode行列の向きと可逆性。
         normalMapDeterminant = LinearDeterminant(matrix);
         if (!isfinite(normalMapDeterminant) || normalMapDeterminant == 0.0)
         {
-            error.Assign("GLB normal mapping cannot use a singular node transform");
+            error.Assign(hasNormalTexture ? "GLB normal mapping cannot use a singular node transform" : "GLB generated normals cannot use a singular node transform");
             return false;
         }
         normalMapDeterminantSign = normalMapDeterminant < 0.0 ? -1.0f : 1.0f;
     }
-    const uint32_t availableVertices = generateTangents ? maxOutputVertices : maxOutputVertices - model.vertices.Count();
+    const uint32_t availableVertices = stageGeneratedVertices ? maxOutputVertices : maxOutputVertices - model.vertices.Count();
     if (!position || position->type != cgltf_type_vec3 || position->component_type != cgltf_component_type_r_32f || position->is_sparse || !position->buffer_view || position->count == 0 || position->count > availableVertices)
     {
         error.Assign("GLB primitive has invalid or excessive positions");
@@ -644,14 +651,14 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         error.Assign("GLB normal texture coordinates are incompatible with primitive positions");
         return false;
     }
-    if (hasNormalTexture && (!normal || normal->type != cgltf_type_vec3 || normal->component_type != cgltf_component_type_r_32f || normal->normalized || normal->count != position->count || normal->is_sparse || !normal->buffer_view || (!generateTangents && (!tangent || tangent->type != cgltf_type_vec4 || tangent->component_type != cgltf_component_type_r_32f || tangent->normalized || tangent->count != position->count || tangent->is_sparse || !tangent->buffer_view))))
+    if (hasNormalTexture && normal && (normal->type != cgltf_type_vec3 || normal->component_type != cgltf_component_type_r_32f || normal->normalized || normal->count != position->count || normal->is_sparse || !normal->buffer_view || (!generateTangents && (!tangent || tangent->type != cgltf_type_vec4 || tangent->component_type != cgltf_component_type_r_32f || tangent->normalized || tangent->count != position->count || tangent->is_sparse || !tangent->buffer_view))))
     {
-        error.Assign("GLB normal mapping requires matching FLOAT NORMAL and a valid TANGENT when present");
+        error.Assign("GLB normal mapping requires a matching FLOAT NORMAL when present and a valid TANGENT when used");
         return false;
     }
-    // 接線生成時は変換前の頂点とprimitive local indexを一時保存する。
-    Array<ModelVertex> tangentSourceVertices;
-    Array<uint32_t> tangentSourceIndices;
+    // 法線または接線を生成する場合は、変換前の頂点とlocal indexを一時保存する。
+    Array<ModelVertex> stagedVertices;
+    Array<uint32_t> stagedIndices;
     // このprimitiveで追加を始める頂点位置。
     const uint32_t firstVertex = model.vertices.Count();
     // position accessorの全要素をモデル頂点へ変換するloop。
@@ -666,7 +673,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             error.Assign("GLB position accessor could not be read");
             return false;
         }
-        if (generateTangents)
+        if (stageGeneratedVertices)
         {
             vertex.position[0] = value[0];
             vertex.position[1] = value[1];
@@ -681,6 +688,14 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             if (!cgltf_accessor_read_float(normal, i, value, 3))
             {
                 error.Assign("GLB normal accessor could not be read");
+                return false;
+            }
+            // NORMALが存在する場合は値を検査し、破損値を生成法線へ置き換えない。
+            const double authoredNormal[3] = { value[0], value[1], value[2] };
+            float validatedNormal[3]{};
+            if (!stageGeneratedVertices && !NormalizeDoubleDirection(authoredNormal, validatedNormal))
+            {
+                error.Assign("GLB authored normal is zero or non-finite");
                 return false;
             }
             if (hasNormalTexture && !generateTangents)
@@ -708,7 +723,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
                     return false;
                 }
             }
-            else if (generateTangents)
+            else if (stageGeneratedVertices)
             {
                 vertex.normal[0] = value[0];
                 vertex.normal[1] = value[1];
@@ -769,7 +784,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             vertex.occlusionUv[0] = value[0];
             vertex.occlusionUv[1] = value[1];
         }
-        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !IsFinite(vertex.normalUv[0]) || !IsFinite(vertex.normalUv[1]) || !IsFinite(vertex.emissiveUv[0]) || !IsFinite(vertex.emissiveUv[1]) || !IsFinite(vertex.occlusionUv[0]) || !IsFinite(vertex.occlusionUv[1]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]) || !(generateTangents ? tangentSourceVertices.Append(vertex) : model.vertices.Append(vertex)))
+        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !IsFinite(vertex.normalUv[0]) || !IsFinite(vertex.normalUv[1]) || !IsFinite(vertex.emissiveUv[0]) || !IsFinite(vertex.emissiveUv[1]) || !IsFinite(vertex.occlusionUv[0]) || !IsFinite(vertex.occlusionUv[1]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]) || !(stageGeneratedVertices ? stagedVertices.Append(vertex) : model.vertices.Append(vertex)))
         {
             error.Assign("GLB vertex values or allocation are invalid");
             return false;
@@ -789,36 +804,55 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     {
         // accessorから読むprimitive内index。
         const cgltf_size index = primitive->indices ? cgltf_accessor_read_index(primitive->indices, i) : i;
-        if (index >= position->count || !(generateTangents ? tangentSourceIndices.Append(static_cast<uint32_t>(index)) : model.indices.Append(firstVertex + static_cast<uint32_t>(index))))
+        if (index >= position->count || !(stageGeneratedVertices ? stagedIndices.Append(static_cast<uint32_t>(index)) : model.indices.Append(firstVertex + static_cast<uint32_t>(index))))
         {
             error.Assign("GLB primitive contains an invalid index or could not allocate indices");
             return false;
         }
     }
-    if (generateTangents)
+    if (stageGeneratedVertices)
     {
-        // 接線frameごとに分割した頂点とcorner indexを受け取る。
-        Array<ModelVertex> generatedVertices;
-        Array<uint32_t> generatedIndices;
-        if (!gk::model::GenerateModelTangents(tangentSourceVertices, tangentSourceIndices, maxOutputVertices - model.vertices.Count(), generatedVertices, generatedIndices, error))
-            return false;
-        if (generatedIndices.Count() != indexCount || generatedVertices.Count() > maxOutputVertices - model.vertices.Count() || generatedIndices.Count() > maxOutputIndices - model.indices.Count())
+        // 必要に応じて面法線を生成し、その出力から接線を生成する。
+        Array<ModelVertex> generatedNormalVertices;
+        Array<uint32_t> generatedNormalIndices;
+        const Array<ModelVertex>* generatedSourceVertices = &stagedVertices;
+        const Array<uint32_t>* generatedSourceIndices = &stagedIndices;
+        if (generateNormals)
         {
-            error.Assign("GLB generated tangent data exceeds model limits");
+            if (!gk::model::GenerateModelNormals(stagedVertices, stagedIndices, maxOutputVertices - model.vertices.Count(), generatedNormalVertices, generatedNormalIndices, error))
+                return false;
+            generatedSourceVertices = &generatedNormalVertices;
+            generatedSourceIndices = &generatedNormalIndices;
+        }
+
+        Array<ModelVertex> generatedTangentVertices;
+        Array<uint32_t> generatedTangentIndices;
+        if (generateTangents)
+        {
+            if (!gk::model::GenerateModelTangents(*generatedSourceVertices, *generatedSourceIndices, maxOutputVertices - model.vertices.Count(), generatedTangentVertices, generatedTangentIndices, error))
+                return false;
+            generatedSourceVertices = &generatedTangentVertices;
+            generatedSourceIndices = &generatedTangentIndices;
+        }
+        if (generatedSourceIndices->Count() != indexCount || generatedSourceVertices->Count() > maxOutputVertices - model.vertices.Count() || generatedSourceIndices->Count() > maxOutputIndices - model.indices.Count())
+        {
+            error.Assign("GLB generated normal or tangent data exceeds model limits");
             return false;
         }
-        // 接線生成後にnode変換を適用し、頂点とindexをモデルへ追加する。
+
+        // 生成したsource-spaceの位置と法線をnode変換してモデルへ追加する。
         const uint32_t generatedFirstVertex = model.vertices.Count();
-        for (uint32_t i = 0; i < generatedVertices.Count(); ++i)
+        for (uint32_t i = 0; i < generatedSourceVertices->Count(); ++i)
         {
-            ModelVertex vertex = generatedVertices.At(i);
+            ModelVertex vertex = generatedSourceVertices->At(i);
             const float sourceNormal[3] = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
-            const float sourceTangent[4] = { vertex.tangent[0], vertex.tangent[1], vertex.tangent[2], vertex.tangent[3] };
             float transformedPosition[3]{};
             TransformPosition(matrix, vertex.position, transformedPosition);
-            if (!TransformMappedNormal(matrix, normalMapDeterminant, sourceNormal, vertex.normal) || !TransformMappedTangent(matrix, sourceTangent, vertex.normal, normalMapDeterminantSign, vertex.tangent) || !IsFinite(transformedPosition[0]) || !IsFinite(transformedPosition[1]) || !IsFinite(transformedPosition[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]))
+            const bool transformedNormal = TransformMappedNormal(matrix, normalMapDeterminant, sourceNormal, vertex.normal);
+            const bool transformedTangent = !generateTangents || TransformMappedTangent(matrix, vertex.tangent, vertex.normal, normalMapDeterminantSign, vertex.tangent);
+            if (!transformedNormal || !transformedTangent || !IsFinite(transformedPosition[0]) || !IsFinite(transformedPosition[1]) || !IsFinite(transformedPosition[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]))
             {
-                error.Assign("GLB generated tangent cannot be transformed");
+                error.Assign("GLB generated normal or tangent cannot be transformed");
                 return false;
             }
             vertex.position[0] = transformedPosition[0];
@@ -830,9 +864,9 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
                 return false;
             }
         }
-        for (uint32_t i = 0; i < generatedIndices.Count(); ++i)
+        for (uint32_t i = 0; i < generatedSourceIndices->Count(); ++i)
         {
-            if (generatedIndices.At(i) >= generatedVertices.Count() || !model.indices.Append(generatedFirstVertex + generatedIndices.At(i)))
+            if (generatedSourceIndices->At(i) >= generatedSourceVertices->Count() || !model.indices.Append(generatedFirstVertex + generatedSourceIndices->At(i)))
             {
                 error.Assign("GLB generated tangent index is invalid or could not be stored");
                 return false;

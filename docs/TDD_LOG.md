@@ -1028,3 +1028,36 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 Debugも全57/57成功（407.18秒）しました。取得32画像と判定JSONはRelease/Debugで完全一致し、すべての参照比較の最大差は0です。誤順序とnormal-map無しの反例の検出結果も両構成で一致しました。最新ログは `model-tangent-debug-final-{build,tests}.log` です。Debug画像検査はD3D12 InfoQueueの取得を必須にしており、GPU-based validationは有効にしていません。
 
 検証PCはWindows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026/v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51/SDK10.0.28000.0です。PNGは最終PPMのRGBを変更せず保存し、decode後の一致を確認しました。authored sourceのfixed clang-format12/UTF-8 BOM/CRLF、Runtime STLなし、機能token hash、vendor原文SHA、文書リンクも確認しました。NORMAL補完、アニメーション、全面画質、FPS、他GPU、device loss復旧はこの追加検証の対象外です。
+
+## 2026-10-08 GLBの欠損法線生成
+
+NORMALがないGLB primitiveの位置・local indexから面法線を生成します。共通Arrayがcornerごとの法線を保持し、同じsource vertexと完全一致する法線は再利用、異なる面法線は頂点を分けます。入力TANGENTは0にし、基本色・MR・normal・emissive・occlusionの各UVは保ちます。法線画像を使う場合は生成法線と選択UVから既存接線helperを呼び、node変換は生成後に適用します。
+
+helperの平面・鋭い辺・属性保持契約をスタブでREDにしました。GLB loaderとRelease GPUもgenerated-normal-flatを「matching FLOAT NORMAL」で拒否してREDでした。GPU失敗は1.88秒、loaderは0.06秒です。ログは `model-generated-normal-helper-red-{build,tests}.log`、`model-generated-normal-loader-red-{build,tests}.log`、`model-generated-normal-gpu-red-{build,tests}.log` です。
+
+面積計算はfloat座標をdouble差分と外積へ拡げ、最大成分で正規化します。近い値を許容誤差でまとめず、生成法線のfloat値が一致するcornerだけを再利用します。零面積・非有限参照座標・不正indices・出力上限は診断付きで拒否し、候補arrays完成後に2出力へ移します。未参照頂点は生成にも出力にも使いません。空index、範囲外index、6頂点必要な折れ面へ上限5を指定した場合のsource・sentinel出力保持、確保失敗の境界も検査します。
+
+最初のfocused CPUでは新規法線契約は成功しましたが、従来の接線生成モデル tangent-unused-source-vertex を拒否する回帰を検出しました。新しい明示NORMAL検査が、参照されない零法線まで接線helperより先に検証していたためです。staging中の接線生成では従来どおりhelperが参照頂点だけを検査し、未使用頂点を除くように戻しました。NORMALが存在する不正値を法線生成で置き換えるfallbackは追加していません。
+
+面法線helper、GLB接続、GPU参照を独立read-onlyでレビューしました。no-mapの参照にTANGENT accessorがあっても、loaderはno-mapで読まずゼロ値を保つため、最初の参照不一致懸念は誤りとして撤回されました。特異nodeは、生成NORMALの変換では失敗、既存明示NORMAL/no-mapの経路では以前のfallbackを保持するCPU対照を加えました。
+
+新規GPU focusedは46.26秒で成功。31 GLB（12 actual/reference対、平均法線の反例、6 CPU-only不正/特異変換の対照）を使い、35画像の参照差は0でした。sharp-foldを平均法線へ変えた反例は618画素で差2超、最大4、normal-map無効化は45,000画素に10超、最大24を確認しました。三角形の独立幾何を明示NORMAL/TANGENTへ保存した参照を使い、生成helperは期待値に呼んでいません。
+
+RuntimeOFF Debug/Releaseは各41/41成功（3.45秒・5.37秒）しました。ログは `model-generated-normal-cpu-{debug,release}-final-{build,tests}.log`、初回focusedは `model-generated-normal-release-focused-tests.log` です。公開shader ABIの変更や新ライブラリの追加はありません。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Release全60/60成功（430.37秒、生成法線GPU44.25秒、SDK consumer package4.06秒）しました。ログは `model-generated-normal-release-final-{build,tests}.log` です。公開shader ABI・160byte頂点配置は変更しておらず、従来の各材質・接線・custom shader・効果・入力も同じ全体実行で確認しています。
+
+Debugも全60/60成功（454.33秒）しました。生成法線35画像と判定JSONはRelease/Debugで完全一致し、全参照は最大差0でした。ログは `model-generated-normal-debug-final-{build,tests}.log` です。Debug画像検査はD3D12 InfoQueueの取得を必須にして通過しています。GPU-based validationは有効にしていません。
+
+検証PCはWindows 11 Pro build26200、RTX 4070 SUPER/driver610.74、VS2026/v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51/SDK10.0.28000.0です。PNGは最終PPMのRGBを変更せず保存し、decode後も一致を確認しました。sourceのfixed clang-format12、UTF-8 BOM/CRLF、Runtime STLなし、機能token hash、文書リンクも確認しました。全面画質、FPS、他GPU、GPU-based validation、device loss復旧は今回追加検証していません。
