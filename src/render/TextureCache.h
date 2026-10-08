@@ -8,6 +8,7 @@
 #include "../resources/TextureSampler.h"
 #include "ETextureColorSpace.h"
 #include "TextureCachePolicy.h"
+#include "TextureMipChain.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
@@ -37,9 +38,9 @@ class TextureCache
      */
     void BeginFrame();
     /**
-     * 指定色空間の画像textureを用意する。既定はsRGBで、未初期化・不正画像・容量超過では失敗する。
+     * 指定色空間の画像textureを用意する。既定はsRGB・単一mipで、不正画像や容量超過では失敗する。
      */
-    bool Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace = ETextureColorSpace::Srgb);
+    bool Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace = ETextureColorSpace::Srgb, bool fullMipChain = false);
     /**
      * model画像とsamplerを用意する。法線省略時はMR画像、sampler省略時はClampLinearを使い、不正指定や容量超過で失敗する。
      */
@@ -94,6 +95,11 @@ class TextureCache
         ETextureColorSpace colorSpace;
         // 色空間別のGPU画像。
         Texture* texture;
+        // 生成済みmip段数とfull-chain利用状態。
+        uint32_t mipLevels;
+        bool fullMipChain;
+        // resource loaderへの転送が終わるまで保持するCPU mip画像列。
+        FTextureMipChain* mipChain;
         // 従来画像shader用descriptor。linearでは空。
         DescriptorSet* descriptorSet;
         // byte上限へ加算する物理画像サイズ。
@@ -135,12 +141,12 @@ class TextureCache
 
     static constexpr uint32_t kCapacity = 128;
     static constexpr uint32_t kModelCapacity = 128;
-    static constexpr uint32_t kSamplerCapacity = 36;
+    static constexpr uint32_t kSamplerCapacity = 108;
     static constexpr uint64_t kByteCapacity = 256u * 1024u * 1024u;
     /**
-     * 指定画像と色空間のcache記録があれば返す。
+     * 指定画像、色空間、mip構成のcache記録があれば返す。
      */
-    Entry* Find(detail::ImageResource* image, ETextureColorSpace colorSpace);
+    Entry* Find(detail::ImageResource* image, ETextureColorSpace colorSpace, bool fullMipChain);
     /**
      * 指定画像とsampler値のmodel descriptor記録があれば返す。
      */

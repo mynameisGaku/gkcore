@@ -20,7 +20,7 @@ bool IsTextureSamplerValid(const FTextureSampler& sampler);
  */
 bool AreTextureSamplersEqual(const FTextureSampler& left, const FTextureSampler& right);
 /**
- * 有効なsamplerを36状態の固定表へ対応付ける。失敗時は出力indexを維持する。
+ * 有効なsamplerを108状態の固定表へ対応付ける。失敗時は出力indexを維持する。
  */
 bool GetTextureSamplerIndex(const FTextureSampler& sampler, uint32_t& index);
 

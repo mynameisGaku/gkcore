@@ -871,3 +871,45 @@ ctest --test-dir build/dev-windows -C Debug --output-on-failure
 cmake --build build/dev-windows --config Release --parallel 8
 ctest --test-dir build/dev-windows -C Release --output-on-failure
 ```
+
+
+## 色空間を保つミップ生成と全段転送
+
+2026-10-08にGLB minFilterのミップ指定を保持して縮小画像を生成しました。先にCPU mip計画・平均・出力保持とsampler108状態の契約を追加し、stubでは `5x3 mip layout planning failed`、旧36状態では108状態の一意性がREDになりました。Runtime Releaseの根拠は `build/native-validation/model-mip-cpu-red-{build,tests}.log` です。
+
+GPU変更前はLINEAR_MIPMAP_NEARESTの期待画素137に対し0が返り、差137で失敗しました。以前はminのfallbackと単一段だけを使っていました。`model-mip-gpu-red-{build,tests}.log` が5.08秒のREDです。新しいRGBA chainはNPOTの面積重みを含み、sRGB RGBだけ線形化して平均し、alphaとデータ画像は線形平均です。encoded normalの平均は既存pixel shaderの正規化へ通します。元画像は変更せず、candidate全体完成後だけ出力をMoveFromします。
+
+GPUではrequested mip samplerを108状態へ拡張し、画像・色形式・ミップ有無をphysical cache keyへ含めます。計画の全段byte数をGPU資源作成前に256MiB上限へ照合し、全mipのsource/destination行strideを確認してstagingへcopyします。全段endUpdate後にCPU chainを解放します。1×1は単一資源へ正規化し、samplerがNoneの画像・公開2D/独自pixel shader経路は元画像だけを使います。samplerのLOD範囲を広げる既存修正は維持します。依存物の変更はありません。
+
+最初のPBR fixtureは法線が+Zで方向光を受けず、MR・normalによる変化を実測できない設定でした。−Zへ修正し、同じUVでミップなし反例が明確に異なるようrho=256で最終段を選びました。元の境界UVではbase-level線形補間も平均と等しくなるため、source texel内のUVへ変更しています。これはRuntime不具合のREDとは区別する検証設定の修正です。ミップあり/なしの差は役割共有52、MR33、normal75でした。
+
+Release focused CPU2/GPU1はすべて成功（32.61秒、GPU32.54秒）しました。4 minFilterの中心RGBは9984=0、9985=137、9986=100（参照99、差1）、9987=152（参照152）で、各選択方法を無視すると失敗する差も要求します。NPOT最終段は5×3で73、1×7で106となり参照と一致しました。照明式はテストへ複製せず、選択される画素・材質係数・頂点法線を参照にしています。ログは `model-mip-focused-{build,tests}.log` です。
+
+
+独立レビューの指摘を受け、5×3線形画像の途中段58/82と最終70、8×8画像の確保失敗位置0〜11をCPUテストへ追加しました。失敗時はsourceと2出力配列を保持し、診断が空でないことを確認、成功時は別途生成した基準とbyte/配置一致を要求します。正確な確保回数を実装へ合わせたテストにはしていません。
+
+初回全体ビルドではCMakeのsource追加が小さなcache方針テストにも入り、Array/String/PostProcessのlink依存不足で失敗しました。不要な生成コードを同targetから除外し、全構成を再ビルドしました。これは描画アルゴリズムのREDとは区別します。
+
+
+Release全49/49は223.50秒、追加ミップGPU検査32.18秒、SDK consumerを含むpackage3.75秒で成功しました。RuntimeOFFのDebug・Releaseは各34/34成功（4.10秒・3.03秒）。ログは `build/native-validation/model-mip-release-final-{build,tests}.log`、`model-mip-cpu-{debug,release}-final-{build,tests}.log` です。従来のsampler34画像、normal/画像共有38画像を含む全体回帰を実行しています。
+
+新GPU取得は28画像です。sampler4組、ミップなし、共有用途のScene/UI、MR/normalと各ミップなし反例、NPOT2サイズ、ミップ有無を同時に使うモデルの再読込後2画像と参照を含みます。個別の選択画素・設定差を確認するもので、全面画質や動的なちらつきの評価結果ではありません。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+
+検証PCはWindows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026 / v142 14.29.30133 (MSVC19.29.30159)、Windows SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51 / SDK10.0.28000.0です。CPU生成物は依存物を追加せず、共通Array/Memory・既存sRGB変換を使用します。公開shader ABI・vertex120byteは変更していません。ミップcacheのbyte計上は全段の論理RGBA byte数で、GPU配置の整列やCPU一時領域は計測対象外です。
+
+
+Debugも全49/49成功（238.05秒、ミップGPU35.13秒、SDK consumer package3.88秒）しました。ログは `model-mip-debug-final-{build,tests}.log` です。新規28画像と既存sampler34・normal/画像共有38画像はすべてRelease/Debug間でbyte単位一致しました。PNGは最終RGBをそのまま保存し、round-tripで一致を確認しています。14変更C++のfixed clang-format12とBOM/CRLF、文書リンク、最終機能要素hashも確認しました。公開SDK内容の追加依存やshader ABI変更はありません。
+
+ミップなし/ありの有効GPU資源は分けますが、MRとnormalの同じ線形ミップ構成は共有します。1×1は単一段へ正規化します。生成時CPU一時領域やstaging行整列はcache byte budgetへ含めず、GPU配置byte実測・性能・動的ちらつき・全面画質・他GPU・GPU-based validation・device loss復旧は追加検証していません。

@@ -57,22 +57,60 @@ bool FindArrayIndex(const void* array, cgltf_size count, size_t elementSize, con
 }
 
 /**
- * glTFのfilter値を固定36状態で使うnearest/linearへ変換する。
+ * glTFのminFilterを画素filterとmip filterへ分けて変換する。
  * 未対応値では出力を変えず失敗する。
  */
-bool ReadSamplerFilter(cgltf_filter_type source, bool minification, ETextureFilter& output)
+bool ReadMinificationFilter(cgltf_filter_type source, ETextureFilter& pixelFilter, ETextureMipFilter& mipFilter)
 {
-    // sampler省略時と同じ線形補間を初期値にする。
+    // glTFの省略値は線形画素filterでmipを使わない。
+    // 成功するまで出力先へ触れない一時filter値。
+    ETextureFilter resolvedPixelFilter = ETextureFilter::Linear;
+    // sampler省略時と同じmip無効値。
+    ETextureMipFilter resolvedMipFilter = ETextureMipFilter::None;
+    if (source == cgltf_filter_type_undefined || source == cgltf_filter_type_linear)
+    {
+        pixelFilter = resolvedPixelFilter;
+        mipFilter = resolvedMipFilter;
+        return true;
+    }
+    if (source == cgltf_filter_type_nearest)
+        resolvedPixelFilter = ETextureFilter::Nearest;
+    else if (source == cgltf_filter_type_nearest_mipmap_nearest)
+    {
+        resolvedPixelFilter = ETextureFilter::Nearest;
+        resolvedMipFilter = ETextureMipFilter::Nearest;
+    }
+    else if (source == cgltf_filter_type_linear_mipmap_nearest)
+        resolvedMipFilter = ETextureMipFilter::Nearest;
+    else if (source == cgltf_filter_type_nearest_mipmap_linear)
+    {
+        resolvedPixelFilter = ETextureFilter::Nearest;
+        resolvedMipFilter = ETextureMipFilter::Linear;
+    }
+    else if (source == cgltf_filter_type_linear_mipmap_linear)
+        resolvedMipFilter = ETextureMipFilter::Linear;
+    else
+        return false;
+    pixelFilter = resolvedPixelFilter;
+    mipFilter = resolvedMipFilter;
+    return true;
+}
+
+/**
+ * glTFのmagFilterを画素filterへ変換する。
+ * 未対応値では出力を変えず失敗する。
+ */
+bool ReadMagnificationFilter(cgltf_filter_type source, ETextureFilter& output)
+{
     ETextureFilter filter = ETextureFilter::Linear;
-    if (source == cgltf_filter_type_undefined)
+    if (source == cgltf_filter_type_undefined || source == cgltf_filter_type_linear)
     {
         output = filter;
         return true;
     }
-    if (source == cgltf_filter_type_nearest || (minification && (source == cgltf_filter_type_nearest_mipmap_nearest || source == cgltf_filter_type_nearest_mipmap_linear)))
-        filter = ETextureFilter::Nearest;
-    else if (source != cgltf_filter_type_linear && !(minification && (source == cgltf_filter_type_linear_mipmap_nearest || source == cgltf_filter_type_linear_mipmap_linear)))
+    if (source != cgltf_filter_type_nearest)
         return false;
+    filter = ETextureFilter::Nearest;
     output = filter;
     return true;
 }
@@ -128,13 +166,13 @@ bool ReadTextureSampler(cgltf_data* data, const cgltf_texture_view& view, const 
             error.Append(" sampler wrapT value is unsupported");
             return false;
         }
-        if (!ReadSamplerFilter(source->min_filter, true, sampler.minFilter))
+        if (!ReadMinificationFilter(source->min_filter, sampler.minFilter, sampler.mipFilter))
         {
             error.Assign(role);
             error.Append(" sampler minFilter value is unsupported");
             return false;
         }
-        if (!ReadSamplerFilter(source->mag_filter, false, sampler.magFilter))
+        if (!ReadMagnificationFilter(source->mag_filter, sampler.magFilter))
         {
             error.Assign(role);
             error.Append(" sampler magFilter value is unsupported");

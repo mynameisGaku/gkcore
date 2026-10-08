@@ -15,9 +15,9 @@
 
 ## テストと再現性
 
-2026-10-08、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各47/47件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
+2026-10-08、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各49/49件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
 
-RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各33/33件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
+RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各34/34件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
 
 GPU画像検査は基本描画・モデル照明、6フレームの効果切り替え、多数の矩形を123フレーム描いた後の出力、各ポストエフェクトの個別設定を扱います。[効果の実画像](effects.md)も掲載しています。透明画像の合成・拡大・回転と、描画登録後のhandle削除も確認し、132フレームで396画像を読み直してcacheの128枠を超えた後の表示を検査しました。[画像ガイド](images.md)を参照してください。256MiBのbyte上限や転送失敗時のcleanupは未検証です。
 
@@ -31,7 +31,9 @@ GLBのMASK材質を内蔵モデルshaderで切り抜く処理を追加しまし�
 
 法線画像はScene20・UI11・runtime鏡映2・2種類の再読込後各2・同frameに50モデルを描く1の38画像で、頂点法線だけの参照モデルと比較しています。38枚はRelease/Debug間でbyte単位に一致しました。NORMAL/TANGENTの自動生成は未対応です。同じimage項目を参照する基本色・MR・法線は、texture indexが異なる場合もモデル内でdecode結果を共有し、sRGB/線形の2資源を使います。画像共有と各役割のUV選択は独立です。詳しくは[モデルガイド](models.md)を参照してください。
 
-samplerは8種類のwrap・整数端・省略値、同一画像を異なる設定で描く材質、基本色/MR/法線の個別設定、拡大・縮小の補間、132 frame再読込後の描画を34画像で検査しました。両構成の全画像がbyte単位に一致しました。ミップ画像は生成せず、指定されたminのミップmodeはglTF推奨fallbackへ変換します。[モデルガイド](models.md)を参照してください。
+samplerは8種類のwrap・整数端・省略値、同一画像を異なる設定で描く材質、基本色/MR/法線の個別設定、拡大・縮小の補間、132 frame再読込後の描画を34画像で検査しました。両構成の全画像がbyte単位に一致しました。minFilterのミップ指定では1×1までの縮小段を生成し、段と画素の補間方法を独立して使います。省略値とミップなし指定は従来の単一段を維持します。[モデルガイド](models.md)を参照してください。
+
+ミップ指定のGLB画像は1×1まで生成して全段転送し、4 filter・sRGB/線形用途・NPOT端画素・ミップ有無の同時描画を28画像で確認しました。28枚はRelease/Debug間でbyte一致しています。平均は色空間を保ち、画像cache上限は全段の論理RGBA byte数で計上します。[モデルガイド](models.md)を参照してください。
 
 FSL artifactは`python tests/shader_contract_tests.py`で検査します。固定したThe ForgeのD3D12 adapter検索はsoftware adapterを除外するため、WARPは利用できません。GPU画像は固定位置・色・領域による回帰判定です。全面画像の画質、連続フレームすべてのちらつき、GPU負荷と目標FPS、全モデル形式、全入力操作、他GPU、GPU-based validation、再配布条件の最終確認は未実施です。実行手順は[描画検証](render-validation.md)、詳しい結果は[TDD検証ログ](TDD_LOG.md)を参照してください。
 

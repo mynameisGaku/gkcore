@@ -4,6 +4,7 @@
 
 #include "ETextureAddressMode.h"
 #include "ETextureFilter.h"
+#include "ETextureMipFilter.h"
 
 /**
  * 材質ごとの画像参照設定。
@@ -23,6 +24,8 @@ struct FTextureSampler
     ETextureFilter minFilter = ETextureFilter::Linear;
     // 拡大時に使う補間方法。
     ETextureFilter magFilter = ETextureFilter::Linear;
+    // 縮小時に選ぶmip段階間の補間方法。
+    ETextureMipFilter mipFilter = ETextureMipFilter::None;
 };
 
 // namespace gk::detail

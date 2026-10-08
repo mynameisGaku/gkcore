@@ -61,7 +61,8 @@ set(GKCORE_CORE_SOURCES
     src/render/WorldGeometry.cpp
     src/render/ModelGeometry.cpp
     src/render/CustomShaderPolicy.cpp
-    src/render/TextureCachePolicy.cpp)
+    src/render/TextureCachePolicy.cpp
+    src/render/TextureMipChain.cpp)
 
 function(gkcore_enable_warnings target)
     if(MSVC)
@@ -350,6 +351,19 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_sampler_tests)
     add_dependencies(gkcore_model_sampler_tests gkcore_model_sampler_fixtures)
     add_test(NAME gkcore.model_sampler COMMAND gkcore_model_sampler_tests "${_gkcore_model_sampler_fixture_dir}")
+
+    set(_gkcore_model_mip_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-mip-fixtures")
+    set(_gkcore_model_mip_fixture_files)
+    foreach(_fixture_name IN ITEMS mip-min-9984 mip-min-9984-reference mip-min-9985 mip-min-9985-reference mip-min-9986 mip-min-9986-reference mip-min-9987 mip-min-9987-reference mip-no-mipmap mip-no-mipmap-reference mip-shared-roles mip-shared-roles-reference mip-linear-mr mip-linear-mr-reference mip-linear-normal mip-linear-normal-reference mip-npot-5x3 mip-npot-5x3-reference mip-npot-1x7 mip-npot-1x7-reference mip-sampler-stress mip-sampler-stress-reference mip-shared-roles-no-mipmap mip-linear-mr-no-mipmap mip-linear-normal-no-mipmap)
+        list(APPEND _gkcore_model_mip_fixture_files "${_gkcore_model_mip_fixture_dir}/${_fixture_name}.glb")
+    endforeach()
+    add_custom_command(OUTPUT ${_gkcore_model_mip_fixture_files}
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/support/model_mip_fixtures.py
+            --output-dir "${_gkcore_model_mip_fixture_dir}"
+        DEPENDS tests/support/model_mip_fixtures.py
+        VERBATIM)
+    add_custom_target(gkcore_model_mip_fixtures DEPENDS ${_gkcore_model_mip_fixture_files})
+
     add_executable(gkcore_fbx_geometry_tests
         tests/fbx_geometry_tests.cpp
         src/model/FbxGeometry.cpp
@@ -386,6 +400,15 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_texture_cache_policy_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_texture_cache_policy_tests)
     add_test(NAME gkcore.texture_cache_policy COMMAND gkcore_texture_cache_policy_tests)
+    add_executable(gkcore_texture_mip_chain_tests tests/texture_mip_chain_tests.cpp
+        src/render/TextureMipChain.cpp src/render/PostProcess.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_texture_mip_chain_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_texture_mip_chain_tests PRIVATE include src)
+    target_compile_definitions(gkcore_texture_mip_chain_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_texture_mip_chain_tests)
+    add_test(NAME gkcore.texture_mip_chain COMMAND gkcore_texture_mip_chain_tests)
+
     add_executable(gkcore_shader_abi_tests
         tests/shader_abi_tests.cpp
         src/render/ShaderAbi.cpp
@@ -726,6 +749,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_sampler_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_sampler_capture_tests)
             add_dependencies(gkcore_model_sampler_capture_tests gkcore_model_sampler_fixtures)
+            add_executable(gkcore_model_mip_capture_tests tests/model_mip_capture_tests.cpp)
+            target_compile_features(gkcore_model_mip_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_mip_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_mip_capture_tests)
+            add_dependencies(gkcore_model_mip_capture_tests gkcore_model_mip_fixtures)
             add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
             set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
             add_test(NAME gkcore.render_capture
@@ -786,6 +814,12 @@ if(GKCORE_BUILD_RUNTIME)
                     --fixture-dir "${_gkcore_model_sampler_fixture_dir}"
                     --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-sampler-captures/$<CONFIG>)
             set_tests_properties(gkcore.model_sampler_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
+            add_test(NAME gkcore.model_mip_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_mip_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_mip_capture_tests>
+                    --fixture-dir "${_gkcore_model_mip_fixture_dir}"
+                    --output-dir ${CMAKE_CURRENT_BINARY_DIR}/model-mip-captures/$<CONFIG>)
+            set_tests_properties(gkcore.model_mip_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 300 RUN_SERIAL TRUE)
         endif()
     endif()
 
@@ -850,6 +884,9 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     if(TARGET gkcore_model_sampler_capture_tests)
         add_dependencies(gkcore_model_sampler_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_mip_capture_tests)
+        add_dependencies(gkcore_model_mip_capture_tests gkcore_stage_runtime_payload)
     endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets

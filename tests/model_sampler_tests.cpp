@@ -55,13 +55,13 @@ bool CheckFixture(const std::filesystem::path& directory, const char* filename, 
 }
 
 /**
- * 全36状態を重複なく固定sampler indexへ対応付けられるか調べる。
+ * 全108状態を重複なく固定sampler indexへ対応付けられるか調べる。
  */
 bool CheckSamplerIndexTable(gk::String& failure)
 {
-    // 36個のsampler状態が一度ずつ使われたかを記録する表。
-    bool used[36]{};
-    // U/Vのaddress、min、magの組み合わせを列挙するloop。
+    // 108個のsampler状態が一度ずつ使われたかを記録する表。
+    bool used[108]{};
+    // U/Vのaddress、min、mag、mipの組み合わせを列挙するloop。
     for (uint32_t addressU = 0; addressU < 3; ++addressU)
     {
         for (uint32_t addressV = 0; addressV < 3; ++addressV)
@@ -70,31 +70,41 @@ bool CheckSamplerIndexTable(gk::String& failure)
             {
                 for (uint32_t magFilter = 0; magFilter < 2; ++magFilter)
                 {
-                    // 今回の固定sampler状態。
-                    gk::detail::FTextureSampler sampler{};
-                    sampler.addressU = static_cast<gk::detail::ETextureAddressMode>(addressU);
-                    sampler.addressV = static_cast<gk::detail::ETextureAddressMode>(addressV);
-                    sampler.minFilter = static_cast<gk::detail::ETextureFilter>(minFilter);
-                    sampler.magFilter = static_cast<gk::detail::ETextureFilter>(magFilter);
-                    // helperから返る状態番号。
-                    uint32_t index = 0xffffffffu;
-                    if (!gk::detail::IsTextureSamplerValid(sampler) || !gk::detail::GetTextureSamplerIndex(sampler, index) || index >= 36 || used[index])
-                        return Fail(failure, "sampler states do not map uniquely into the 36-entry table");
-                    // コピーしたsamplerと全fieldが一致するか。
-                    const gk::detail::FTextureSampler copy = sampler;
-                    if (!gk::detail::AreTextureSamplersEqual(sampler, copy))
-                        return Fail(failure, "equal sampler values were reported as different");
-                    used[index] = true;
+                    for (uint32_t mipFilter = 0; mipFilter < 3; ++mipFilter)
+                    {
+                        // 今回の固定sampler状態。
+                        gk::detail::FTextureSampler sampler{};
+                        sampler.addressU = static_cast<gk::detail::ETextureAddressMode>(addressU);
+                        sampler.addressV = static_cast<gk::detail::ETextureAddressMode>(addressV);
+                        sampler.minFilter = static_cast<gk::detail::ETextureFilter>(minFilter);
+                        sampler.magFilter = static_cast<gk::detail::ETextureFilter>(magFilter);
+                        sampler.mipFilter = static_cast<gk::detail::ETextureMipFilter>(mipFilter);
+                        // helperから返る状態番号。
+                        uint32_t index = 0xffffffffu;
+                        if (!gk::detail::IsTextureSamplerValid(sampler) || !gk::detail::GetTextureSamplerIndex(sampler, index) || index >= 108 || used[index])
+                            return Fail(failure, "sampler states do not map uniquely into the 108-entry table");
+                        // コピーしたsamplerと全fieldが一致するか。
+                        const gk::detail::FTextureSampler copy = sampler;
+                        if (!gk::detail::AreTextureSamplersEqual(sampler, copy))
+                            return Fail(failure, "equal sampler values were reported as different");
+                        used[index] = true;
+                    }
                 }
             }
         }
     }
     // 全indexが一度ずつ埋まったか調べるloop。
-    for (uint32_t index = 0; index < 36; ++index)
+    for (uint32_t index = 0; index < 108; ++index)
     {
         if (!used[index])
             return Fail(failure, "sampler state table has an unused entry");
     }
+    // mip設定だけ異なるsamplerを同一扱いしないか確認する。
+    gk::detail::FTextureSampler noMip{};
+    gk::detail::FTextureSampler nearestMip = noMip;
+    nearestMip.mipFilter = gk::detail::ETextureMipFilter::Nearest;
+    if (gk::detail::AreTextureSamplersEqual(noMip, nearestMip))
+        return Fail(failure, "different mip filters were reported as equal");
     return true;
 }
 
@@ -122,6 +132,10 @@ bool CheckInvalidSamplerValues(gk::String& failure)
     sampler.magFilter = static_cast<gk::detail::ETextureFilter>(99);
     if (gk::detail::IsTextureSamplerValid(sampler) || gk::detail::GetTextureSamplerIndex(sampler, index) || index != 0x12345678u)
         return Fail(failure, "invalid magnification filter changed sampler output");
+    sampler = {};
+    sampler.mipFilter = static_cast<gk::detail::ETextureMipFilter>(99);
+    if (gk::detail::IsTextureSamplerValid(sampler) || gk::detail::GetTextureSamplerIndex(sampler, index) || index != 0x12345678u)
+        return Fail(failure, "invalid mip filter changed sampler output");
     return true;
 }
 
@@ -332,14 +346,16 @@ int main(int argc, char** argv)
     // glTF samplerの省略値とfilter fallbackを含む正常fixture。
     const gk::detail::FTextureSampler repeatLinear = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Linear };
     const gk::detail::FTextureSampler clampNearest = { gk::detail::ETextureAddressMode::ClampToEdge, gk::detail::ETextureAddressMode::ClampToEdge, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureFilter::Nearest };
-    const gk::detail::FTextureSampler repeatLinearNearestMag = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Nearest };
-    const gk::detail::FTextureSampler mirrorLinearNearestMag = { gk::detail::ETextureAddressMode::MirroredRepeat, gk::detail::ETextureAddressMode::MirroredRepeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Nearest };
-    const gk::detail::FTextureSampler repeatNearestMag = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureFilter::Linear };
+    const gk::detail::FTextureSampler mirrorLinearNearestMag = { gk::detail::ETextureAddressMode::MirroredRepeat, gk::detail::ETextureAddressMode::MirroredRepeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureMipFilter::Linear };
+    const gk::detail::FTextureSampler repeatNearestMipNearest = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureFilter::Linear, gk::detail::ETextureMipFilter::Nearest };
+    const gk::detail::FTextureSampler repeatNearestMipLinear = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureFilter::Linear, gk::detail::ETextureMipFilter::Linear };
+    const gk::detail::FTextureSampler repeatLinearNearestMagMipNearest = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Nearest, gk::detail::ETextureMipFilter::Nearest };
+    const gk::detail::FTextureSampler repeatLinearMipLinear = { gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureAddressMode::Repeat, gk::detail::ETextureFilter::Linear, gk::detail::ETextureFilter::Linear, gk::detail::ETextureMipFilter::Linear };
     const FSamplerExpectation positives[] = {
         { "sampler-defaults.glb", repeatLinear, repeatLinear, repeatLinear },
         { "sampler-explicit.glb", clampNearest, repeatLinear, mirrorLinearNearestMag },
-        { "sampler-min-fallbacks-a.glb", repeatNearestMag, repeatLinearNearestMag, repeatNearestMag },
-        { "sampler-min-fallbacks-b.glb", repeatLinear, repeatLinear, repeatLinear },
+        { "sampler-min-fallbacks-a.glb", repeatNearestMipNearest, repeatLinearNearestMagMipNearest, repeatNearestMipLinear },
+        { "sampler-min-fallbacks-b.glb", repeatLinearMipLinear, repeatLinearMipLinear, repeatLinearMipLinear },
     };
     for (const FSamplerExpectation& expected : positives)
     {

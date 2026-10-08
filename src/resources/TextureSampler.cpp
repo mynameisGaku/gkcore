@@ -7,7 +7,7 @@ namespace gk::detail
 {
 
 /**
- * address modeとfilter値が固定36状態の範囲内か調べる。
+ * address modeとfilter値が固定108状態の範囲内か調べる。
  */
 bool IsTextureSamplerValid(const FTextureSampler& sampler)
 {
@@ -19,7 +19,9 @@ bool IsTextureSamplerValid(const FTextureSampler& sampler)
     const uint32_t minFilter = static_cast<uint32_t>(sampler.minFilter);
     // mag filterの表内値。
     const uint32_t magFilter = static_cast<uint32_t>(sampler.magFilter);
-    return addressU < 3 && addressV < 3 && minFilter < 2 && magFilter < 2;
+    // mip filterの表内値。
+    const uint32_t mipFilter = static_cast<uint32_t>(sampler.mipFilter);
+    return addressU < 3 && addressV < 3 && minFilter < 2 && magFilter < 2 && mipFilter < 3;
 }
 
 /**
@@ -27,11 +29,11 @@ bool IsTextureSamplerValid(const FTextureSampler& sampler)
  */
 bool AreTextureSamplersEqual(const FTextureSampler& left, const FTextureSampler& right)
 {
-    return left.addressU == right.addressU && left.addressV == right.addressV && left.minFilter == right.minFilter && left.magFilter == right.magFilter;
+    return left.addressU == right.addressU && left.addressV == right.addressV && left.minFilter == right.minFilter && left.magFilter == right.magFilter && left.mipFilter == right.mipFilter;
 }
 
 /**
- * samplerを固定36状態の表indexへ変換し、無効値では出力を維持する。
+ * samplerを固定108状態の表indexへ変換し、無効値では出力を維持する。
  */
 bool GetTextureSamplerIndex(const FTextureSampler& sampler, uint32_t& index)
 {
@@ -45,8 +47,10 @@ bool GetTextureSamplerIndex(const FTextureSampler& sampler, uint32_t& index)
     const uint32_t minFilter = static_cast<uint32_t>(sampler.minFilter);
     // 表index計算に使うmag filter値。
     const uint32_t magFilter = static_cast<uint32_t>(sampler.magFilter);
-    // U、V、min、magの順で固定表の位置へ畳み込む。
-    index = (((addressU * 3 + addressV) * 2 + minFilter) * 2 + magFilter);
+    // 表index計算に使うmip filter値。
+    const uint32_t mipFilter = static_cast<uint32_t>(sampler.mipFilter);
+    // U、V、min、mag、mipの順で固定表の位置へ畳み込む。
+    index = ((((addressU * 3 + addressV) * 2 + minFilter) * 2 + magFilter) * 3 + mipFilter);
     return true;
 }
 

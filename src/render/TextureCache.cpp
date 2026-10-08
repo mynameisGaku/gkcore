@@ -71,6 +71,7 @@ void TextureCache::Shutdown()
         {
             if (entries_[i].image)
                 Release(&entries_[i].image->reference);
+            delete entries_[i].mipChain;
             entries_[i] = {};
         }
         renderer_ = nullptr;
@@ -129,11 +130,11 @@ void TextureCache::BeginFrame()
 /**
  * 画像pointerに対応するcache entryを検索する。
  */
-TextureCache::Entry* TextureCache::Find(detail::ImageResource* image, ETextureColorSpace colorSpace)
+TextureCache::Entry* TextureCache::Find(detail::ImageResource* image, ETextureColorSpace colorSpace, bool fullMipChain)
 {
     for (uint32_t i = 0; i < kCapacity; ++i)
     {
-        if (entries_[i].image == image && entries_[i].colorSpace == colorSpace)
+        if (entries_[i].image == image && entries_[i].colorSpace == colorSpace && entries_[i].fullMipChain == fullMipChain)
             return &entries_[i];
     }
     return nullptr;
@@ -263,7 +264,7 @@ bool TextureCache::CreateTexture(Entry& entry, detail::ImageResource* image, ETe
     textureDesc.mHeight = image->height;
     textureDesc.mDepth = 1;
     textureDesc.mArraySize = 1;
-    textureDesc.mMipLevels = 1;
+    textureDesc.mMipLevels = entry.mipLevels;
     textureDesc.mSampleCount = SAMPLE_COUNT_1;
     textureDesc.mFormat = colorSpace == ETextureColorSpace::Srgb ? TinyImageFormat_R8G8B8A8_SRGB : TinyImageFormat_R8G8B8A8_UNORM;
     textureDesc.mStartState = RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
@@ -309,13 +310,15 @@ bool TextureCache::CreateTexture(Entry& entry, detail::ImageResource* image, ETe
 /**
  * 画像をcacheへ登録し、未登録ならGPU転送を予約する。
  */
-bool TextureCache::Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace)
+bool TextureCache::Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace, bool fullMipChain)
 {
     if (!renderer_ || !queue_ || !image)
         return SetError(error, "The image texture cache is not ready");
     if (colorSpace != ETextureColorSpace::Srgb && colorSpace != ETextureColorSpace::Linear)
         return SetError(error, "The image texture color space is invalid");
-    Entry* entry = Find(image, colorSpace);
+    // 1x1画像はfull-chain指定でも単一mip資源として共有する。
+    fullMipChain = fullMipChain && (image->width > 1 || image->height > 1);
+    Entry* entry = Find(image, colorSpace, fullMipChain);
     if (entry)
     {
         entry->state.lastUsed = ++clock_;
@@ -326,10 +329,47 @@ bool TextureCache::Prepare(detail::ImageResource* image, String& error, ETexture
     const uint64_t pixelCount = static_cast<uint64_t>(image->width) * image->height;
     if (!image->width || !image->height || image->width > 16384 || image->height > 16384 || pixelCount > 64u * 1024u * 1024u || pixelCount * 4u > image->rgba.Count())
         return SetError(error, "The image pixel buffer does not match a supported texture size");
-    const uint64_t imageBytes = pixelCount * 4u;
+    // GPU cache byte budgetへ加える全mip段の論理byte数。
+    uint64_t imageBytes = pixelCount * 4u;
+    // texture記述へ渡すmip段数。
+    uint32_t mipLevels = 1;
+    if (fullMipChain)
+    {
+        // GPU確保前に上限と全段数を決める配置表。
+        Array<FTextureMipLevel> plannedLevels;
+        if (!PlanTextureMipChain(image->width, image->height, true, plannedLevels, imageBytes, error))
+            return false;
+        mipLevels = plannedLevels.Count();
+    }
     entry = AcquireSlot(imageBytes, error);
     if (!entry)
         return false;
+    // upload stagingへコピーするまで保持するCPU mip画像列。
+    FTextureMipChain* mipChain = nullptr;
+    if (fullMipChain)
+    {
+        try
+        {
+            mipChain = new FTextureMipChain;
+        }
+        catch (...)
+        {
+            return SetError(error, "Texture mip chain allocation failed");
+        }
+        if (!BuildTextureMipChain(*image, colorSpace, true, *mipChain, error))
+        {
+            delete mipChain;
+            return false;
+        }
+        if (mipChain->levels.Count() != mipLevels || mipChain->rgba.Count() != imageBytes)
+        {
+            delete mipChain;
+            return SetError(error, "Texture mip chain did not match its planned layout");
+        }
+    }
+    entry->mipLevels = mipLevels;
+    entry->fullMipChain = fullMipChain;
+    entry->mipChain = mipChain;
     if (!CreateTexture(*entry, image, colorSpace, error))
     {
         DestroyEntry(*entry);
@@ -365,12 +405,18 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     uint32_t samplerIndex = 0;
     if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex))
         return SetError(error, "The model texture sampler settings are invalid");
-    if (!Prepare(baseImage, error, ETextureColorSpace::Srgb) || !Prepare(metallicRoughnessImage, error, ETextureColorSpace::Linear) || !Prepare(resolvedNormalImage, error, ETextureColorSpace::Linear))
+    // 各画像役割で要求するmip段の有無。
+    const bool baseMipChain = resolvedBaseSampler.mipFilter != detail::ETextureMipFilter::None;
+    // MR画像用のmip段要求。
+    const bool metallicRoughnessMipChain = resolvedMetallicRoughnessSampler.mipFilter != detail::ETextureMipFilter::None;
+    // normal画像用のmip段要求。
+    const bool normalMipChain = resolvedNormalSampler.mipFilter != detail::ETextureMipFilter::None;
+    if (!Prepare(baseImage, error, ETextureColorSpace::Srgb, baseMipChain) || !Prepare(metallicRoughnessImage, error, ETextureColorSpace::Linear, metallicRoughnessMipChain) || !Prepare(resolvedNormalImage, error, ETextureColorSpace::Linear, normalMipChain))
         return false;
     // 色空間別に登録された基本色、金属度・粗さ、法線texture。
-    Entry* baseEntry = Find(baseImage, ETextureColorSpace::Srgb);
-    Entry* metallicRoughnessEntry = Find(metallicRoughnessImage, ETextureColorSpace::Linear);
-    Entry* normalEntry = Find(resolvedNormalImage, ETextureColorSpace::Linear);
+    Entry* baseEntry = Find(baseImage, ETextureColorSpace::Srgb, baseMipChain && (baseImage->width > 1 || baseImage->height > 1));
+    Entry* metallicRoughnessEntry = Find(metallicRoughnessImage, ETextureColorSpace::Linear, metallicRoughnessMipChain && (metallicRoughnessImage->width > 1 || metallicRoughnessImage->height > 1));
+    Entry* normalEntry = Find(resolvedNormalImage, ETextureColorSpace::Linear, normalMipChain && (resolvedNormalImage->width > 1 || resolvedNormalImage->height > 1));
     if (!baseEntry || !metallicRoughnessEntry || !normalEntry)
         return SetError(error, "The prepared model texture set is unavailable");
 
@@ -421,23 +467,23 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
  */
 bool TextureCache::GetOrCreateModelSampler(const detail::FTextureSampler& settings, Sampler*& sampler, String& error)
 {
-    // 36状態の固定table内でsampler値の位置を得る。
+    // 108状態の固定table内でsampler値の位置を得る。
     uint32_t samplerIndex = 0;
     if (!detail::GetTextureSamplerIndex(settings, samplerIndex))
         return SetError(error, "The model texture sampler settings are invalid");
     if (!modelSamplers_[samplerIndex])
     {
-        // glTFの一段texture向けfilterと座標範囲をGPU設定へ変換する。
+        // glTFのfilterと座標範囲をGPU設定へ変換する。
         SamplerDesc samplerDesc{};
         samplerDesc.mMinFilter = settings.minFilter == detail::ETextureFilter::Linear ? FILTER_LINEAR : FILTER_NEAREST;
         samplerDesc.mMagFilter = settings.magFilter == detail::ETextureFilter::Linear ? FILTER_LINEAR : FILTER_NEAREST;
-        samplerDesc.mMipMapMode = MIPMAP_MODE_NEAREST;
+        samplerDesc.mMipMapMode = settings.mipFilter == detail::ETextureMipFilter::Linear ? MIPMAP_MODE_LINEAR : MIPMAP_MODE_NEAREST;
         samplerDesc.mAddressU = settings.addressU == detail::ETextureAddressMode::ClampToEdge ? ADDRESS_MODE_CLAMP_TO_EDGE : settings.addressU == detail::ETextureAddressMode::Repeat ? ADDRESS_MODE_REPEAT : ADDRESS_MODE_MIRROR;
         samplerDesc.mAddressV = settings.addressV == detail::ETextureAddressMode::ClampToEdge ? ADDRESS_MODE_CLAMP_TO_EDGE : settings.addressV == detail::ETextureAddressMode::Repeat ? ADDRESS_MODE_REPEAT : ADDRESS_MODE_MIRROR;
         samplerDesc.mAddressW = ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerDesc.mMipLodBias = 0.0f;
         // 参照段数の上限を0にすると縮小filterが拡大filterとして選ばれるため、sampler側の範囲を開ける。
-        // 実際の画像は1段だけを持ち、画像側の有効範囲へ収まる。
+        // texture側のmip段数に合わせて縮小時の段選択を有効にする。
         samplerDesc.mSetLodRange = true;
         samplerDesc.mMinLod = 0.0f;
         samplerDesc.mMaxLod = FLT_MAX;
@@ -501,25 +547,35 @@ bool TextureCache::UploadPending(String& error)
         TextureUpdateDesc update{};
         update.pTexture = entry.texture;
         update.mBaseMipLevel = 0;
-        update.mMipLevels = 1;
+        update.mMipLevels = entry.mipLevels;
         update.mBaseArrayLayer = 0;
         update.mLayerCount = 1;
         update.mCurrentState = RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
         update.pCmd = nullptr;
         beginUpdateResource(&update);
-        TextureSubresourceUpdate subresource = update.getSubresourceUpdateDesc(0, 0);
-        const uint32_t sourceRowBytes = entry.image->width * 4u;
-        if (subresource.mSrcRowStride != sourceRowBytes || !subresource.pMappedData || subresource.mDstRowStride < sourceRowBytes || subresource.mRowCount != entry.image->height)
+        for (uint32_t mip = 0; mip < entry.mipLevels; ++mip)
         {
-            endUpdateResource(&update);
-            uploadSubmissionPending_ = true;
-            return SetError(error, "The Forge returned an incompatible image upload layout");
-        }
-        for (uint32_t row = 0; row < entry.image->height; ++row)
-        {
-            memcpy(subresource.pMappedData + row * subresource.mDstRowStride, entry.image->rgba.Data() + row * sourceRowBytes, sourceRowBytes);
+            // source mipの寸法と連続byte列内の位置。
+            const FTextureMipLevel* level = entry.mipChain ? &entry.mipChain->levels.At(mip) : nullptr;
+            const uint32_t sourceWidth = level ? level->width : entry.image->width;
+            const uint32_t sourceHeight = level ? level->height : entry.image->height;
+            const uint8_t* sourcePixels = level ? entry.mipChain->rgba.Data() + level->offset : entry.image->rgba.Data();
+            const uint32_t sourceRowBytes = sourceWidth * 4u;
+            TextureSubresourceUpdate subresource = update.getSubresourceUpdateDesc(mip, 0);
+            if (subresource.mSrcRowStride != sourceRowBytes || !subresource.pMappedData || subresource.mDstRowStride < sourceRowBytes || subresource.mRowCount != sourceHeight)
+            {
+                endUpdateResource(&update);
+                uploadSubmissionPending_ = true;
+                return SetError(error, "The Forge returned an incompatible image mip upload layout");
+            }
+            for (uint32_t row = 0; row < sourceHeight; ++row)
+            {
+                memcpy(subresource.pMappedData + row * subresource.mDstRowStride, sourcePixels + row * sourceRowBytes, sourceRowBytes);
+            }
         }
         endUpdateResource(&update);
+        delete entry.mipChain;
+        entry.mipChain = nullptr;
         entry.uploadPending = false;
         uploadSubmissionPending_ = true;
     }
@@ -579,7 +635,7 @@ bool TextureCache::Bind(Cmd* command, detail::ImageResource* image, String& erro
     const Entry* entry = nullptr;
     for (uint32_t i = 0; i < kCapacity; ++i)
     {
-        if (entries_[i].image == image && entries_[i].colorSpace == ETextureColorSpace::Srgb)
+        if (entries_[i].image == image && entries_[i].colorSpace == ETextureColorSpace::Srgb && !entries_[i].fullMipChain)
         {
             entry = &entries_[i];
             break;
@@ -643,6 +699,7 @@ void TextureCache::DestroyEntry(Entry& entry)
         cachedBytes_ -= entry.byteSize;
         Release(&entry.image->reference);
     }
+    delete entry.mipChain;
     entry = {};
 }
 

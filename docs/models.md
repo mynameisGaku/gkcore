@@ -131,7 +131,7 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_material -
 
 samplerまたはwrap指定を省略したGLBは、両方向ともREPEATになります。たとえば `(-0.25, 1.75)` はREPEATでは `(0.75, 0.75)`、MIRRORED_REPEATでは `(0.25, 0.25)` を読みます。横と縦へ別々の設定も使えます。
 
-`magFilter` は拡大、`minFilter` は縮小の補間方法です。NEAREST（9728）は近い画素をそのまま読み、LINEAR（9729）は隣接画素を混ぜます。未指定時はLINEARを使います。現在の画像は1段だけで、ミップマップ（縮小画像を段階的に用意したもの）は生成しません。ミップ指定のminFilterはNEAREST_MIPMAP_NEAREST / NEAREST_MIPMAP_LINEARをNEARESTへ、LINEAR_MIPMAP_NEAREST / LINEAR_MIPMAP_LINEARをLINEARへ置き換えます。これは [glTFのミップ未生成時の推奨](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_samplers) に従います。
+`magFilter` は拡大、`minFilter` は縮小の補間方法です。NEAREST（9728）は近い画素をそのまま読み、LINEAR（9729）は隣接画素を混ぜます。未指定時はLINEARを使います。ミップマップ（縮小画像を段階的に用意したもの）を指定するminFilterでは、元画像から1×1までの縮小画像を生成します。ミップを指定しない9728/9729と省略値は、従来どおり元画像だけを使います。
 
 同じ画像でも、samplerが違う材質は別々に描きます。画像のGPU資源は画像と色形式で共有し、samplerが違うためにPNGを複製することはありません。公開の独自pixel shaderを選んだモデル、FBX/OBJ、2D画像は従来の固定samplerを使います。独自shaderの入力形式は変更していません。
 
@@ -149,6 +149,36 @@ sampler検査はRelease/Debugでbyte一致した34画像を取得し、wrapの8�
 ctest --test-dir build/runtime-windows -C Release -R gkcore.model_sampler --output-on-failure
 ctest --test-dir build/runtime-windows-debug -C Debug -R gkcore.model_sampler --output-on-failure
 ```
+
+## GLBのミップマップ
+
+minFilterの指定に応じて、画素間の補間と縮小段の選択を別々に適用します。
+
+| minFilter | 値 | 画素間 | 縮小段の間 |
+|---|---|---|---|
+| NEAREST_MIPMAP_NEAREST | 9984 | 近い画素 | 近い段 |
+| LINEAR_MIPMAP_NEAREST | 9985 | 線形補間 | 近い段 |
+| NEAREST_MIPMAP_LINEAR | 9986 | 近い画素 | 線形補間 |
+| LINEAR_MIPMAP_LINEAR | 9987 | 線形補間 | 線形補間 |
+
+基本色はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
+
+同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色のsRGBと、MR/法線の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
+
+![元の画像だけを使った縮小描画](images/model-mip-none.png)
+
+![段間を線形補間したミップの縮小描画](images/model-mip-linear.png)
+
+![左がミップなし、右がミップありの同一画像](images/model-mip-mixed.png)
+
+GPU検査ではRelease/Debugでbyte一致した28画像を取得し、4 filterの中心画素、基本色と線形用途を共有する画像、MR・法線、5×3/1×7の端画素、ミップ有無を同時に描くモデルの再読込を確認します。描画条件と結果は[描画検証](render-validation.md)を参照してください。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R "gkcore.texture_mip_chain|gkcore.model_mip_capture" --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.texture_mip_chain|gkcore.model_mip_capture" --output-on-failure
+```
+
+元のsampler定義は [glTF Samplers](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_samplers) を参照してください。
 
 ## 同じ画像を使う材質
 
