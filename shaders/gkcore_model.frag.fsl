@@ -27,6 +27,10 @@ STRUCT(VSOutput)
     DATA(float2, NormalUV, TEXCOORD7);
     // 材質の有効値とXY倍率は補間しない。
     DATA(FLAT(float2), NormalParameters, TEXCOORD8);
+    // 自己発光画像の座標。
+    DATA(float2, EmissiveUV, TEXCOORD9);
+    // RGB係数とHDR強度は材質ごとに固定して渡す。
+    DATA(FLAT(float4), EmissiveFactorStrength, TEXCOORD10);
 };
 
 
@@ -51,7 +55,7 @@ float3 SafeNormalize(float3 value, float3 fallbackValue)
 }
 
 /**
- * 線形基本色と金属度・粗さを使い、単一方向光の反射を計算する。
+ * 線形基本色と金属度・粗さを使い、反射光と自己発光を計算する。
  */
 ROOT_SIGNATURE(DefaultRootSignature)
 float4 PS_MAIN(VSOutput input) : SV_Target0
@@ -132,8 +136,12 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
         max(gModelLighting.DirectionIntensity.w, 0.0) * nDotL;
     // 基本色にambient強度を掛けた環境光。
     const float3 ambient = baseColor * max(gModelLighting.Ambient.x, 0.0);
+    // sRGB画像を線形RGBで読み、画像alphaは自己発光に使わない。
+    const float3 emissiveSample = SampleTex2D(gEmissiveTexture, gEmissiveSampler, input.EmissiveUV).rgb;
+    // 係数と強度を分けて掛け、反射光へ自己発光を加える。
+    const float3 emission = (emissiveSample * input.EmissiveFactorStrength.rgb) * input.EmissiveFactorStrength.w;
     // HDR render targetへ書き込む有限範囲の最終照明値。
-    const float3 radiance = clamp(direct + ambient, 0.0, 65504.0);
+    const float3 radiance = clamp(direct + ambient + emission, 0.0, 65504.0);
     // OPAQUEと、MASKで残した画素は不透明として出力する。
     RETURN(float4(radiance, 1.0));
 }

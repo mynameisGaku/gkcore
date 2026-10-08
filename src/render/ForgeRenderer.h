@@ -73,6 +73,10 @@ struct RenderRun
     detail::FTextureSampler metallicRoughnessSampler{};
     // 法線画像の繰り返しと補間方法。
     detail::FTextureSampler normalSampler{};
+    // 内蔵モデルで使う自己発光画像。
+    detail::ImageResource* emissiveImage = nullptr;
+    // 自己発光画像の繰り返しと補間方法。
+    detail::FTextureSampler emissiveSampler{};
 };
 
 /**

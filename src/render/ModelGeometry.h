@@ -33,8 +33,12 @@ struct ModelRenderVertex
     float normalUv[2]{};
     // 法線マップの有効値（0または1）と倍率。
     float normalParameters[2]{};
+    // 自己発光画像を読む座標。
+    float emissiveUv[2]{};
+    // 自己発光RGB係数と強度。
+    float emissiveFactorStrength[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
 };
-static_assert(sizeof(ModelRenderVertex) == 120, "lit model vertex ABI must remain 120 bytes");
+static_assert(sizeof(ModelRenderVertex) == 144, "lit model vertex ABI must remain 144 bytes");
 
 /**
  * 検証済み材質範囲を照明用頂点へ展開する。失敗時は出力配列を保つ。

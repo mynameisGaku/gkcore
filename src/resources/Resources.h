@@ -47,6 +47,8 @@ struct ModelVertex
     float normalUv[2]{};
     // 画像の横方向の接線と、縦方向を決める符号。
     float tangent[4]{};
+    // 自己発光画像に使う独立した画像座標。
+    float emissiveUv[2]{};
 };
 
 /**
@@ -78,6 +80,14 @@ struct ModelMaterial
     FTextureSampler metallicRoughnessSampler{};
     // 法線マップ画像の座標処理と補間方法。
     FTextureSampler normalSampler{};
+    // 線形自己発光色のRGB係数。
+    float emissiveFactor[3]{};
+    // 自己発光係数へ掛ける非負の強度。
+    float emissiveStrength = 1.0f;
+    // 自己発光画像配列のindex。未使用は-1。
+    int32_t emissiveTextureIndex = -1;
+    // 自己発光画像の座標処理と補間方法。
+    FTextureSampler emissiveSampler{};
 };
 
 /**

@@ -45,6 +45,12 @@ struct ModelPartPlan
     detail::FTextureSampler metallicRoughnessSampler{};
     // 法線マップ画像の座標処理と補間方法。
     detail::FTextureSampler normalSampler{};
+    // 線形自己発光色のRGB係数。
+    float emissiveFactorStrength[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    // 自己発光画像配列のindex。未使用は-1。
+    int32_t emissiveTextureIndex = -1;
+    // 自己発光画像の座標処理と補間方法。
+    detail::FTextureSampler emissiveSampler{};
 };
 
 /**

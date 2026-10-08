@@ -87,7 +87,7 @@ bool Near(float a, float b, float tolerance = 0.0002f)
 bool TestVertexContractAndBasicLightingPayload()
 {
     static_assert(sizeof(Vertex) == 40, "legacy vertex ABI remains unchanged");
-    static_assert(sizeof(ModelRenderVertex) == 120, "lit model vertex ABI is 120 bytes");
+    static_assert(sizeof(ModelRenderVertex) == 144, "lit model vertex ABI is 144 bytes");
     const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
     const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
     detail::ModelResource model{};
@@ -113,6 +113,8 @@ bool TestVertexContractAndBasicLightingPayload()
         return false;
     if (!Check(Near(vertex.metallicRoughness[0], 0.35f) && Near(vertex.metallicRoughness[1], 0.65f), "metallic and roughness are carried to the vertex"))
         return false;
+    if (!Check(Near(vertex.emissiveFactorStrength[0], 0.0f) && Near(vertex.emissiveFactorStrength[1], 0.0f) && Near(vertex.emissiveFactorStrength[2], 0.0f) && Near(vertex.emissiveFactorStrength[3], 1.0f) && Near(vertex.emissiveUv[0], 0.0f) && Near(vertex.emissiveUv[1], 0.0f), "models without emission keep black zero-UV emission payload"))
+        return false;
     if (!Check(Near(vertex.worldTangent[0], 0.0f) && Near(vertex.worldTangent[1], 0.0f) && Near(vertex.worldTangent[2], 0.0f) && Near(vertex.worldTangent[3], 0.0f) && Near(vertex.normalUv[0], 0.0f) && Near(vertex.normalUv[1], 0.0f) && Near(vertex.normalParameters[0], 0.0f) && Near(vertex.normalParameters[1], 0.0f), "models without a normal map keep the legacy lighting payload"))
         return false;
     const float expectedUv[3][2] = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
@@ -124,6 +126,65 @@ bool TestVertexContractAndBasicLightingPayload()
             return false;
     }
     return true;
+}
+
+/**
+ * 自己発光係数と独立UVを照明頂点へ保ち、失敗時は既存出力を残す。
+ */
+bool TestEmissivePayloadAndClipping()
+{
+    const Vec3 points[3] = { { -1, 0, -4.95f }, { 1, 0, 0 }, { 0, 1, 0 } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource emissiveImage{};
+    model.textures.Append(&emissiveImage);
+    // 基本色UVとは異なる線形関係を持つ自己発光座標。
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 現在頂点に設定する独立UV。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.emissiveUv[0] = 2.0f + 3.0f * vertex.uv[0] - 2.0f * vertex.uv[1];
+        vertex.emissiveUv[1] = -1.0f + vertex.uv[0] + 4.0f * vertex.uv[1];
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    part.emissiveTextureIndex = 0;
+    part.emissiveFactorStrength[0] = 0.25f;
+    part.emissiveFactorStrength[1] = 0.5f;
+    part.emissiveFactorStrength[2] = 0.75f;
+    part.emissiveFactorStrength[3] = 2.0f;
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "valid emissive payload survives near clipping"))
+        return false;
+    if (!Check(vertices.Count() == 6, "emissive near clipping emits the clipped quad"))
+        return false;
+    // 交点を含む全出力頂点で独立UVと未乗算係数を検査するloop。
+    for (uint32_t index = 0; index < vertices.Count(); ++index)
+    {
+        // clipping後に対応するGPU頂点。
+        const ModelRenderVertex& vertex = vertices.At(index);
+        const float u = vertex.surface.uv[0];
+        const float v = vertex.surface.uv[1];
+        if (!Check(Near(vertex.emissiveUv[0], 2.0f + 3.0f * u - 2.0f * v) && Near(vertex.emissiveUv[1], -1.0f + u + 4.0f * v), "emissive UV uses the same clip-edge interpolation ratio"))
+            return false;
+        if (!Check(Near(vertex.emissiveFactorStrength[0], 0.25f) && Near(vertex.emissiveFactorStrength[1], 0.5f) && Near(vertex.emissiveFactorStrength[2], 0.75f) && Near(vertex.emissiveFactorStrength[3], 2.0f), "emissive factor and HDR strength remain separate raw values"))
+            return false;
+    }
+
+    // 失敗時に維持する出力頂点sentinel。
+    vertices.Clear();
+    ModelRenderVertex sentinel{};
+    sentinel.surface.position[0] = 91.0f;
+    if (!vertices.Append(sentinel))
+        return Check(false, "emissive geometry sentinel allocation failed");
+    model.vertices.At(0).emissiveUv[0] = std::numeric_limits<float>::quiet_NaN();
+    if (!Check(!AppendLitModelPart(frame, draw, part, vertices, 32, error), "non-finite emissive UV is rejected"))
+        return false;
+    return Check(vertices.Count() == 1 && Near(vertices.At(0).surface.position[0], 91.0f) && !error.Empty(), "invalid emissive input preserves prior output");
 }
 
 bool TestInverseScaleRotationAndNegativeScale()
@@ -571,5 +632,5 @@ bool TestCapacityAndAllocationFailuresPreserveOutput()
 
 int main()
 {
-    return TestVertexContractAndBasicLightingPayload() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
+    return TestVertexContractAndBasicLightingPayload() && TestEmissivePayloadAndClipping() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
 }

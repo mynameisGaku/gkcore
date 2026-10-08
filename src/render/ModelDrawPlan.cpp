@@ -48,6 +48,14 @@ bool IsFiniteNormalScale(float value)
 }
 
 /**
+ * 自己発光強度が有限かつ0以上であることを調べる。
+ */
+bool IsEmissiveStrength(float value)
+{
+    return value == value && value >= 0.0f && value <= FLT_MAX;
+}
+
+/**
  * 描画計画へ渡す材質の係数とalpha cutoffを検証する。
  */
 bool IsMaterialValid(const detail::ModelMaterial& material)
@@ -58,7 +66,13 @@ bool IsMaterialValid(const detail::ModelMaterial& material)
         if (!IsUnitFactor(material.baseColorFactor[i]))
             return false;
     }
-    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler);
+    // 自己発光の色は線形RGBの0〜1に限る。
+    for (uint32_t i = 0; i < 3; ++i)
+    {
+        if (!IsUnitFactor(material.emissiveFactor[i]))
+            return false;
+    }
+    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && IsEmissiveStrength(material.emissiveStrength) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler) && detail::IsTextureSamplerValid(material.emissiveSampler);
 }
 
 // namespace
@@ -103,6 +117,7 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
         part.textureIndex = -1;
         part.metallicRoughnessTextureIndex = -1;
         part.normalTextureIndex = -1;
+        part.emissiveTextureIndex = -1;
         part.baseColorFactor[0] = 1.0f;
         part.baseColorFactor[1] = 1.0f;
         part.baseColorFactor[2] = 1.0f;
@@ -130,6 +145,11 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
             part.baseColorSampler = material.baseColorSampler;
             part.metallicRoughnessSampler = material.metallicRoughnessSampler;
             part.normalSampler = material.normalSampler;
+            // 色の係数とHDR強度を分けて保持する。
+            for (uint32_t component = 0; component < 3; ++component)
+                part.emissiveFactorStrength[component] = material.emissiveFactor[component];
+            part.emissiveFactorStrength[3] = material.emissiveStrength;
+            part.emissiveSampler = material.emissiveSampler;
             if (material.metallicRoughnessTextureIndex != -1)
             {
                 if (material.metallicRoughnessTextureIndex < 0 || static_cast<uint32_t>(material.metallicRoughnessTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.metallicRoughnessTextureIndex)))
@@ -147,6 +167,12 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
                 if (material.normalTextureIndex < 0 || static_cast<uint32_t>(material.normalTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.normalTextureIndex)))
                     return Fail(error, "The model material normal texture index is invalid");
                 part.normalTextureIndex = material.normalTextureIndex;
+            }
+            if (material.emissiveTextureIndex != -1)
+            {
+                if (material.emissiveTextureIndex < 0 || static_cast<uint32_t>(material.emissiveTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.emissiveTextureIndex)))
+                    return Fail(error, "The model material emissive texture index is invalid");
+                part.emissiveTextureIndex = material.emissiveTextureIndex;
             }
         }
         if (!candidate.parts.Append(part))

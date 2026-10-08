@@ -80,7 +80,7 @@ flowchart LR
 
 開発には Windows 10/11 x64、Python 3.9 以降、Windows SDK 10.0.22621.0、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が必要です。CMake の要件は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降です。`PRE_SETUP.bat` は The Forge と DXC 1.8.2405 の SHA-256 を確かめ、依存物と gkcore の FSL シェーダーをビルドした後、ライブラリ、サンプル、テストをビルドします。Runtime から STL を除く方針で、テストや開発ツールは別に保ちます。[開発ガイド](docs/development.md) と [機能サポート状況](docs/ROADMAP.md) を参照してください。
 
-Windows 11 Pro x64、Visual Studio 2026/v142、Windows SDK 22621、CMake 4.3.1、RTX 4070 SUPERでRelease Runtimeと`PRE_SETUP.bat --gpu-check`を実行し、最新のRelease/Debug確認ではCTestがそれぞれ49/49成功しました。GPU画素検査では基本描画・モデル照明と、6フレーム中の効果切り替え・UIの色維持を確認し、mixed_sceneとmodel_lightingを目視しました。これは全面的な画質判定ではありません。CPU-only Debug/Release CTestと、両Runtime構成のSDK consumer smokeも確認済みです。Debugを使う場合は`PRE_SETUP.bat --configuration Debug --gpu-check`を実行します。詳細と未確認事項は[GPU描画検証](docs/render-validation.md)、[機能とサポート状況](docs/ROADMAP.md)、[TDD 検証ログ](docs/TDD_LOG.md)を参照してください。
+Windows 11 Pro x64、Visual Studio 2026/v142、Windows SDK 22621、CMake 4.3.1、RTX 4070 SUPERでRelease Runtimeと`PRE_SETUP.bat --gpu-check`を実行し、最新のRelease/Debug確認ではCTestがそれぞれ51/51成功しました。GPU画素検査では基本描画・モデル照明と、6フレーム中の効果切り替え・UIの色維持を確認し、mixed_sceneとmodel_lightingを目視しました。これは全面的な画質判定ではありません。CPU-only Debug/Release CTestと、両Runtime構成のSDK consumer smokeも確認済みです。Debugを使う場合は`PRE_SETUP.bat --configuration Debug --gpu-check`を実行します。詳細と未確認事項は[GPU描画検証](docs/render-validation.md)、[機能とサポート状況](docs/ROADMAP.md)、[TDD 検証ログ](docs/TDD_LOG.md)を参照してください。
 
 ## 詳細
 

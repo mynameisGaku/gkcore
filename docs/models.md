@@ -76,7 +76,7 @@ int main()
 
 GLB 2.0 の `baseColorTexture` は、`texCoord` が示す `TEXCOORD_n` の UV（画像上のどこを読むかを示す座標）で画像を参照します。`texCoord` を省略した場合は `TEXCOORD_0`、明示した場合は指定番号のUVセットを使います。たとえば `texCoord: 1` は `TEXCOORD_1` を選びます。詳細は [glTF 2.0仕様の Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord) を参照してください。
 
-`baseColorTexture`、`metallicRoughnessTexture`、`normalTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は3種類に共通です。
+`baseColorTexture`、`metallicRoughnessTexture`、`normalTexture`、`emissiveTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は4種類に共通です。
 
 `texCoord` の省略と明示値0、1、2、および normalized U16 / U8 のUV1を使う6種類のGLBを、Release・Debug構成でGPU画像検査しました。UV0とUV1で模様の左右が切り替わることを確認しています。サポート対象の座標がモデルにない場合、負の番号、対応しない成分型、位置とUVの頂点数不一致は読み込み時に診断付きで拒否します。座標の成分は32bitの浮動小数、または0から1へ正規化する符号なし8bit・16bit整数を使えます。UV sparse accessor（座標の一部だけを差分として格納する形式）と、画像に追加の座標変換を加える `KHR_texture_transform` は未対応です。仕様の拡張内容は [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md) を参照してください。
 
@@ -161,9 +161,9 @@ minFilterの指定に応じて、画素間の補間と縮小段の選択を別�
 | NEAREST_MIPMAP_LINEAR | 9986 | 近い画素 | 線形補間 |
 | LINEAR_MIPMAP_LINEAR | 9987 | 線形補間 | 線形補間 |
 
-基本色はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
+基本色と自己発光画像はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
 
-同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色のsRGBと、MR/法線の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
+同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色・自己発光のsRGBと、MR/法線の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
 
 ![元の画像だけを使った縮小描画](images/model-mip-none.png)
 
@@ -179,6 +179,39 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.texture_mip_cha
 ```
 
 元のsampler定義は [glTF Samplers](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_samplers) を参照してください。
+
+## GLBの自己発光
+
+`emissiveFactor` は線形RGBの係数です。各成分は0〜1、省略時は黒になります。`emissiveTexture` のRGBはsRGBから線形色へ直して係数を掛け、Aは使いません。画像がなければ白を掛けます。`KHR_materials_emissive_strength` の `emissiveStrength` は0以上の有限値で、省略時は1です。1を越える指定もHDR値として保持します。
+
+```json
+{
+  "emissiveFactor": [1.0, 0.3, 0.1],
+  "emissiveTexture": { "index": 0, "texCoord": 1 },
+  "extensions": {
+    "KHR_materials_emissive_strength": { "emissiveStrength": 4.0 }
+  }
+}
+```
+
+拡張を使うGLBではトップレベルの `extensionsUsed` に `KHR_materials_emissive_strength` を指定します。画像は埋め込みPNGを使い、独立したUV・sampler・ミップ指定を保持します。UV形式と未対応の座標変換は他の材質画像と共通です。同じimage・色形式・ミップ構成なら基本色画像とGPU資源を共有します。
+
+自己発光を反射光へ加え、SceneのHDR描画から露出・トーンマップ・Bloomへ渡します。環境光と方向光が0でも発光色が表示されます。Sceneに描けばBloomで周囲へ光が広がり、UIに描けばポスト処理後に合成されます。周囲のモデルを照らす光源や、間接光を生成する機能ではありません。MASKで捨てた画素は発光しません。
+
+内蔵モデルshaderの機能です。独自pixel shaderを指定すると既存の非照明経路を使い、自己発光入力は渡されません。発光係数・強度は材質の指定を使います。
+
+![自己発光画像を使ったモデル](images/model-emissive-texture.png)
+
+![HDRの自己発光をBloomで広げた描画](images/model-emissive-bloom.png)
+
+実機で取得した45画像はRelease/Debug間でbyte単位に一致しました。照明0、HDR/Bloom、材質の設定差、MASK、Present前のhandle削除後の描画を検査しています。検査方法と結果は[描画検証](render-validation.md)を参照してください。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R "gkcore.model_emissive|gkcore.model_geometry" --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.model_emissive|gkcore.model_geometry" --output-on-failure
+```
+
+値と画像の定義は[glTF材質仕様](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_emissivefactor)、強度は[KHR_materials_emissive_strength](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_emissive_strength/README.md)を参照してください。
 
 ## 同じ画像を使う材質
 

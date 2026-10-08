@@ -42,9 +42,10 @@ class TextureCache
      */
     bool Prepare(detail::ImageResource* image, String& error, ETextureColorSpace colorSpace = ETextureColorSpace::Srgb, bool fullMipChain = false);
     /**
-     * model画像とsamplerを用意する。法線省略時はMR画像、sampler省略時はClampLinearを使い、不正指定や容量超過で失敗する。
+     * model画像とsamplerを用意する。法線省略時はMR画像、自己発光画像省略時は基本色画像を使い、
+     * sampler省略時は端を固定し、線形補間を使い、mipを使わない。不正指定や容量超過では失敗する。
      */
-    bool PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr);
+    bool PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissiveSampler = nullptr);
     /**
      * The Forgeのresource loaderへ画像転送を記録する。
      */
@@ -77,9 +78,10 @@ class TextureCache
      */
     bool Bind(Cmd* command, detail::ImageResource* image, String& error) const;
     /**
-     * frame用に準備済みのモデルdescriptorをbindする。sampler省略時はPrepareModelと同じ値を使い、未準備や不正指定で失敗する。
+     * frame用に準備済みのモデルdescriptorをbindする。画像・sampler省略値はPrepareModelと揃え、
+     * 未準備または不正指定では失敗する。
      */
-    bool BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr) const;
+    bool BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* metallicRoughnessSampler = nullptr, const detail::FTextureSampler* normalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissiveSampler = nullptr) const;
 
   private:
     /**
@@ -109,23 +111,23 @@ class TextureCache
     };
 
     /**
-     * 3枚のmodel textureを参照するdescriptorとframe使用状態を記録する。
+     * 4枚のmodel textureを参照するdescriptorとframe使用状態を記録する。
      */
     struct ModelEntry
     {
         // LRU順と現frameの使用状態。
         TextureCacheSlotState state;
-        // sRGB基本色画像のtriple key。
+        // sRGB基本色画像のdescriptor key。
         detail::ImageResource* baseImage;
-        // linear金属度・粗さ画像のtriple key。
+        // linear金属度・粗さ画像のdescriptor key。
         detail::ImageResource* metallicRoughnessImage;
         // 物理cacheが所有するsRGB texture。
         Texture* baseTexture;
         // 物理cacheが所有するlinear texture。
         Texture* metallicRoughnessTexture;
-        // model shader用の3画像descriptor。
+        // model shader用の4画像descriptor。
         DescriptorSet* descriptorSet;
-        // linear法線画像のtriple key。未指定時はMR画像。
+        // linear法線画像のdescriptor key。未指定時はMR画像。
         detail::ImageResource* normalImage;
         // 物理cacheが所有するlinear texture。
         Texture* normalTexture;
@@ -137,6 +139,12 @@ class TextureCache
         Sampler* baseSamplerResource;
         Sampler* metallicRoughnessSamplerResource;
         Sampler* normalSamplerResource;
+        // sRGB自己発光画像のkeyと借用texture。
+        detail::ImageResource* emissiveImage;
+        Texture* emissiveTexture;
+        // 自己発光roleのsampler値とcache所有資源。
+        detail::FTextureSampler emissiveSampler;
+        Sampler* emissiveSamplerResource;
     };
 
     static constexpr uint32_t kCapacity = 128;
@@ -148,15 +156,15 @@ class TextureCache
      */
     Entry* Find(detail::ImageResource* image, ETextureColorSpace colorSpace, bool fullMipChain);
     /**
-     * 指定画像とsampler値のmodel descriptor記録があれば返す。
+     * 4画像とsampler値が一致するmodel descriptor記録があれば返す。
      */
-    ModelEntry* FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler);
+    ModelEntry* FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, detail::ImageResource* emissiveImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler, const detail::FTextureSampler& emissiveSampler);
     /**
      * entry数とbyte上限を守ってslotを確保し、安全な記録だけを追い出す。
      */
     Entry* AcquireSlot(uint64_t imageBytes, String& error);
     /**
-     * model descriptor数を守ってslotを確保し、未使用tripleだけを追い出す。
+     * model descriptor数を守ってslotを確保し、未使用recordだけを追い出す。
      */
     ModelEntry* AcquireModelSlot(String& error);
     /**
@@ -166,7 +174,7 @@ class TextureCache
     /**
      * 準備済みtextureとrole別samplerをmodel shader用descriptorへ登録する。
      */
-    bool CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, Entry& normalEntry, String& error);
+    bool CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, Entry& normalEntry, Entry& emissiveEntry, String& error);
     /**
      * sampler設定に対応する固定cache資源を作るか返す。
      */
@@ -180,7 +188,7 @@ class TextureCache
      */
     void DestroyEntry(Entry& entry);
     /**
-     * model descriptorを解放してtriple記録を初期化する。
+     * model descriptorを解放してrecordを初期化する。
      */
     void DestroyModelEntry(ModelEntry& entry);
 

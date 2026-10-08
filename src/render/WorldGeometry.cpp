@@ -45,6 +45,8 @@ struct ClipVertex
     double metallicRoughnessUv[2]{};
     // 法線画像の座標。
     double normalUv[2]{};
+    // 自己発光画像の座標。
+    double emissiveUv[2]{};
     // clipping中に補間するワールド空間の接線とhandedness。
     double worldTangent[4]{};
 };
@@ -71,6 +73,7 @@ ClipVertex IntersectClipEdge(const ClipVertex& a, const ClipVertex& b, double pl
     {
         vertex.metallicRoughnessUv[coordinate] = a.metallicRoughnessUv[coordinate] + (b.metallicRoughnessUv[coordinate] - a.metallicRoughnessUv[coordinate]) * t;
         vertex.normalUv[coordinate] = a.normalUv[coordinate] + (b.normalUv[coordinate] - a.normalUv[coordinate]) * t;
+        vertex.emissiveUv[coordinate] = a.emissiveUv[coordinate] + (b.emissiveUv[coordinate] - a.emissiveUv[coordinate]) * t;
     }
     // 法線画像用の接線基底も同じ交点比率で補間する。
     for (uint32_t component = 0; component < 4; ++component)
@@ -594,6 +597,12 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
             }
             if (normalMapping)
                 first[i].normalUv[coordinate] = source.normalUv[coordinate];
+            if (!isfinite(source.emissiveUv[coordinate]))
+            {
+                error.Assign("The model contains non-finite emissive texture coordinates");
+                return false;
+            }
+            first[i].emissiveUv[coordinate] = source.emissiveUv[coordinate];
         }
     }
 
@@ -634,6 +643,8 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
                 return false;
             }
             if (normalMapping && !StoreFloat(polygonA[i].normalUv[coordinate], projectedPolygon[i].normalUv[coordinate], error))
+                return false;
+            if (!StoreFloat(polygonA[i].emissiveUv[coordinate], projectedPolygon[i].emissiveUv[coordinate], error))
                 return false;
         }
         if (normalMapping)

@@ -913,3 +913,34 @@ ctest --test-dir build/dev-windows -C Release --output-on-failure
 Debugも全49/49成功（238.05秒、ミップGPU35.13秒、SDK consumer package3.88秒）しました。ログは `model-mip-debug-final-{build,tests}.log` です。新規28画像と既存sampler34・normal/画像共有38画像はすべてRelease/Debug間でbyte単位一致しました。PNGは最終RGBをそのまま保存し、round-tripで一致を確認しています。14変更C++のfixed clang-format12とBOM/CRLF、文書リンク、最終機能要素hashも確認しました。公開SDK内容の追加依存やshader ABI変更はありません。
 
 ミップなし/ありの有効GPU資源は分けますが、MRとnormalの同じ線形ミップ構成は共有します。1×1は単一段へ正規化します。生成時CPU一時領域やstaging行整列はcache byte budgetへ含めず、GPU配置byte実測・性能・動的ちらつき・全面画質・他GPU・GPU-based validation・device loss復旧は追加検証していません。
+
+## 2026-10-08 GLBの自己発光材質
+
+標準GLBモデルへemissiveFactor、emissiveTexture、KHR_materials_emissive_strengthを追加しました。線形RGB係数と強度を別々に保持し、sRGB画像のRGBだけを掛けて反射光へ加えます。画像なしは白、色の既定値は黒、強度の既定値は1です。係数は有限かつ0〜1、強度は有限かつ0以上を読み込みと描画計画で検査します。
+
+最初にフィールドと実GLB fixture・契約テストだけを追加しました。RuntimeOFF Debugのmodel_emissiveは「emissive GLB material values were not retained」、model_geometryは「emissive UV uses the same clip-edge interpolation ratio」でREDでした。Release GPUも発光係数のモデルと既存の照明経路による参照に45,000画素の差、最大225を検出しました。REDログは `model-emissive-cpu-red-{build,tests}.log` と `model-emissive-gpu-red-{build,tests}.log` です。テストの最初のビルドはTextureSampler.hのinclude不足で失敗し、includeを直してから上記の実行時REDを取得しました。
+
+GLBのimage map、UV選択、sampler読み込みを再利用し、自己発光画像の独立texCoord・sampler・ミップを保持します。clipの交点では他の属性と同じ比率でUVを補間し、GPU入力は内部144byte・13属性、pixel inputのTEXCOORD9/10へUVと材質係数を渡します。内蔵モデルのdescriptorはt0〜t3の4画像、s4〜s7の4samplerです。Scene/UIの両経路とrunの結合条件へ4役割を反映し、公開カスタムshader ABIは維持しました。
+
+途中のGPU検査ではMASK fixtureのbase RGBが白のため、環境光と発光を加えた実描画が発光単独の参照と最大191異なりました。fixtureのbaseColorFactorを[0,0,0,1]にして、alphaの切り抜きを保ったまま環境光のRGBを除きました。さらに同fixtureのUVが全頂点(.5,.5)だったため、画像のアルファ差が左右へ配置されていませんでした。四隅のUVを画像全体へ対応させ、左を捨てて右を残す検査に直しました。これらは参照条件の不整合であり、Runtimeの修正ではありません。plan不変性テストもFLT_MAX成功後に古い強度のsentinelを比べていたため、直前の出力をsnapshotするよう修正しました。
+
+独立レビューで、異なる画像のmixed材質だけではsamplerをkeyから除いた誤りを検出できないと分かりました。同じimageをRepeat/Clampの2samplerで参照する隣接材質と、同じimage・samplerで色係数/強度だけを変える材質を追加しました。loader・geometry、4役割のcache寿命、renderer・shaderを担当外のagentが読み取り専用で確認し、重大な実装問題は見つかりませんでした。
+
+GPU検査は、色の既定値・係数・強度0・画像A無視・線形色の乗算・sRGB中間値・独立UV1・鏡映repeat・baseとの加算とimage共有・2種のmixed材質・ミップ指定・MASK・Scene/UIを参照と比較します。ambient=0、方向光=0でも発光色を保持すること、HDR強度4を露出0.25でBloom on/off双方のambient4参照と比べることも要求します。再読込132回では各Present前にhandleを削除し、frame130/131を読み戻します。参照は既存の基本色と環境光で作り、反射式をテストへ複製していません。
+
+```bat
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Release全51/51は276.84秒、自己発光GPU57.32秒で成功しました。RuntimeOFF Debug/Releaseは各35/35成功（2.86秒・2.74秒）です。最終MASK fixtureを含めて再生成して確認しています。ログは `build/native-validation/model-emissive-release-final-{build,tests}.log` と `model-emissive-cpu-{debug,release}-final-{build,tests}.log` です。SDK consumerを含むpackage検査も通りました。
+
+自己発光の取得は45画像で、Scene参照との差は最大1、UIは0です。照明0の発光、HDR/Bloom on/off、frame130/131は参照と全画素一致しました。同じimageのRepeat/Clampは左右の最大差96、ミップあり/なし反例は最大188、Bloomの有無は最大179の差を確認し、差がある画素数も要求します。単なる同一画像同士の比較ではありません。一般的な画質評価・動的なちらつき・性能・他GPUを確認した結果にはしていません。
+
+Debugも全51/51成功（299.65秒、自己発光GPU62.66秒、SDK consumer package3.83秒）しました。45画像と判定JSONはRelease/Debug間で完全一致し、既存normal38・sampler34・mip28画像もbyte一致しました。DebugはD3D12 InfoQueueの取得を必須にした画像検査を通り、GPU-based validationは有効にしていません。最新ログは `model-emissive-debug-final-{build,tests}.log` です。PNGは最終取得RGBを変更せず保存し、PNGのdecode後もPPMとの一致を確認しました。fixed clang-format12、UTF-8 BOM/CRLF、文書リンク、STLなしの監査も確認済みです。

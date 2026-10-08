@@ -28,7 +28,7 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
 {
     error.Clear();
     const bool normalMapping = part.normalTextureIndex >= 0;
-    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f || part.normalTextureIndex < -1)
+    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f || part.normalTextureIndex < -1 || part.emissiveTextureIndex < -1 || !isfinite(part.emissiveFactorStrength[3]) || part.emissiveFactorStrength[3] < 0.0f)
     {
         error.Assign("The model part, material factors, or frame bounds are invalid");
         return false;
@@ -46,6 +46,19 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             error.Assign("The model material base-color factor is invalid");
             return false;
         }
+    }
+    for (uint32_t component = 0; component < 3; ++component)
+    {
+        if (!IsFactor(part.emissiveFactorStrength[component]))
+        {
+            error.Assign("The model material emissive factor is invalid");
+            return false;
+        }
+    }
+    if (part.emissiveTextureIndex >= 0 && (static_cast<uint32_t>(part.emissiveTextureIndex) >= draw.model->textures.Count() || !draw.model->textures.At(static_cast<uint32_t>(part.emissiveTextureIndex))))
+    {
+        error.Assign("The model emissive texture slot is invalid");
+        return false;
     }
 
     // 出力を変更せず三角形ごとに組み立てる一時頂点配列。
@@ -73,6 +86,8 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             source[corner].uv[1] = vertex.uv[1];
             source[corner].metallicRoughnessUv[0] = vertex.metallicRoughnessUv[0];
             source[corner].metallicRoughnessUv[1] = vertex.metallicRoughnessUv[1];
+            source[corner].emissiveUv[0] = vertex.emissiveUv[0];
+            source[corner].emissiveUv[1] = vertex.emissiveUv[1];
             if (normalMapping)
             {
                 // 法線画像用の座標と、モデル空間の接線基底。
@@ -116,6 +131,10 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             vertex.alphaMaskCutoff[1] = part.alphaCutoff;
             vertex.metallicRoughnessUv[0] = projected[i].metallicRoughnessUv[0];
             vertex.metallicRoughnessUv[1] = projected[i].metallicRoughnessUv[1];
+            vertex.emissiveUv[0] = projected[i].emissiveUv[0];
+            vertex.emissiveUv[1] = projected[i].emissiveUv[1];
+            for (uint32_t component = 0; component < 4; ++component)
+                vertex.emissiveFactorStrength[component] = part.emissiveFactorStrength[component];
             if (normalMapping)
             {
                 // 接線基底、法線UV、有効値と倍率をまとめるloop。

@@ -7,7 +7,7 @@
 | アプリの基本ループ | `gk::SetWindowSize`、`gk::Init` / `gk::Shutdown`、`gk::ProcessEvents`、`gk::IsKeyDown` / `gk::WasKeyPressed`、`gk::BeginFrame`、`gk::Present` とエラー診断を提供。Windows 描画部には Win32 ウィンドウと Direct3D 12 の表示経路がある | Windows GPU smokeでAPI呼び出し、Present、resize、Shutdown後の再Initを確認 |
 | 2D / 3D 描画 | `gk::DrawRect`、`gk::DrawRectOutline`、`gk::DrawImage`、`gk::DrawTriangle3D`、`gk::Vec3`、カメラ、モデル変換 API。Scene/UI の層と層内の命令順、輪郭矩形の API・描画 packet・頂点展開の内側配置・UV・太さを CPU テストで確認 | GPU画像テストでScene/UIの色、3D三角形、PNG画像を確認。輪郭サンプルの細線・太線を目視 |
 | ウィンドウ変更 | イベント処理が表示領域の変更を検知し、表示先と深度バッファを作り直す。変更後の寸法は次のフレームへ反映する | GPU smokeで960×540への変更を確認。mixed_sceneの最大化後も表示を目視 |
-| 画像 / モデル | PNG / BMP の画像、OBJ / GLB 2.0 / FBX の静的メッシュを CPU 側で読み込む。GLBの基本色画像は材質が指定するUVセットを選び、FLOATまたは正規化した符号なし8bit/16bitの座標を保持する。GLB と FBX の基本色係数・画像を含むモデル描画経路、画像の転送・キャッシュを実装。GLB metallic / roughness係数とMR画像の線形G/B成分、基本色と独立した材質画像UV、法線による方向光・一様環境光の内蔵材質描画を追加。明示NORMAL/TANGENTを持つGLBのnormalTexture、独立UV、scale、node/runtime鏡映にも対応。GLBの3画像それぞれのsampler（Repeat/MirroredRepeat/ClampToEdge・Nearest/Linear）を反映。GLBのOPAQUEとMASKを区別し、画像・材質のアルファと境界値を使って透明部分を切り抜く。FBX の ASCII / バイナリ、相対パスと埋め込み PNG、階層・幾何変換、単位変換を CPU テストで確認 | GPU captureでGLB照明サンプルの非金属/金属球の色と90度照明変更による画素差を確認し、Runtime DLLでも表示を目視。GLBのUV0/1/2と正規化U8/U16を6モデルのGPU画像で確認。全モデル形式の実機表示は未確認。FBX BMP、GLBのUV sparse / KHR_texture_transform、影、環境マップ / IBL、接線の自動生成、BLEND は未対応 |
+| 画像 / モデル | PNG / BMP の画像、OBJ / GLB 2.0 / FBX の静的メッシュを CPU 側で読み込む。GLBの基本色画像は材質が指定するUVセットを選び、FLOATまたは正規化した符号なし8bit/16bitの座標を保持する。GLB と FBX の基本色係数・画像を含むモデル描画経路、画像の転送・キャッシュを実装。GLB metallic / roughness係数とMR画像の線形G/B成分、基本色と独立した材質画像UV、法線による方向光・一様環境光の内蔵材質描画を追加。明示NORMAL/TANGENTを持つGLBのnormalTexture、独立UV、scale、node/runtime鏡映にも対応。GLBの4画像それぞれのsampler（Repeat/MirroredRepeat/ClampToEdge・Nearest/Linear）を反映。GLBの自己発光係数・画像・KHR_materials_emissive_strengthを反射光へ加え、SceneのHDRとBloomへ渡す。GLBのOPAQUEとMASKを区別し、画像・材質のアルファと境界値を使って透明部分を切り抜く。FBX の ASCII / バイナリ、相対パスと埋め込み PNG、階層・幾何変換、単位変換を CPU テストで確認 | GPU captureでGLB照明サンプルの非金属/金属球の色と90度照明変更による画素差を確認し、Runtime DLLでも表示を目視。GLBのUV0/1/2と正規化U8/U16を6モデルのGPU画像で確認。全モデル形式の実機表示は未確認。FBX BMP、GLBのUV sparse / KHR_texture_transform、影、環境マップ / IBL、接線の自動生成、BLEND は未対応 |
 | ポストエフェクト | Scene の HDR 描画から Bloom、露出・トーンマッピング、彩度・コントラスト調整、FXAA を経て UI を合成する経路と設定 API を実装。設定値は `BeginFrame` で取り込む。Bloom、トーンマッピング、FXAA は初期設定で有効。独自ポスト shader API と CPU 契約も統合済み | GPU画像テストでFXAA有効・無効の基本描画と、tintのSceneへの適用・UIの色維持を確認。Bloomの表示も目視。[設定例](effects.md)、[独自シェーダーのガイド](post-effect-shader.md) を参照 |
 | カスタムピクセルシェーダー | `include/gkcore/Shader.hlsl` の共通入力、64 個の `gkcoreUserData` 定数、任意の画像・sampler binding を定義。開発用コンパイラーは HLSL を `.frag` FSL/DXIL 形式に変換する。D3D12 描画部には読み込み、reflection 検査、共通頂点シェーダーと Scene/UI・深度・blend 別の pipeline、定数と画像の binding が実装されている。独自 shader 描画は 1 フレーム 4096 件まで。モデルには別の内蔵 PBR 材質 shader を使う | Linux DXC/FSL compileとreflectionに加え、Windows Release GPU smokeでカスタムshaderの読み込み・binding・Presentを確認。独自頂点 shader、利用者が差し替えるモデル材質 shader ABI は未対応。[描画 shader](custom-shader.md) と[ポスト shader](post-effect-shader.md)のガイドを参照 |
 | 文字表示 / 入力 | `gk::DrawString` は UTF-8 文字列を Windows のシステム標準フォントで描画し、同じ文字列・色・大きさを最大 64 件、合計 16 MiB まで保持するキャッシュを使う。フォントファイルは不要。Escape、矢印、Space、Enter、Tab、Backspace、Shift/Control、数字、英字のキー問い合わせ、左/右/中央のマウスボタンとカーソル位置取得も実装 | GPU画像テストとサンプル画面で日本語UTF-8文字列の表示を確認。輪郭サンプルでSpaceの切り替えとEscape終了を確認。文字入力イベントとフォントファイルの指定は未実装。入力問い合わせはアプリのメインスレッドから行う |
@@ -15,9 +15,9 @@
 
 ## テストと再現性
 
-2026-10-08、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各49/49件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
+2026-10-08、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 610.74、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各51/51件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
 
-RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各34/34件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
+RuntimeOFFのCPU構成は同じPCのMSVC 19.51 / Windows SDK 10.0.28000.0で各35/35件が成功しています。公開47キーの対応表と、仮想キー256個の押下・反復・消去をCPUで確認しました。輪郭サンプルではSpaceによるBloom切り替えと短いEscape入力による終了を実際に操作しました。[キー入力](input.md)に使い方をまとめています。
 
 GPU画像検査は基本描画・モデル照明、6フレームの効果切り替え、多数の矩形を123フレーム描いた後の出力、各ポストエフェクトの個別設定を扱います。[効果の実画像](effects.md)も掲載しています。透明画像の合成・拡大・回転と、描画登録後のhandle削除も確認し、132フレームで396画像を読み直してcacheの128枠を超えた後の表示を検査しました。[画像ガイド](images.md)を参照してください。256MiBのbyte上限や転送失敗時のcleanupは未検証です。
 
@@ -34,6 +34,8 @@ GLBのMASK材質を内蔵モデルshaderで切り抜く処理を追加しまし�
 samplerは8種類のwrap・整数端・省略値、同一画像を異なる設定で描く材質、基本色/MR/法線の個別設定、拡大・縮小の補間、132 frame再読込後の描画を34画像で検査しました。両構成の全画像がbyte単位に一致しました。minFilterのミップ指定では1×1までの縮小段を生成し、段と画素の補間方法を独立して使います。省略値とミップなし指定は従来の単一段を維持します。[モデルガイド](models.md)を参照してください。
 
 ミップ指定のGLB画像は1×1まで生成して全段転送し、4 filter・sRGB/線形用途・NPOT端画素・ミップ有無の同時描画を28画像で確認しました。28枚はRelease/Debug間でbyte一致しています。平均は色空間を保ち、画像cache上限は全段の論理RGBA byte数で計上します。[モデルガイド](models.md)を参照してください。
+
+自己発光係数・画像・KHR_materials_emissive_strengthはScene/UIで使え、画像Aは無視し、独立UVとsampler・ミップを保持します。照明0での発光、同じimageの材質設定、MASK、HDR強度4とBloom on/off、132回再読込後の描画を45画像で確認し、Release/Debug間でbyte一致しました。周囲を照らす光源や間接光を生成する機能ではありません。[モデルガイド](models.md#glbの自己発光)を参照してください。
 
 FSL artifactは`python tests/shader_contract_tests.py`で検査します。固定したThe ForgeのD3D12 adapter検索はsoftware adapterを除外するため、WARPは利用できません。GPU画像は固定位置・色・領域による回帰判定です。全面画像の画質、連続フレームすべてのちらつき、GPU負荷と目標FPS、全モデル形式、全入力操作、他GPU、GPU-based validation、再配布条件の最終確認は未実施です。実行手順は[描画検証](render-validation.md)、詳しい結果は[TDD検証ログ](TDD_LOG.md)を参照してください。
 

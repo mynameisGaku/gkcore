@@ -25,6 +25,10 @@ STRUCT(VSInput)
     DATA(float2, NormalUV, TEXCOORD5);
     // 法線画像の有効値とXYの倍率。
     DATA(float2, NormalParameters, TEXCOORD6);
+    // 自己発光画像の独立した座標。
+    DATA(float2, EmissiveUV, TEXCOORD7);
+    // 自己発光のRGB係数と強度。
+    DATA(float4, EmissiveFactorStrength, TEXCOORD8);
 };
 
 /**
@@ -54,6 +58,10 @@ STRUCT(VSOutput)
     DATA(float2, NormalUV, TEXCOORD7);
     // 材質の有効値とXY倍率は補間しない。
     DATA(FLAT(float2), NormalParameters, TEXCOORD8);
+    // 自己発光画像の座標。
+    DATA(float2, EmissiveUV, TEXCOORD9);
+    // RGB係数とHDR強度は材質ごとに固定して渡す。
+    DATA(FLAT(float4), EmissiveFactorStrength, TEXCOORD10);
 };
 
 /**
@@ -76,5 +84,7 @@ VSOutput VS_MAIN(VSInput input)
     output.WorldTangent = input.WorldTangent;
     output.NormalUV = input.NormalUV;
     output.NormalParameters = input.NormalParameters;
+    output.EmissiveUV = input.EmissiveUV;
+    output.EmissiveFactorStrength = input.EmissiveFactorStrength;
     RETURN(output);
 }

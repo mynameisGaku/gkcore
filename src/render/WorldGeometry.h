@@ -27,6 +27,8 @@ struct WorldVertex
     float normalUv[2]{};
     // モデル空間の接線と縦方向の符号。
     float tangent[4]{};
+    // 自己発光画像を読む独立した座標。
+    float emissiveUv[2]{};
 };
 
 /**
@@ -46,6 +48,8 @@ struct ProjectedWorldVertex
     float normalUv[2]{};
     // ワールド空間の接線と縦方向の符号。
     float worldTangent[4]{};
+    // clipping後の自己発光画像座標。
+    float emissiveUv[2]{};
 };
 
 /**
