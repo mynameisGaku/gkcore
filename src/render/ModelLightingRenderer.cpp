@@ -51,11 +51,11 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
         return Fail(error, "The Forge could not load the built-in PBR model shaders");
     }
 
-    // 144byte頂点payloadの属性位置と形式。
+    // 160byte頂点payloadの属性位置と形式。
     VertexLayout layout{};
     layout.mBindingCount = 1;
     layout.mBindings[0].mStride = sizeof(ModelRenderVertex);
-    layout.mAttribCount = 13;
+    layout.mAttribCount = 14;
     layout.mAttribs[0].mSemantic = SEMANTIC_POSITION;
     layout.mAttribs[0].mFormat = TinyImageFormat_R32G32B32A32_SFLOAT;
     layout.mAttribs[0].mBinding = 0;
@@ -129,6 +129,13 @@ bool ModelLightingRenderer::Initialize(Renderer* renderer, TinyImageFormat scene
     layout.mAttribs[12].mBinding = 0;
     layout.mAttribs[12].mLocation = 12;
     layout.mAttribs[12].mOffset = offsetof(ModelRenderVertex, emissiveFactorStrength);
+
+    // 画像のUVと環境光を弱める強度。予約成分はGPU入力へ渡さない。
+    layout.mAttribs[13].mSemantic = SEMANTIC_TEXCOORD9;
+    layout.mAttribs[13].mFormat = TinyImageFormat_R32G32B32_SFLOAT;
+    layout.mAttribs[13].mBinding = 0;
+    layout.mAttribs[13].mLocation = 13;
+    layout.mAttribs[13].mOffset = offsetof(ModelRenderVertex, occlusionUvStrength);
 
     // scene/UIで共通利用するrasterizer設定。
     RasterizerStateDesc rasterizer{};

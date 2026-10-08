@@ -47,6 +47,8 @@ struct ClipVertex
     double normalUv[2]{};
     // 自己発光画像の座標。
     double emissiveUv[2]{};
+    // 環境遮蔽画像の座標。
+    double occlusionUv[2]{};
     // clipping中に補間するワールド空間の接線とhandedness。
     double worldTangent[4]{};
 };
@@ -74,6 +76,7 @@ ClipVertex IntersectClipEdge(const ClipVertex& a, const ClipVertex& b, double pl
         vertex.metallicRoughnessUv[coordinate] = a.metallicRoughnessUv[coordinate] + (b.metallicRoughnessUv[coordinate] - a.metallicRoughnessUv[coordinate]) * t;
         vertex.normalUv[coordinate] = a.normalUv[coordinate] + (b.normalUv[coordinate] - a.normalUv[coordinate]) * t;
         vertex.emissiveUv[coordinate] = a.emissiveUv[coordinate] + (b.emissiveUv[coordinate] - a.emissiveUv[coordinate]) * t;
+        vertex.occlusionUv[coordinate] = a.occlusionUv[coordinate] + (b.occlusionUv[coordinate] - a.occlusionUv[coordinate]) * t;
     }
     // 法線画像用の接線基底も同じ交点比率で補間する。
     for (uint32_t component = 0; component < 4; ++component)
@@ -603,6 +606,12 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
                 return false;
             }
             first[i].emissiveUv[coordinate] = source.emissiveUv[coordinate];
+            if (!isfinite(source.occlusionUv[coordinate]))
+            {
+                error.Assign("The model contains non-finite occlusion texture coordinates");
+                return false;
+            }
+            first[i].occlusionUv[coordinate] = source.occlusionUv[coordinate];
         }
     }
 
@@ -645,6 +654,8 @@ bool ProjectWorldTriangle(const detail::FramePacket& frame, const detail::DrawPa
             if (normalMapping && !StoreFloat(polygonA[i].normalUv[coordinate], projectedPolygon[i].normalUv[coordinate], error))
                 return false;
             if (!StoreFloat(polygonA[i].emissiveUv[coordinate], projectedPolygon[i].emissiveUv[coordinate], error))
+                return false;
+            if (!StoreFloat(polygonA[i].occlusionUv[coordinate], projectedPolygon[i].occlusionUv[coordinate], error))
                 return false;
         }
         if (normalMapping)

@@ -51,6 +51,12 @@ struct ModelPartPlan
     int32_t emissiveTextureIndex = -1;
     // 自己発光画像の座標処理と補間方法。
     detail::FTextureSampler emissiveSampler{};
+    // 環境遮蔽画像の効果量。
+    float occlusionStrength = 1.0f;
+    // 環境遮蔽画像配列のindex。未使用は-1。
+    int32_t occlusionTextureIndex = -1;
+    // 環境遮蔽画像の座標処理と補間方法。
+    detail::FTextureSampler occlusionSampler{};
 };
 
 /**

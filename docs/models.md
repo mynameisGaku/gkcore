@@ -76,7 +76,7 @@ int main()
 
 GLB 2.0 の `baseColorTexture` は、`texCoord` が示す `TEXCOORD_n` の UV（画像上のどこを読むかを示す座標）で画像を参照します。`texCoord` を省略した場合は `TEXCOORD_0`、明示した場合は指定番号のUVセットを使います。たとえば `texCoord: 1` は `TEXCOORD_1` を選びます。詳細は [glTF 2.0仕様の Texture Info](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_textureinfo_texcoord) を参照してください。
 
-`baseColorTexture`、`metallicRoughnessTexture`、`normalTexture`、`emissiveTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は4種類に共通です。
+`baseColorTexture`、`metallicRoughnessTexture`、`normalTexture`、`emissiveTexture`、`occlusionTexture` はそれぞれ独立して `texCoord` を選べます。UV座標の対応形式と、sparse accessor・`KHR_texture_transform` の制約は5種類に共通です。
 
 `texCoord` の省略と明示値0、1、2、および normalized U16 / U8 のUV1を使う6種類のGLBを、Release・Debug構成でGPU画像検査しました。UV0とUV1で模様の左右が切り替わることを確認しています。サポート対象の座標がモデルにない場合、負の番号、対応しない成分型、位置とUVの頂点数不一致は読み込み時に診断付きで拒否します。座標の成分は32bitの浮動小数、または0から1へ正規化する符号なし8bit・16bit整数を使えます。UV sparse accessor（座標の一部だけを差分として格納する形式）と、画像に追加の座標変換を加える `KHR_texture_transform` は未対応です。仕様の拡張内容は [KHR_texture_transform](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_texture_transform/README.md) を参照してください。
 
@@ -161,9 +161,9 @@ minFilterの指定に応じて、画素間の補間と縮小段の選択を別�
 | NEAREST_MIPMAP_LINEAR | 9986 | 近い画素 | 線形補間 |
 | LINEAR_MIPMAP_LINEAR | 9987 | 線形補間 | 線形補間 |
 
-基本色と自己発光画像はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
+基本色と自己発光画像はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線・遮蔽の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
 
-同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色・自己発光のsRGBと、MR/法線の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
+同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色・自己発光のsRGBと、MR/法線/遮蔽の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
 
 ![元の画像だけを使った縮小描画](images/model-mip-none.png)
 
@@ -213,9 +213,36 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.model_emissive|
 
 値と画像の定義は[glTF材質仕様](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_emissivefactor)、強度は[KHR_materials_emissive_strength](https://github.com/KhronosGroup/glTF/blob/main/extensions/2.0/Khronos/KHR_materials_emissive_strength/README.md)を参照してください。
 
+## GLBの環境遮蔽画像
+
+`occlusionTexture` は、くぼみなどで受ける環境光を弱めるための材質画像です。Rを線形の明るさとして読み、G・B・Aはこの効果に使いません。Rが1なら環境光を保ち、0なら環境光を受けません。
+
+`strength` は効果の強さで、0〜1の有限値を使います。省略時は1、0なら画像による遮蔽を無効にします。環境光を残す割合は `1 + strength * (R - 1)` です。方向光と自己発光の明るさは変えません。画像がないモデルはこれまでの明るさを維持します。
+
+```json
+{
+  "occlusionTexture": { "index": 0, "texCoord": 1, "strength": 0.5 }
+}
+```
+
+独立した `texCoord`・sampler・ミップ指定に対応し、埋め込みPNGを使います。UV形式と未対応の座標変換は他の材質画像と共通です。MR画像と同じimage・ミップ構成なら線形のGPU画像を共有します。一般的なORM画像ではRを環境遮蔽、Gを粗さ、Bを金属度として同じimageを使えます。基本色・自己発光のsRGB用とはGPU画像を分けます。
+
+内蔵モデルshaderでScene/UIの両方へ描けます。独自pixel shaderを指定すると既存の非照明経路を使い、環境遮蔽の入力は渡されません。モデルに用意した材質画像を使う機能で、画面や周囲の形状から遮蔽画像を自動生成するものではありません。
+
+![R値による環境光の遮蔽](images/model-occlusion-r-values.png)
+
+実GPUで取得した43画像はRelease/Debug間でbyte単位一致し、全画面の参照比較も一致しました。結果の詳細は[描画検証](render-validation.md#glbの環境遮蔽画像)を参照してください。
+
+```bat
+ctest --test-dir build/runtime-windows -C Release -R "gkcore.model_occlusion|gkcore.model_geometry" --output-on-failure
+ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.model_occlusion|gkcore.model_geometry" --output-on-failure
+```
+
+画像と強度の定義は[glTFのocclusionTexture仕様](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#_material_occlusiontextureinfo_strength)を参照してください。
+
 ## 同じ画像を使う材質
 
-GLBの `textures[].source` が同じ `images` 項目を指す場合、別々のtexture indexでもPNGを1回だけ読み込んで共有します。共有範囲は1モデルの読み込み内です。別々に `LoadModel` したモデル間で共有するものではありません。基本色はsRGB、MRと法線は線形値として扱い、必要な色形式だけをGPUへ転送します。
+GLBの `textures[].source` が同じ `images` 項目を指す場合、別々のtexture indexでもPNGを1回だけ読み込んで共有します。共有範囲は1モデルの読み込み内です。別々に `LoadModel` したモデル間で共有するものではありません。基本色・自己発光はsRGB、MR・法線・遮蔽は線形値として扱い、必要な色形式だけをGPUへ転送します。
 
 画像の共有はUVの選択とは別に扱います。たとえば基本色・MRはUV0、法線はUV1を選べます。選択先のUV欠損や未対応の座標変換は、画像を再利用できる場合も診断します。別の `images` 項目は、PNGの内容が同じでも別画像として保持します。同じ画像を違うsamplerで参照する場合も、画像は共有し、材質のsamplerは別に保持します。
 

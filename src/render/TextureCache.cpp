@@ -141,15 +141,15 @@ TextureCache::Entry* TextureCache::Find(detail::ImageResource* image, ETextureCo
 }
 
 /**
- * sRGBの基本色・自己発光と、線形の金属度・粗さ・法線画像の組を検索する。
+ * sRGB基本色・自己発光と線形MR・法線・遮蔽画像の組を検索する。
  */
-TextureCache::ModelEntry* TextureCache::FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, detail::ImageResource* emissiveImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler, const detail::FTextureSampler& emissiveSampler)
+TextureCache::ModelEntry* TextureCache::FindModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, detail::ImageResource* normalImage, detail::ImageResource* emissiveImage, detail::ImageResource* occlusionImage, const detail::FTextureSampler& baseSampler, const detail::FTextureSampler& metallicRoughnessSampler, const detail::FTextureSampler& normalSampler, const detail::FTextureSampler& emissiveSampler, const detail::FTextureSampler& occlusionSampler)
 {
     for (uint32_t i = 0; i < kModelCapacity; ++i)
     {
         // 検索対象の画像role descriptor。
         ModelEntry& entry = modelEntries_[i];
-        if (entry.baseImage == baseImage && entry.metallicRoughnessImage == metallicRoughnessImage && entry.normalImage == normalImage && entry.emissiveImage == emissiveImage && detail::AreTextureSamplersEqual(entry.baseSampler, baseSampler) && detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, metallicRoughnessSampler) && detail::AreTextureSamplersEqual(entry.normalSampler, normalSampler) && detail::AreTextureSamplersEqual(entry.emissiveSampler, emissiveSampler))
+        if (entry.baseImage == baseImage && entry.metallicRoughnessImage == metallicRoughnessImage && entry.normalImage == normalImage && entry.emissiveImage == emissiveImage && entry.occlusionImage == occlusionImage && detail::AreTextureSamplersEqual(entry.baseSampler, baseSampler) && detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, metallicRoughnessSampler) && detail::AreTextureSamplersEqual(entry.normalSampler, normalSampler) && detail::AreTextureSamplersEqual(entry.emissiveSampler, emissiveSampler) && detail::AreTextureSamplersEqual(entry.occlusionSampler, occlusionSampler))
             return &entry;
     }
     return nullptr;
@@ -389,9 +389,9 @@ bool TextureCache::Prepare(detail::ImageResource* image, String& error, ETexture
 }
 
 /**
- * model画像4 roleを登録し、色空間別textureとdescriptorを用意する。
+ * model画像5 roleを登録し、色空間別textureとdescriptorを用意する。
  */
-bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler, detail::ImageResource* emissiveImage, const detail::FTextureSampler* emissiveSampler)
+bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler, detail::ImageResource* emissiveImage, const detail::FTextureSampler* emissiveSampler, detail::ImageResource* occlusionImage, const detail::FTextureSampler* occlusionSampler)
 {
     if (!renderer_ || !queue_ || !baseImage || !metallicRoughnessImage)
         return SetError(error, "The model texture set is invalid");
@@ -399,15 +399,19 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     detail::ImageResource* resolvedNormalImage = normalImage ? normalImage : metallicRoughnessImage;
     // 自己発光画像がなければsRGB基本色画像をdescriptor用fallbackとして共有する。
     detail::ImageResource* resolvedEmissiveImage = emissiveImage ? emissiveImage : baseImage;
+    // 遮蔽画像がなければ線形MR画像をdescriptor用fallbackとして共有する。
+    detail::ImageResource* resolvedOcclusionImage = occlusionImage ? occlusionImage : metallicRoughnessImage;
     // nullptrは既存caller向けのClampLinear設定へ解決する。
     const detail::FTextureSampler resolvedBaseSampler = baseSampler ? *baseSampler : detail::FTextureSampler{};
     const detail::FTextureSampler resolvedMetallicRoughnessSampler = metallicRoughnessSampler ? *metallicRoughnessSampler : detail::FTextureSampler{};
     const detail::FTextureSampler resolvedNormalSampler = normalSampler ? *normalSampler : detail::FTextureSampler{};
     // nullptrは既存roleと同じClampLinear設定へ解決する。
     const detail::FTextureSampler resolvedEmissiveSampler = emissiveSampler ? *emissiveSampler : detail::FTextureSampler{};
+    // nullptrは既存roleと同じClampLinear設定へ解決する。
+    const detail::FTextureSampler resolvedOcclusionSampler = occlusionSampler ? *occlusionSampler : detail::FTextureSampler{};
     // 全roleを検証してからtextureやsamplerのresourceを作る。
     uint32_t samplerIndex = 0;
-    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedEmissiveSampler, samplerIndex))
+    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedEmissiveSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedOcclusionSampler, samplerIndex))
         return SetError(error, "The model texture sampler settings are invalid");
     // 各画像役割で要求するmip段の有無。
     const bool baseMipChain = resolvedBaseSampler.mipFilter != detail::ETextureMipFilter::None;
@@ -417,18 +421,21 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     const bool normalMipChain = resolvedNormalSampler.mipFilter != detail::ETextureMipFilter::None;
     // 自己発光画像はsRGB roleとして準備する。
     const bool emissiveMipChain = resolvedEmissiveSampler.mipFilter != detail::ETextureMipFilter::None;
-    if (!Prepare(baseImage, error, ETextureColorSpace::Srgb, baseMipChain) || !Prepare(metallicRoughnessImage, error, ETextureColorSpace::Linear, metallicRoughnessMipChain) || !Prepare(resolvedNormalImage, error, ETextureColorSpace::Linear, normalMipChain) || !Prepare(resolvedEmissiveImage, error, ETextureColorSpace::Srgb, emissiveMipChain))
+    // 遮蔽画像は線形値として扱う。
+    const bool occlusionMipChain = resolvedOcclusionSampler.mipFilter != detail::ETextureMipFilter::None;
+    if (!Prepare(baseImage, error, ETextureColorSpace::Srgb, baseMipChain) || !Prepare(metallicRoughnessImage, error, ETextureColorSpace::Linear, metallicRoughnessMipChain) || !Prepare(resolvedNormalImage, error, ETextureColorSpace::Linear, normalMipChain) || !Prepare(resolvedEmissiveImage, error, ETextureColorSpace::Srgb, emissiveMipChain) || !Prepare(resolvedOcclusionImage, error, ETextureColorSpace::Linear, occlusionMipChain))
         return false;
-    // 用途ごとの色空間で登録された4種類のtexture。
+    // 用途ごとの色空間で登録された5種類のtexture。
     Entry* baseEntry = Find(baseImage, ETextureColorSpace::Srgb, baseMipChain && (baseImage->width > 1 || baseImage->height > 1));
     Entry* metallicRoughnessEntry = Find(metallicRoughnessImage, ETextureColorSpace::Linear, metallicRoughnessMipChain && (metallicRoughnessImage->width > 1 || metallicRoughnessImage->height > 1));
     Entry* normalEntry = Find(resolvedNormalImage, ETextureColorSpace::Linear, normalMipChain && (resolvedNormalImage->width > 1 || resolvedNormalImage->height > 1));
     Entry* emissiveEntry = Find(resolvedEmissiveImage, ETextureColorSpace::Srgb, emissiveMipChain && (resolvedEmissiveImage->width > 1 || resolvedEmissiveImage->height > 1));
-    if (!baseEntry || !metallicRoughnessEntry || !normalEntry || !emissiveEntry)
+    Entry* occlusionEntry = Find(resolvedOcclusionImage, ETextureColorSpace::Linear, occlusionMipChain && (resolvedOcclusionImage->width > 1 || resolvedOcclusionImage->height > 1));
+    if (!baseEntry || !metallicRoughnessEntry || !normalEntry || !emissiveEntry || !occlusionEntry)
         return SetError(error, "The prepared model texture set is unavailable");
 
-    // 画像4 roleに対応するdescriptor cache entry。
-    ModelEntry* modelEntry = FindModel(baseImage, metallicRoughnessImage, resolvedNormalImage, resolvedEmissiveImage, resolvedBaseSampler, resolvedMetallicRoughnessSampler, resolvedNormalSampler, resolvedEmissiveSampler);
+    // 画像5 roleに対応するdescriptor cache entry。
+    ModelEntry* modelEntry = FindModel(baseImage, metallicRoughnessImage, resolvedNormalImage, resolvedEmissiveImage, resolvedOcclusionImage, resolvedBaseSampler, resolvedMetallicRoughnessSampler, resolvedNormalSampler, resolvedEmissiveSampler, resolvedOcclusionSampler);
     if (modelEntry)
     {
         modelEntry->state.lastUsed = ++clock_;
@@ -442,7 +449,9 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     Sampler* normalSamplerResource = nullptr;
     // 自己発光画像のsampler資源。
     Sampler* emissiveSamplerResource = nullptr;
-    if (!GetOrCreateModelSampler(resolvedBaseSampler, baseSamplerResource, error) || !GetOrCreateModelSampler(resolvedMetallicRoughnessSampler, metallicRoughnessSamplerResource, error) || !GetOrCreateModelSampler(resolvedNormalSampler, normalSamplerResource, error) || !GetOrCreateModelSampler(resolvedEmissiveSampler, emissiveSamplerResource, error))
+    // 遮蔽画像のsampler資源。
+    Sampler* occlusionSamplerResource = nullptr;
+    if (!GetOrCreateModelSampler(resolvedBaseSampler, baseSamplerResource, error) || !GetOrCreateModelSampler(resolvedMetallicRoughnessSampler, metallicRoughnessSamplerResource, error) || !GetOrCreateModelSampler(resolvedNormalSampler, normalSamplerResource, error) || !GetOrCreateModelSampler(resolvedEmissiveSampler, emissiveSamplerResource, error) || !GetOrCreateModelSampler(resolvedOcclusionSampler, occlusionSamplerResource, error))
         return false;
     modelEntry = AcquireModelSlot(error);
     if (!modelEntry)
@@ -451,19 +460,23 @@ bool TextureCache::PrepareModel(detail::ImageResource* baseImage, detail::ImageR
     modelEntry->metallicRoughnessImage = metallicRoughnessImage;
     modelEntry->normalImage = resolvedNormalImage;
     modelEntry->emissiveImage = resolvedEmissiveImage;
+    modelEntry->occlusionImage = resolvedOcclusionImage;
     modelEntry->baseTexture = baseEntry->texture;
     modelEntry->metallicRoughnessTexture = metallicRoughnessEntry->texture;
     modelEntry->normalTexture = normalEntry->texture;
     modelEntry->emissiveTexture = emissiveEntry->texture;
+    modelEntry->occlusionTexture = occlusionEntry->texture;
     modelEntry->baseSampler = resolvedBaseSampler;
     modelEntry->metallicRoughnessSampler = resolvedMetallicRoughnessSampler;
     modelEntry->normalSampler = resolvedNormalSampler;
     modelEntry->emissiveSampler = resolvedEmissiveSampler;
+    modelEntry->occlusionSampler = resolvedOcclusionSampler;
     modelEntry->baseSamplerResource = baseSamplerResource;
     modelEntry->metallicRoughnessSamplerResource = metallicRoughnessSamplerResource;
     modelEntry->normalSamplerResource = normalSamplerResource;
     modelEntry->emissiveSamplerResource = emissiveSamplerResource;
-    if (!CreateModelDescriptor(*modelEntry, *baseEntry, *metallicRoughnessEntry, *normalEntry, *emissiveEntry, error))
+    modelEntry->occlusionSamplerResource = occlusionSamplerResource;
+    if (!CreateModelDescriptor(*modelEntry, *baseEntry, *metallicRoughnessEntry, *normalEntry, *emissiveEntry, *occlusionEntry, error))
     {
         DestroyModelEntry(*modelEntry);
         return false;
@@ -512,9 +525,9 @@ bool TextureCache::GetOrCreateModelSampler(const detail::FTextureSampler& settin
 }
 
 /**
- * 準備済み4画像をmodel shader用のpersistent descriptorへ登録する。
+ * 準備済み5画像とsamplerをmodel shader用のpersistent descriptorへ登録する。
  */
-bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, Entry& normalEntry, Entry& emissiveEntry, String& error)
+bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntry, Entry& metallicRoughnessEntry, Entry& normalEntry, Entry& emissiveEntry, Entry& occlusionEntry, String& error)
 {
     // model texture SRTのpersistent descriptor配置。
     DescriptorSetDesc descriptorDesc = SRT_SET_DESC(ModelTextureResources, Persistent, 1, 0);
@@ -522,8 +535,8 @@ bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntr
     if (!modelEntry.descriptorSet)
         return SetError(error, "The Forge could not allocate a model texture descriptor set");
 
-    // 画像4枚とrole別sampler4個のdescriptor値。
-    DescriptorData descriptors[8]{};
+    // 画像5枚とrole別sampler5個のdescriptor値。
+    DescriptorData descriptors[10]{};
     descriptors[0].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gImageTexture);
     descriptors[0].ppTextures = &baseEntry.texture;
     descriptors[0].mCount = 1;
@@ -536,19 +549,25 @@ bool TextureCache::CreateModelDescriptor(ModelEntry& modelEntry, Entry& baseEntr
     descriptors[3].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gEmissiveTexture);
     descriptors[3].ppTextures = &emissiveEntry.texture;
     descriptors[3].mCount = 1;
-    descriptors[4].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gImageSampler);
-    descriptors[4].ppSamplers = &modelEntry.baseSamplerResource;
+    descriptors[4].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gOcclusionTexture);
+    descriptors[4].ppTextures = &occlusionEntry.texture;
     descriptors[4].mCount = 1;
-    descriptors[5].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gMetallicRoughnessSampler);
-    descriptors[5].ppSamplers = &modelEntry.metallicRoughnessSamplerResource;
+    descriptors[5].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gImageSampler);
+    descriptors[5].ppSamplers = &modelEntry.baseSamplerResource;
     descriptors[5].mCount = 1;
-    descriptors[6].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gNormalSampler);
-    descriptors[6].ppSamplers = &modelEntry.normalSamplerResource;
+    descriptors[6].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gMetallicRoughnessSampler);
+    descriptors[6].ppSamplers = &modelEntry.metallicRoughnessSamplerResource;
     descriptors[6].mCount = 1;
-    descriptors[7].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gEmissiveSampler);
-    descriptors[7].ppSamplers = &modelEntry.emissiveSamplerResource;
+    descriptors[7].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gNormalSampler);
+    descriptors[7].ppSamplers = &modelEntry.normalSamplerResource;
     descriptors[7].mCount = 1;
-    updateDescriptorSet(renderer_, 0, modelEntry.descriptorSet, 8, descriptors);
+    descriptors[8].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gEmissiveSampler);
+    descriptors[8].ppSamplers = &modelEntry.emissiveSamplerResource;
+    descriptors[8].mCount = 1;
+    descriptors[9].mIndex = SRT_RES_IDX(ModelTextureResources, Persistent, gOcclusionSampler);
+    descriptors[9].ppSamplers = &modelEntry.occlusionSamplerResource;
+    descriptors[9].mCount = 1;
+    updateDescriptorSet(renderer_, 0, modelEntry.descriptorSet, 10, descriptors);
     error.Clear();
     return true;
 }
@@ -672,7 +691,7 @@ bool TextureCache::Bind(Cmd* command, detail::ImageResource* image, String& erro
 /**
  * frame用に準備済みのmodel画像descriptor setをbindする。
  */
-bool TextureCache::BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler, detail::ImageResource* emissiveImage, const detail::FTextureSampler* emissiveSampler) const
+bool TextureCache::BindModel(Cmd* command, detail::ImageResource* baseImage, detail::ImageResource* metallicRoughnessImage, String& error, detail::ImageResource* normalImage, const detail::FTextureSampler* baseSampler, const detail::FTextureSampler* metallicRoughnessSampler, const detail::FTextureSampler* normalSampler, detail::ImageResource* emissiveImage, const detail::FTextureSampler* emissiveSampler, detail::ImageResource* occlusionImage, const detail::FTextureSampler* occlusionSampler) const
 {
     if (!command || !baseImage || !metallicRoughnessImage)
         return SetError(error, "The model texture set binding is invalid");
@@ -680,21 +699,25 @@ bool TextureCache::BindModel(Cmd* command, detail::ImageResource* baseImage, det
     const detail::ImageResource* resolvedNormalImage = normalImage ? normalImage : metallicRoughnessImage;
     // 自己発光画像がなければPrepareModelと同じ基本色画像を検索keyにする。
     const detail::ImageResource* resolvedEmissiveImage = emissiveImage ? emissiveImage : baseImage;
+    // 遮蔽画像がなければPrepareModelと同じMR画像を検索keyにする。
+    const detail::ImageResource* resolvedOcclusionImage = occlusionImage ? occlusionImage : metallicRoughnessImage;
     // nullptrはPrepareModelと同じClampLinear設定へ解決する。
     const detail::FTextureSampler resolvedBaseSampler = baseSampler ? *baseSampler : detail::FTextureSampler{};
     const detail::FTextureSampler resolvedMetallicRoughnessSampler = metallicRoughnessSampler ? *metallicRoughnessSampler : detail::FTextureSampler{};
     const detail::FTextureSampler resolvedNormalSampler = normalSampler ? *normalSampler : detail::FTextureSampler{};
     // nullptrはPrepareModelと同じClampLinear設定へ解決する。
     const detail::FTextureSampler resolvedEmissiveSampler = emissiveSampler ? *emissiveSampler : detail::FTextureSampler{};
+    // nullptrはPrepareModelと同じClampLinear設定へ解決する。
+    const detail::FTextureSampler resolvedOcclusionSampler = occlusionSampler ? *occlusionSampler : detail::FTextureSampler{};
     // 不正samplerはcache検索前に拒否する。
     uint32_t samplerIndex = 0;
-    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedEmissiveSampler, samplerIndex))
+    if (!detail::GetTextureSamplerIndex(resolvedBaseSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedMetallicRoughnessSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedNormalSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedEmissiveSampler, samplerIndex) || !detail::GetTextureSamplerIndex(resolvedOcclusionSampler, samplerIndex))
         return SetError(error, "The model texture sampler settings are invalid");
     for (uint32_t i = 0; i < kModelCapacity; ++i)
     {
-        // 現frameに準備された画像4 role。
+        // 現frameに準備された画像5 role。
         const ModelEntry& entry = modelEntries_[i];
-        if (entry.baseImage != baseImage || entry.metallicRoughnessImage != metallicRoughnessImage || entry.normalImage != resolvedNormalImage || entry.emissiveImage != resolvedEmissiveImage || !detail::AreTextureSamplersEqual(entry.baseSampler, resolvedBaseSampler) || !detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, resolvedMetallicRoughnessSampler) || !detail::AreTextureSamplersEqual(entry.normalSampler, resolvedNormalSampler) || !detail::AreTextureSamplersEqual(entry.emissiveSampler, resolvedEmissiveSampler) || entry.state.frameUsed != frame_)
+        if (entry.baseImage != baseImage || entry.metallicRoughnessImage != metallicRoughnessImage || entry.normalImage != resolvedNormalImage || entry.emissiveImage != resolvedEmissiveImage || entry.occlusionImage != resolvedOcclusionImage || !detail::AreTextureSamplersEqual(entry.baseSampler, resolvedBaseSampler) || !detail::AreTextureSamplersEqual(entry.metallicRoughnessSampler, resolvedMetallicRoughnessSampler) || !detail::AreTextureSamplersEqual(entry.normalSampler, resolvedNormalSampler) || !detail::AreTextureSamplersEqual(entry.emissiveSampler, resolvedEmissiveSampler) || !detail::AreTextureSamplersEqual(entry.occlusionSampler, resolvedOcclusionSampler) || entry.state.frameUsed != frame_)
             continue;
         if (!entry.descriptorSet)
             return SetError(error, "The model texture descriptor set is unavailable");
@@ -736,7 +759,7 @@ void TextureCache::InvalidateModelEntries(Texture* texture)
     for (uint32_t i = 0; i < kModelCapacity; ++i)
     {
         ModelEntry& entry = modelEntries_[i];
-        if (entry.baseTexture == texture || entry.metallicRoughnessTexture == texture || entry.normalTexture == texture || entry.emissiveTexture == texture)
+        if (entry.baseTexture == texture || entry.metallicRoughnessTexture == texture || entry.normalTexture == texture || entry.emissiveTexture == texture || entry.occlusionTexture == texture)
             DestroyModelEntry(entry);
     }
 }

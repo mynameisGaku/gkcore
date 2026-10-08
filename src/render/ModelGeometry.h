@@ -37,8 +37,10 @@ struct ModelRenderVertex
     float emissiveUv[2]{};
     // 自己発光RGB係数と強度。
     float emissiveFactorStrength[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    // 環境遮蔽座標の横・縦と効果量、予約値。
+    float occlusionUvStrength[4]{};
 };
-static_assert(sizeof(ModelRenderVertex) == 144, "lit model vertex ABI must remain 144 bytes");
+static_assert(sizeof(ModelRenderVertex) == 160, "lit model vertex ABI must remain 160 bytes");
 
 /**
  * 検証済み材質範囲を照明用頂点へ展開する。失敗時は出力配列を保つ。

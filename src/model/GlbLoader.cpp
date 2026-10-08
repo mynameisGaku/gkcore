@@ -385,6 +385,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
     material.normalTextureIndex = -1;
     material.normalScale = 1.0f;
     material.emissiveTextureIndex = -1;
+    material.occlusionTextureIndex = -1;
     if (source)
     {
         // source材質がdata内にあることを確かめるindex。
@@ -436,6 +437,22 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
                 return -1;
         }
     }
+    if (source && source->occlusion_texture.texture)
+    {
+        // 0から1の範囲で環境遮蔽を混ぜる材質強度。
+        const float strength = source->occlusion_texture.scale;
+        if (!IsFinite(strength) || strength < 0.0f || strength > 1.0f)
+        {
+            error.Assign("GLB occlusion strength must be finite and between zero and one");
+            return -1;
+        }
+        if (!ReadTextureSampler(data, source->occlusion_texture, "GLB occlusion", material.occlusionSampler, error))
+            return -1;
+        material.occlusionTextureIndex = AddTexture(data, source->occlusion_texture, "GLB occlusion", model, imageMap, error);
+        if (material.occlusionTextureIndex < 0)
+            return -1;
+        material.occlusionStrength = strength;
+    }
     if (source && source->normal_texture.texture)
     {
         if (!ReadTextureSampler(data, source->normal_texture, "GLB normal", material.normalSampler, error))
@@ -486,7 +503,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff && existing.emissiveStrength == material.emissiveStrength && existing.emissiveTextureIndex == material.emissiveTextureIndex && AreTextureSamplersEqual(existing.baseColorSampler, material.baseColorSampler) && AreTextureSamplersEqual(existing.metallicRoughnessSampler, material.metallicRoughnessSampler) && AreTextureSamplersEqual(existing.normalSampler, material.normalSampler) && AreTextureSamplersEqual(existing.emissiveSampler, material.emissiveSampler);
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff && existing.emissiveStrength == material.emissiveStrength && existing.emissiveTextureIndex == material.emissiveTextureIndex && existing.occlusionStrength == material.occlusionStrength && existing.occlusionTextureIndex == material.occlusionTextureIndex && AreTextureSamplersEqual(existing.baseColorSampler, material.baseColorSampler) && AreTextureSamplersEqual(existing.metallicRoughnessSampler, material.metallicRoughnessSampler) && AreTextureSamplersEqual(existing.normalSampler, material.normalSampler) && AreTextureSamplersEqual(existing.emissiveSampler, material.emissiveSampler) && AreTextureSamplersEqual(existing.occlusionSampler, material.occlusionSampler);
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];
@@ -574,6 +591,8 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
     const cgltf_accessor* metallicRoughnessUv = nullptr;
     // 自己発光画像へ渡す独立した座標accessor。
     const cgltf_accessor* emissiveUv = nullptr;
+    // 環境遮蔽画像へ渡す独立した座標accessor。
+    const cgltf_accessor* occlusionUv = nullptr;
     // normal textureの有無でのみ必要となる属性と変換条件。
     const bool hasNormalTexture = primitive->material && primitive->material->normal_texture.texture;
     const cgltf_accessor* tangent = hasNormalTexture ? cgltf_find_accessor(primitive, cgltf_attribute_type_tangent, 0) : nullptr;
@@ -590,6 +609,8 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         return false;
     }
     if (primitive->material && primitive->material->emissive_texture.texture && !SelectTextureUv(*primitive, primitive->material->emissive_texture, "emissive", emissiveUv, error))
+        return false;
+    if (primitive->material && primitive->material->occlusion_texture.texture && !SelectTextureUv(*primitive, primitive->material->occlusion_texture, "occlusion", occlusionUv, error))
         return false;
     if (hasNormalTexture)
     {
@@ -609,7 +630,7 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
         error.Assign("GLB primitive has invalid or excessive positions");
         return false;
     }
-    if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (baseColorUv && (baseColorUv->type != cgltf_type_vec2 || baseColorUv->count != position->count || baseColorUv->is_sparse || !baseColorUv->buffer_view)) || (metallicRoughnessUv && (metallicRoughnessUv->type != cgltf_type_vec2 || metallicRoughnessUv->count != position->count || metallicRoughnessUv->is_sparse || !metallicRoughnessUv->buffer_view)) || (emissiveUv && (emissiveUv->type != cgltf_type_vec2 || emissiveUv->count != position->count || emissiveUv->is_sparse || !emissiveUv->buffer_view)))
+    if ((normal && (normal->type != cgltf_type_vec3 || normal->count != position->count || normal->is_sparse || !normal->buffer_view)) || (baseColorUv && (baseColorUv->type != cgltf_type_vec2 || baseColorUv->count != position->count || baseColorUv->is_sparse || !baseColorUv->buffer_view)) || (metallicRoughnessUv && (metallicRoughnessUv->type != cgltf_type_vec2 || metallicRoughnessUv->count != position->count || metallicRoughnessUv->is_sparse || !metallicRoughnessUv->buffer_view)) || (emissiveUv && (emissiveUv->type != cgltf_type_vec2 || emissiveUv->count != position->count || emissiveUv->is_sparse || !emissiveUv->buffer_view)) || (occlusionUv && (occlusionUv->type != cgltf_type_vec2 || occlusionUv->count != position->count || occlusionUv->is_sparse || !occlusionUv->buffer_view)))
     {
         error.Assign("GLB primitive has incompatible normals or texture coordinates");
         return false;
@@ -716,7 +737,17 @@ bool AppendGlbPrimitive(cgltf_data* data, cgltf_primitive* primitive, const floa
             vertex.emissiveUv[0] = value[0];
             vertex.emissiveUv[1] = value[1];
         }
-        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !IsFinite(vertex.normalUv[0]) || !IsFinite(vertex.normalUv[1]) || !IsFinite(vertex.emissiveUv[0]) || !IsFinite(vertex.emissiveUv[1]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]) || !model.vertices.Append(vertex))
+        if (occlusionUv)
+        {
+            if (!cgltf_accessor_read_float(occlusionUv, i, value, 2))
+            {
+                error.Assign("GLB occlusion texture accessor could not be read");
+                return false;
+            }
+            vertex.occlusionUv[0] = value[0];
+            vertex.occlusionUv[1] = value[1];
+        }
+        if (!IsFinite(vertex.position[0]) || !IsFinite(vertex.position[1]) || !IsFinite(vertex.position[2]) || !IsFinite(vertex.normal[0]) || !IsFinite(vertex.normal[1]) || !IsFinite(vertex.normal[2]) || !IsFinite(vertex.uv[0]) || !IsFinite(vertex.uv[1]) || !IsFinite(vertex.metallicRoughnessUv[0]) || !IsFinite(vertex.metallicRoughnessUv[1]) || !IsFinite(vertex.normalUv[0]) || !IsFinite(vertex.normalUv[1]) || !IsFinite(vertex.emissiveUv[0]) || !IsFinite(vertex.emissiveUv[1]) || !IsFinite(vertex.occlusionUv[0]) || !IsFinite(vertex.occlusionUv[1]) || !IsFinite(vertex.tangent[0]) || !IsFinite(vertex.tangent[1]) || !IsFinite(vertex.tangent[2]) || !IsFinite(vertex.tangent[3]) || !model.vertices.Append(vertex))
         {
             error.Assign("GLB vertex values or allocation are invalid");
             return false;

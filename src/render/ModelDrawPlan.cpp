@@ -72,7 +72,7 @@ bool IsMaterialValid(const detail::ModelMaterial& material)
         if (!IsUnitFactor(material.emissiveFactor[i]))
             return false;
     }
-    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && IsEmissiveStrength(material.emissiveStrength) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler) && detail::IsTextureSamplerValid(material.emissiveSampler);
+    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && IsEmissiveStrength(material.emissiveStrength) && IsUnitFactor(material.occlusionStrength) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler) && detail::IsTextureSamplerValid(material.emissiveSampler) && detail::IsTextureSamplerValid(material.occlusionSampler);
 }
 
 // namespace
@@ -118,6 +118,7 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
         part.metallicRoughnessTextureIndex = -1;
         part.normalTextureIndex = -1;
         part.emissiveTextureIndex = -1;
+        part.occlusionTextureIndex = -1;
         part.baseColorFactor[0] = 1.0f;
         part.baseColorFactor[1] = 1.0f;
         part.baseColorFactor[2] = 1.0f;
@@ -150,6 +151,8 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
                 part.emissiveFactorStrength[component] = material.emissiveFactor[component];
             part.emissiveFactorStrength[3] = material.emissiveStrength;
             part.emissiveSampler = material.emissiveSampler;
+            part.occlusionStrength = material.occlusionStrength;
+            part.occlusionSampler = material.occlusionSampler;
             if (material.metallicRoughnessTextureIndex != -1)
             {
                 if (material.metallicRoughnessTextureIndex < 0 || static_cast<uint32_t>(material.metallicRoughnessTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.metallicRoughnessTextureIndex)))
@@ -173,6 +176,12 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
                 if (material.emissiveTextureIndex < 0 || static_cast<uint32_t>(material.emissiveTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.emissiveTextureIndex)))
                     return Fail(error, "The model material emissive texture index is invalid");
                 part.emissiveTextureIndex = material.emissiveTextureIndex;
+            }
+            if (material.occlusionTextureIndex != -1)
+            {
+                if (material.occlusionTextureIndex < 0 || static_cast<uint32_t>(material.occlusionTextureIndex) >= model.textures.Count() || !model.textures.At(static_cast<uint32_t>(material.occlusionTextureIndex)))
+                    return Fail(error, "The model material occlusion texture index is invalid");
+                part.occlusionTextureIndex = material.occlusionTextureIndex;
             }
         }
         if (!candidate.parts.Append(part))

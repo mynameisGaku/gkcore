@@ -29,6 +29,8 @@ struct WorldVertex
     float tangent[4]{};
     // 自己発光画像を読む独立した座標。
     float emissiveUv[2]{};
+    // 環境遮蔽画像に使う独立した座標。
+    float occlusionUv[2]{};
 };
 
 /**
@@ -50,6 +52,8 @@ struct ProjectedWorldVertex
     float worldTangent[4]{};
     // clipping後の自己発光画像座標。
     float emissiveUv[2]{};
+    // clipping後の環境遮蔽画像座標。
+    float occlusionUv[2]{};
 };
 
 /**

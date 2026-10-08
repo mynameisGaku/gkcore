@@ -153,7 +153,7 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     resource_section = _section(dump, "Resource Bindings:", "ViewId state:", "Buffer Definitions:")
     missing: list[str] = []
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b", r"\bTEXCOORD\s+9\b", r"\bTEXCOORD\s+10\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b", r"\bTEXCOORD\s+9\b", r"\bTEXCOORD\s+10\b", r"\bTEXCOORD\s+11\b", r"\bTEXCOORD\s+12\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     if not re.search(r"\bSV_Target\s+0\b", output_section, re.IGNORECASE):
@@ -166,14 +166,18 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
         missing.append("gNormalTexture at t2")
     if not re.search(r"\bgEmissiveTexture\s+texture\b[^\n]*\bt3\b", resource_section, re.IGNORECASE):
         missing.append("gEmissiveTexture at t3")
-    if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs4\b", resource_section, re.IGNORECASE):
+    if not re.search(r"\bgOcclusionTexture\s+texture\b[^\n]*\bt4\b", resource_section, re.IGNORECASE):
+        missing.append("gOcclusionTexture at t4")
+    if not re.search(r"\bgImageSampler\s+sampler\b[^\n]*\bs5\b", resource_section, re.IGNORECASE):
         missing.append("gImageSampler in the ModelTextureResources persistent set")
-    if not re.search(r"\bgMetallicRoughnessSampler\s+sampler\b[^\n]*\bs5\b", resource_section, re.IGNORECASE):
-        missing.append("gMetallicRoughnessSampler at s5")
-    if not re.search(r"\bgNormalSampler\s+sampler\b[^\n]*\bs6\b", resource_section, re.IGNORECASE):
-        missing.append("gNormalSampler at s6")
-    if not re.search(r"\bgEmissiveSampler\s+sampler\b[^\n]*\bs7\b", resource_section, re.IGNORECASE):
-        missing.append("gEmissiveSampler at s7")
+    if not re.search(r"\bgMetallicRoughnessSampler\s+sampler\b[^\n]*\bs6\b", resource_section, re.IGNORECASE):
+        missing.append("gMetallicRoughnessSampler at s6")
+    if not re.search(r"\bgNormalSampler\s+sampler\b[^\n]*\bs7\b", resource_section, re.IGNORECASE):
+        missing.append("gNormalSampler at s7")
+    if not re.search(r"\bgEmissiveSampler\s+sampler\b[^\n]*\bs8\b", resource_section, re.IGNORECASE):
+        missing.append("gEmissiveSampler at s8")
+    if not re.search(r"\bgOcclusionSampler\s+sampler\b[^\n]*\bs9\b", resource_section, re.IGNORECASE):
+        missing.append("gOcclusionSampler at s9")
     if not re.search(r"\bgModelLighting\s+cbuffer\b[^\n]*\bcb0,space1\b", resource_section, re.IGNORECASE):
         missing.append("LightingConstants at b0, space1")
     buffer_section = _section(dump, "Buffer Definitions:", "Resource Bindings:")
@@ -185,7 +189,7 @@ def validate_model_pixel_shader_reflection(dump: str, source: str = "<DXC reflec
     if not re.search(r"\bTEXCOORD\s+5\s+xy\s+\d+\s+\S+\s+float\s+xy\b", input_section, re.IGNORECASE):
         missing.append("metallic-roughness UV at TEXCOORD5.xy")
     # DXCのregister内配置がxy/zwのどちらでも、宣言と使用成分が一致することを照合する。
-    for semantic, mask, label in ((6, "xyzw", "world tangent"), (7, "(?:xy|zw)", "normal UV"), (8, "(?:xy|zw)", "normal parameters"), (9, "(?:xy|zw)", "emissive UV"), (10, "xyzw", "emissive factor/strength")):
+    for semantic, mask, label in ((6, "xyzw", "world tangent"), (7, "(?:xy|zw)", "normal UV"), (8, "(?:xy|zw)", "normal parameters"), (9, "(?:xy|zw)", "emissive UV"), (10, "xyzw", "emissive factor/strength"), (11, "(?:xy|zw)", "occlusion UV"), (12, "[xyzw]", "occlusion strength")):
         if not re.search(rf"\bTEXCOORD\s+{semantic}\s+({mask})\s+\d+\s+\S+\s+float\s+\1\b", input_section, re.IGNORECASE):
             missing.append(f"{label} at TEXCOORD{semantic}.{mask}")
     if missing:
@@ -219,11 +223,11 @@ def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC refle
     output_section = _section(dump, "Output signature:", "Patch Constant signature:", "Resource Bindings:")
     missing: list[str] = []
     for semantic in (r"\bPOSITION\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTANGENT\s+0\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b"):
+                     r"\bNORMAL\s+0\b", r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTANGENT\s+0\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b", r"\bTEXCOORD\s+9\b"):
         if not re.search(semantic, input_section, re.IGNORECASE):
             missing.append(semantic.replace(r"\b", "").replace(r"\s+", " "))
     for semantic in (r"\bSV_Position\s+0\b", r"\bCOLOR\s+0\b", r"\bTEXCOORD\s+0\b",
-                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b", r"\bTEXCOORD\s+9\b", r"\bTEXCOORD\s+10\b"):
+                     r"\bTEXCOORD\s+1\b", r"\bTEXCOORD\s+2\b", r"\bTEXCOORD\s+3\b", r"\bTEXCOORD\s+4\b", r"\bTEXCOORD\s+5\b", r"\bTEXCOORD\s+6\b", r"\bTEXCOORD\s+7\b", r"\bTEXCOORD\s+8\b", r"\bTEXCOORD\s+9\b", r"\bTEXCOORD\s+10\b", r"\bTEXCOORD\s+11\b", r"\bTEXCOORD\s+12\b"):
         if not re.search(semantic, output_section, re.IGNORECASE):
             missing.append("output " + semantic.replace(r"\b", "").replace(r"\s+", " "))
     # アルファ抜き情報の2成分を確認する。
@@ -236,7 +240,7 @@ def validate_model_vertex_shader_reflection(dump: str, source: str = "<DXC refle
     if not re.search(r"\bTEXCOORD\s+5\s+xy\s+\d+\s+\S+\s+float\s+xy\b", output_section, re.IGNORECASE):
         missing.append("metallic-roughness UV output at TEXCOORD5.xy")
     # 120byte頂点に対応する接線、法線UV、材質値の成分数。
-    for signature, semantic, index, mask, label in ((input_section, "TANGENT", 0, "xyzw", "world tangent input"), (input_section, "TEXCOORD", 5, "xy", "normal UV input"), (input_section, "TEXCOORD", 6, "xy", "normal parameters input"), (output_section, "TEXCOORD", 6, "xyzw", "world tangent output"), (output_section, "TEXCOORD", 7, "(?:xy|zw)", "normal UV output"), (output_section, "TEXCOORD", 8, "(?:xy|zw)", "normal parameters output"), (input_section, "TEXCOORD", 7, "xy", "emissive UV input"), (input_section, "TEXCOORD", 8, "xyzw", "emissive factor/strength input"), (output_section, "TEXCOORD", 9, "(?:xy|zw)", "emissive UV output"), (output_section, "TEXCOORD", 10, "xyzw", "emissive factor/strength output")):
+    for signature, semantic, index, mask, label in ((input_section, "TANGENT", 0, "xyzw", "world tangent input"), (input_section, "TEXCOORD", 5, "xy", "normal UV input"), (input_section, "TEXCOORD", 6, "xy", "normal parameters input"), (output_section, "TEXCOORD", 6, "xyzw", "world tangent output"), (output_section, "TEXCOORD", 7, "(?:xy|zw)", "normal UV output"), (output_section, "TEXCOORD", 8, "(?:xy|zw)", "normal parameters output"), (input_section, "TEXCOORD", 7, "xy", "emissive UV input"), (input_section, "TEXCOORD", 8, "xyzw", "emissive factor/strength input"), (output_section, "TEXCOORD", 9, "(?:xy|zw)", "emissive UV output"), (output_section, "TEXCOORD", 10, "xyzw", "emissive factor/strength output"), (input_section, "TEXCOORD", 9, "xyz", "occlusion UV/strength input"), (output_section, "TEXCOORD", 11, "(?:xy|zw)", "occlusion UV output"), (output_section, "TEXCOORD", 12, "[xyzw]", "occlusion strength output")):
         if not re.search(rf"\b{semantic}\s+{index}\s+({mask})\s+\d+\s+\S+\s+float\s+\1\b", signature, re.IGNORECASE):
             missing.append(f"{label} at {semantic}{index}.{mask}")
     if missing:
@@ -346,6 +350,8 @@ class ShaderReflectionTests(unittest.TestCase):
 ; TEXCOORD 8 xy 10 NONE float xy
 ; TEXCOORD 9 xy 11 NONE float xy
 ; TEXCOORD 10 xyzw 12 NONE float xyzw
+; TEXCOORD 11 xy 13 NONE float xy
+; TEXCOORD 12 x 14 NONE float x
 ; Output signature:
 ; SV_Target 0 xyzw 0 TARGET float xyzw
 ; Buffer Definitions:
@@ -355,10 +361,12 @@ class ShaderReflectionTests(unittest.TestCase):
 ; gMetallicRoughnessTexture texture f32 2d 1 T1 t1 1
 ; gNormalTexture texture f32 2d 2 T2 t2 1
 ; gEmissiveTexture texture f32 2d 3 T3 t3 1
-; gImageSampler sampler NA NA 0 S0 s4 1
-; gMetallicRoughnessSampler sampler NA NA 1 S1 s5 1
-; gNormalSampler sampler NA NA 2 S2 s6 1
-; gEmissiveSampler sampler NA NA 3 S3 s7 1
+; gOcclusionTexture texture f32 2d 4 T4 t4 1
+; gImageSampler sampler NA NA 0 S0 s5 1
+; gMetallicRoughnessSampler sampler NA NA 1 S1 s6 1
+; gNormalSampler sampler NA NA 2 S2 s7 1
+; gEmissiveSampler sampler NA NA 3 S3 s8 1
+; gOcclusionSampler sampler NA NA 4 S4 s9 1
 ; gModelLighting cbuffer NA NA NA CB0 cb0,space1 1
 """
         validate_model_pixel_shader_reflection(good, "gkcore_model.frag")
@@ -376,14 +384,19 @@ class ShaderReflectionTests(unittest.TestCase):
 
         # 役割別samplerを共用bindingに退行させない。
         with self.assertRaisesRegex(ShaderContractError, "gMetallicRoughnessSampler"):
-            validate_model_pixel_shader_reflection(good.replace("; gMetallicRoughnessSampler sampler NA NA 1 S1 s5 1\n", ""), "shared-sampler.frag")
+            validate_model_pixel_shader_reflection(good.replace("; gMetallicRoughnessSampler sampler NA NA 1 S1 s6 1\n", ""), "shared-sampler.frag")
         with self.assertRaisesRegex(ShaderContractError, "gNormalSampler"):
-            validate_model_pixel_shader_reflection(good.replace("; gNormalSampler sampler NA NA 2 S2 s6 1\n", ""), "shared-sampler.frag")
+            validate_model_pixel_shader_reflection(good.replace("; gNormalSampler sampler NA NA 2 S2 s7 1\n", ""), "shared-sampler.frag")
 
         # 自己発光の座標、係数、画像、samplerを欠く古いshaderを拒否する。
-        for missing_row, label in (("; TEXCOORD 9 xy 11 NONE float xy\n", "emissive UV"), ("; TEXCOORD 10 xyzw 12 NONE float xyzw\n", "emissive factor/strength"), ("; gEmissiveTexture texture f32 2d 3 T3 t3 1\n", "gEmissiveTexture"), ("; gEmissiveSampler sampler NA NA 3 S3 s7 1\n", "gEmissiveSampler")):
+        for missing_row, label in (("; TEXCOORD 9 xy 11 NONE float xy\n", "emissive UV"), ("; TEXCOORD 10 xyzw 12 NONE float xyzw\n", "emissive factor/strength"), ("; gEmissiveTexture texture f32 2d 3 T3 t3 1\n", "gEmissiveTexture"), ("; gEmissiveSampler sampler NA NA 3 S3 s8 1\n", "gEmissiveSampler")):
             with self.subTest(label=label), self.assertRaisesRegex(ShaderContractError, label):
                 validate_model_pixel_shader_reflection(good.replace(missing_row, ""), "no-emission.frag")
+
+        # 遮蔽の入力と画像bindingを欠くshaderを受け付けない。
+        for missing_row, label in (("; TEXCOORD 11 xy 13 NONE float xy\n", "occlusion UV"), ("; TEXCOORD 12 x 14 NONE float x\n", "occlusion strength"), ("; gOcclusionTexture texture f32 2d 4 T4 t4 1\n", "gOcclusionTexture"), ("; gOcclusionSampler sampler NA NA 4 S4 s9 1\n", "gOcclusionSampler")):
+            with self.subTest(label=label), self.assertRaisesRegex(ShaderContractError, label):
+                validate_model_pixel_shader_reflection(good.replace(missing_row, ""), "no-occlusion.frag")
 
     def test_rejects_model_reflection_without_lighting_abi(self):
         with self.assertRaisesRegex(ShaderContractError, "LightingConstants at b0, space1"):

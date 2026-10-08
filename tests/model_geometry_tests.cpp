@@ -87,7 +87,7 @@ bool Near(float a, float b, float tolerance = 0.0002f)
 bool TestVertexContractAndBasicLightingPayload()
 {
     static_assert(sizeof(Vertex) == 40, "legacy vertex ABI remains unchanged");
-    static_assert(sizeof(ModelRenderVertex) == 144, "lit model vertex ABI is 144 bytes");
+    static_assert(sizeof(ModelRenderVertex) == 160, "lit model vertex ABI is 160 bytes");
     const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
     const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
     detail::ModelResource model{};
@@ -185,6 +185,109 @@ bool TestEmissivePayloadAndClipping()
     if (!Check(!AppendLitModelPart(frame, draw, part, vertices, 32, error), "non-finite emissive UV is rejected"))
         return false;
     return Check(vertices.Count() == 1 && Near(vertices.At(0).surface.position[0], 91.0f) && !error.Empty(), "invalid emissive input preserves prior output");
+}
+
+/**
+ * 環境遮蔽UVと強度をclipping後も保持し、未使用時は無効値を渡す。
+ */
+bool TestOcclusionPayloadAndClipping()
+{
+    const Vec3 points[3] = { { -1, 0, -4.95f }, { 1, 0, 0 }, { 0, 1, 0 } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource occlusionImage{};
+    model.textures.Append(&occlusionImage);
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // 現在の頂点へ設定する基本色と異なる環境遮蔽UV。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.occlusionUv[0] = -2.0f + 4.0f * vertex.uv[0] + vertex.uv[1];
+        vertex.occlusionUv[1] = 3.0f - vertex.uv[0] + 2.0f * vertex.uv[1];
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    part.occlusionTextureIndex = 0;
+    part.occlusionStrength = 0.35f;
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "valid occlusion payload survives near clipping"))
+        return false;
+    if (!Check(vertices.Count() == 6, "occlusion near clipping emits the clipped quad"))
+        return false;
+    for (uint32_t index = 0; index < vertices.Count(); ++index)
+    {
+        // clipping後の頂点と環境遮蔽UV・strength payload。
+        const ModelRenderVertex& vertex = vertices.At(index);
+        const float u = vertex.surface.uv[0];
+        const float v = vertex.surface.uv[1];
+        if (!Check(Near(vertex.occlusionUvStrength[0], -2.0f + 4.0f * u + v) && Near(vertex.occlusionUvStrength[1], 3.0f - u + 2.0f * v), "occlusion UV uses the same clip-edge interpolation ratio"))
+            return false;
+        if (!Check(Near(vertex.occlusionUvStrength[2], 0.35f) && Near(vertex.occlusionUvStrength[3], 0.0f), "occlusion strength occupies z and the reserved component stays zero"))
+            return false;
+    }
+
+    part.occlusionTextureIndex = -1;
+    part.occlusionStrength = 1.0f;
+    vertices.Clear();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "model without occlusion texture remains valid"))
+        return false;
+    if (!Check(Near(vertices.At(0).occlusionUvStrength[2], 0.0f) && Near(vertices.At(0).occlusionUvStrength[3], 0.0f), "missing occlusion texture disables the vertex strength"))
+        return false;
+
+    vertices.Clear();
+    ModelRenderVertex sentinel{};
+    sentinel.surface.position[0] = 91.0f;
+    if (!vertices.Append(sentinel))
+        return Check(false, "occlusion geometry sentinel allocation failed");
+    model.vertices.At(0).occlusionUv[0] = std::numeric_limits<float>::quiet_NaN();
+    if (!Check(!AppendLitModelPart(frame, draw, part, vertices, 32, error), "non-finite occlusion UV is rejected"))
+        return false;
+    return Check(vertices.Count() == 1 && Near(vertices.At(0).surface.position[0], 91.0f) && !error.Empty(), "invalid occlusion input preserves prior output");
+}
+
+/**
+ * far planeで新しい交点を作る場合も遮蔽UVを位置と同じ比率で切る。
+ */
+bool TestOcclusionFarPlaneClipping()
+{
+    const Vec3 points[3] = { { -1, 0, 0 }, { 1, 0, 2000.0f }, { 0, 1, 0 } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::ImageResource occlusionImage{};
+    model.textures.Append(&occlusionImage);
+    for (uint32_t index = 0; index < model.vertices.Count(); ++index)
+    {
+        // far clippingで線形関係を保つ遮蔽UV。
+        detail::ModelVertex& vertex = model.vertices.At(index);
+        vertex.occlusionUv[0] = 1.0f + 2.0f * vertex.uv[0] - vertex.uv[1];
+        vertex.occlusionUv[1] = -3.0f + vertex.uv[0] + 5.0f * vertex.uv[1];
+    }
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    part.occlusionTextureIndex = 0;
+    part.occlusionStrength = 0.6f;
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error), "valid occlusion payload survives far clipping"))
+        return false;
+    if (!Check(vertices.Count() == 6, "occlusion far clipping emits the clipped quad"))
+        return false;
+    for (uint32_t index = 0; index < vertices.Count(); ++index)
+    {
+        // far plane交点を含む環境遮蔽頂点。
+        const ModelRenderVertex& vertex = vertices.At(index);
+        const float u = vertex.surface.uv[0];
+        const float v = vertex.surface.uv[1];
+        if (!Check(Near(vertex.occlusionUvStrength[0], 1.0f + 2.0f * u - v) && Near(vertex.occlusionUvStrength[1], -3.0f + u + 5.0f * v) && Near(vertex.occlusionUvStrength[2], 0.6f), "far-clipped occlusion UV uses the same edge interpolation ratio"))
+            return false;
+    }
+    return true;
 }
 
 bool TestInverseScaleRotationAndNegativeScale()
@@ -632,5 +735,5 @@ bool TestCapacityAndAllocationFailuresPreserveOutput()
 
 int main()
 {
-    return TestVertexContractAndBasicLightingPayload() && TestEmissivePayloadAndClipping() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
+    return TestVertexContractAndBasicLightingPayload() && TestEmissivePayloadAndClipping() && TestOcclusionPayloadAndClipping() && TestOcclusionFarPlaneClipping() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
 }

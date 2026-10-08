@@ -436,7 +436,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
-    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* materialSampler = nullptr, const detail::FTextureSampler* surfaceNormalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissionSampler = nullptr) -> bool
+    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* materialSampler = nullptr, const detail::FTextureSampler* surfaceNormalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissionSampler = nullptr, detail::ImageResource* occlusionImage = nullptr, const detail::FTextureSampler* ambientOcclusionSampler = nullptr) -> bool
     {
         if (count == 0)
             return true;
@@ -446,13 +446,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
         const detail::FTextureSampler normalValue = surfaceNormalSampler ? *surfaceNormalSampler : detail::FTextureSampler{};
         // 自己発光画像も独立したsampler値で比較する。
         const detail::FTextureSampler emissiveValue = emissionSampler ? *emissionSampler : detail::FTextureSampler{};
-        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage && runs_.At(runs_.Count() - 1).emissiveImage == emissiveImage && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).baseColorSampler, baseValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).metallicRoughnessSampler, materialValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).normalSampler, normalValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).emissiveSampler, emissiveValue);
+        // 遮蔽画像も描画登録元から独立したsampler値で保持する。
+        const detail::FTextureSampler occlusionValue = ambientOcclusionSampler ? *ambientOcclusionSampler : detail::FTextureSampler{};
+        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage && runs_.At(runs_.Count() - 1).emissiveImage == emissiveImage && runs_.At(runs_.Count() - 1).occlusionImage == occlusionImage && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).baseColorSampler, baseValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).metallicRoughnessSampler, materialValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).normalSampler, normalValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).emissiveSampler, emissiveValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).occlusionSampler, occlusionValue);
         if (canBatch)
         {
             runs_.At(runs_.Count() - 1).count += count;
             return true;
         }
-        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage, baseValue, materialValue, normalValue, emissiveImage, emissiveValue };
+        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage, baseValue, materialValue, normalValue, emissiveImage, emissiveValue, occlusionImage, occlusionValue };
         return runs_.Append(run);
     };
     for (uint32_t layer = 0; layer < 2; ++layer)
@@ -533,13 +535,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     detail::ImageResource* normalImage = litModel ? (part.normalTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.normalTextureIndex)) : whiteImage_) : nullptr;
                     // 自己発光画像がない材質では、線形RGB係数へ白を掛ける。
                     detail::ImageResource* emissiveImage = litModel ? (part.emissiveTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.emissiveTextureIndex)) : whiteImage_) : nullptr;
+                    // 画像がない材質は環境光を弱めない白を使う。
+                    detail::ImageResource* occlusionImage = litModel ? (part.occlusionTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.occlusionTextureIndex)) : whiteImage_) : nullptr;
                     if (needsTexture)
                     {
                         if (!image)
                             return SetError(error, "The model texture fallback is unavailable");
                         if (litModel)
                         {
-                            if (!metallicRoughnessImage || !normalImage || !emissiveImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error, normalImage, &part.baseColorSampler, &part.metallicRoughnessSampler, &part.normalSampler, emissiveImage, &part.emissiveSampler))
+                            if (!metallicRoughnessImage || !normalImage || !emissiveImage || !occlusionImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error, normalImage, &part.baseColorSampler, &part.metallicRoughnessSampler, &part.normalSampler, emissiveImage, &part.emissiveSampler, occlusionImage, &part.occlusionSampler))
                                 return false;
                         }
                         else if (!textureCache_.Prepare(image, error))
@@ -547,7 +551,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     }
                     const bool alphaBlend = customShader && (draw.flags & detail::DrawAlphaBlend) != 0;
                     const bool depthTest = layer == 0;
-                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex, metallicRoughnessImage, normalImage, litModel ? &part.baseColorSampler : nullptr, litModel ? &part.metallicRoughnessSampler : nullptr, litModel ? &part.normalSampler : nullptr, emissiveImage, litModel ? &part.emissiveSampler : nullptr))
+                    if (!appendRun(first, count, depthTest, needsTexture, alphaBlend, image, draw, customShader, litModel, customDrawIndex, metallicRoughnessImage, normalImage, litModel ? &part.baseColorSampler : nullptr, litModel ? &part.metallicRoughnessSampler : nullptr, litModel ? &part.normalSampler : nullptr, emissiveImage, litModel ? &part.emissiveSampler : nullptr, occlusionImage, litModel ? &part.occlusionSampler : nullptr))
                         return SetError(error, "The frame draw-run allocation failed");
                 }
                 if (customShader)
@@ -702,7 +706,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             if (run.textured)
             {
                 // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
-                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler, run.emissiveImage, &run.emissiveSampler) : textureCache_.Bind(command, run.image, error);
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler, run.emissiveImage, &run.emissiveSampler, run.occlusionImage, &run.occlusionSampler) : textureCache_.Bind(command, run.image, error);
                 if (!bound)
                 {
                     endCmd(command);
@@ -779,7 +783,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             if (run.textured)
             {
                 // 内蔵モデルは2画像を同時に、その他の描画は従来の1画像を結ぶ。
-                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler, run.emissiveImage, &run.emissiveSampler) : textureCache_.Bind(command, run.image, error);
+                const bool bound = run.litModel ? textureCache_.BindModel(command, run.image, run.metallicRoughnessImage, error, run.normalImage, &run.baseColorSampler, &run.metallicRoughnessSampler, &run.normalSampler, run.emissiveImage, &run.emissiveSampler, run.occlusionImage, &run.occlusionSampler) : textureCache_.Bind(command, run.image, error);
                 if (!bound)
                 {
                     endCmd(command);

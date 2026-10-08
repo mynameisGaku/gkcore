@@ -77,6 +77,10 @@ struct RenderRun
     detail::ImageResource* emissiveImage = nullptr;
     // 自己発光画像の繰り返しと補間方法。
     detail::FTextureSampler emissiveSampler{};
+    // 環境光を弱める材質画像。
+    detail::ImageResource* occlusionImage = nullptr;
+    // 遮蔽画像の繰り返しと補間方法。
+    detail::FTextureSampler occlusionSampler{};
 };
 
 /**

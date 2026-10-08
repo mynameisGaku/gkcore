@@ -49,6 +49,8 @@ struct ModelVertex
     float tangent[4]{};
     // 自己発光画像に使う独立した画像座標。
     float emissiveUv[2]{};
+    // 環境遮蔽画像に使う独立した画像座標。
+    float occlusionUv[2]{};
 };
 
 /**
@@ -88,6 +90,12 @@ struct ModelMaterial
     int32_t emissiveTextureIndex = -1;
     // 自己発光画像の座標処理と補間方法。
     FTextureSampler emissiveSampler{};
+    // 環境遮蔽画像の効果量。0から1の範囲を使う。
+    float occlusionStrength = 1.0f;
+    // 環境遮蔽画像の配列index。未使用は-1。
+    int32_t occlusionTextureIndex = -1;
+    // 環境遮蔽画像の座標処理と補間方法。
+    FTextureSampler occlusionSampler{};
 };
 
 /**

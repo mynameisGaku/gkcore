@@ -29,6 +29,8 @@ STRUCT(VSInput)
     DATA(float2, EmissiveUV, TEXCOORD7);
     // 自己発光のRGB係数と強度。
     DATA(float4, EmissiveFactorStrength, TEXCOORD8);
+    // 遮蔽画像のUVと、画像なしでは0となる効果量。
+    DATA(float3, OcclusionUVStrength, TEXCOORD9);
 };
 
 /**
@@ -62,6 +64,10 @@ STRUCT(VSOutput)
     DATA(float2, EmissiveUV, TEXCOORD9);
     // RGB係数とHDR強度は材質ごとに固定して渡す。
     DATA(FLAT(float4), EmissiveFactorStrength, TEXCOORD10);
+    // 環境光を弱める画像の独立した座標。
+    DATA(float2, OcclusionUV, TEXCOORD11);
+    // 効果量は材質ごとに固定し、頂点間で補間しない。
+    DATA(FLAT(float), OcclusionStrength, TEXCOORD12);
 };
 
 /**
@@ -86,5 +92,7 @@ VSOutput VS_MAIN(VSInput input)
     output.NormalParameters = input.NormalParameters;
     output.EmissiveUV = input.EmissiveUV;
     output.EmissiveFactorStrength = input.EmissiveFactorStrength;
+    output.OcclusionUV = input.OcclusionUVStrength.xy;
+    output.OcclusionStrength = input.OcclusionUVStrength.z;
     RETURN(output);
 }

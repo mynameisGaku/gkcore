@@ -944,3 +944,44 @@ Release全51/51は276.84秒、自己発光GPU57.32秒で成功しました。Run
 自己発光の取得は45画像で、Scene参照との差は最大1、UIは0です。照明0の発光、HDR/Bloom on/off、frame130/131は参照と全画素一致しました。同じimageのRepeat/Clampは左右の最大差96、ミップあり/なし反例は最大188、Bloomの有無は最大179の差を確認し、差がある画素数も要求します。単なる同一画像同士の比較ではありません。一般的な画質評価・動的なちらつき・性能・他GPUを確認した結果にはしていません。
 
 Debugも全51/51成功（299.65秒、自己発光GPU62.66秒、SDK consumer package3.83秒）しました。45画像と判定JSONはRelease/Debug間で完全一致し、既存normal38・sampler34・mip28画像もbyte一致しました。DebugはD3D12 InfoQueueの取得を必須にした画像検査を通り、GPU-based validationは有効にしていません。最新ログは `model-emissive-debug-final-{build,tests}.log` です。PNGは最終取得RGBを変更せず保存し、PNGのdecode後もPPMとの一致を確認しました。fixed clang-format12、UTF-8 BOM/CRLF、文書リンク、STLなしの監査も確認済みです。
+
+## 2026-10-08 GLBの環境遮蔽画像
+
+occlusionTextureを追加しました。線形Rとstrengthから `1 + strength * (R - 1)` を求め、一様環境光だけへ掛けます。方向光と自己発光は変更しません。strengthは省略時1、有限かつ0〜1を使います。独立UV・sampler・ミップを保持し、同じimageの線形用途はMR画像とGPU資源を共有します。画像がないモデルはGPUへ渡す効果量を0にし、従来の明るさを保ちます。
+
+まずフィールドと実GLB fixture・CPU契約だけを追加しました。RuntimeOFF Debugのmodel_geometryは「occlusion UV uses the same clip-edge interpolation ratio」、model_occlusionは「unexpected geometry or resource counts: occlusion-default.glb」でREDでした。Release GPUは遮蔽が未反映のdefault-repeat材質と参照に45,000画素の差、最大107を検出しました。ログは `model-occlusion-cpu-red-{build,tests}.log`、`model-occlusion-geometry-red-{build,tests}.log`、`model-occlusion-gpu-red-{build,tests}.log` です。
+
+GPU REDの前にrootがfixtureを確認し、R値の並びと参照値が逆、共有画像の基本色RGBを均一な灰色へ置き換えていた参照の誤りを修正しました。共有PNGのsRGB基本色と線形Rを区別して期待色を作り、ミップの8bit平均を128/255へ揃えています。混合照明の比較も、実材質のambient1/AO0/strength.5と参照のambient.5/AOなしへ設定を分け、同じ方向光・自己発光を維持しました。これらはRuntimeの不具合とは分けた参照設定の修正です。
+
+専用UVをloaderからnear/far clippingへ同じ交点比率で渡し、頂点末尾へUV・効果量・予約0を保持します。内部頂点は160byte、14属性です。固定Forgeの15属性・TEXCOORD0〜9の範囲内で、vertex inputのTEXCOORD9をfloat3として読み、pixel inputのTEXCOORD11 UV/TEXCOORD12固定強度へ分けます。SRTはt0〜t4の5画像、s5〜s9の5samplerへ拡張し、Scene/UIの準備・bind・描画の結合条件へ画像とsamplerを加えました。公開カスタムshader ABIは変更していません。
+
+独立read-onlyレビューではloader・材質計画・geometryと、cacheの所有・容量・退避・descriptor、およびrenderer・shader・GPU参照を担当外のagentが確認し、重大な問題は見つかりませんでした。planの不正値では候補を公開せず、既存partの全論理fieldが保たれることを比較します。near/far両方のUV補間と、NaN UVでの出力保持もCPUで検査します。
+
+最初のGPU focused検査はMASKの180画素、最大130で失敗しました。差は画像の左端1列だけで、中央の切り抜き境界と右側の色は参照に一致していました。元画像のRepeat/Linearではアルファが端で折り返されるため、硬い半面の参照とは一致しません。テスト用基本色のsamplerをClamp/Nearestへ明示し、AO画像側の既定Repeat/Linearは保ちました。Runtimeの描画や許容誤差は変更していません。
+
+修正後のfocused CPU2/GPU1は成功（61.50秒、GPU61.45秒）。取得は43画像で、Scene/UI参照との差は0でした。R0/128/255の中心RGBは0/170/231、同じimageのRepeat/Clampは124/170、同じimage・samplerのstrength0/1は231/124となり、材質設定を無視すると失敗する差を確認しています。方向光のみ・自己発光のみ・混合照明、frame130/131は独立参照と全画素一致しました。反射式をテスト側へ複製せず、線形RGBへAOを焼いた既存の基本色材質や環境光の設定を参照にしています。
+
+RuntimeOFF Debug/Releaseは各36/36成功（3.34秒・3.23秒）。ログは `model-occlusion-cpu-{debug,release}-final-{build,tests}.log`、focusedは `model-occlusion-release-focused-{build,tests}.log` です。
+
+```bat
+python tools/build_gkcore_shaders.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir build/runtime-windows/gkcore_shaders
+python tests/support/compile_model_shader_fixtures.py --forge-root .devtools/The-Forge --dxc-root .devtools/dxc-1.8.2405 --output-dir tests/assets/shaders
+cmake --build build/runtime-windows --config Release --parallel 8
+ctest --test-dir build/runtime-windows -C Release --output-on-failure
+cmake --build build/runtime-windows-debug --config Debug --parallel 8
+ctest --test-dir build/runtime-windows-debug -C Debug --output-on-failure
+cmake --build build/dev-windows --config Debug --parallel 8
+ctest --test-dir build/dev-windows -C Debug --output-on-failure
+cmake --build build/dev-windows --config Release --parallel 8
+ctest --test-dir build/dev-windows -C Release --output-on-failure
+```
+
+Release全53/53は343.66秒で成功しました。遮蔽GPU56.54秒、SDK consumerを含むpackage3.79秒です。従来の自己発光・sampler・ミップ・法線・custom shader・入力・配布物も同じ全体実行で確認しました。ログは `build/native-validation/model-occlusion-release-final-tests.log`、ビルドは `model-occlusion-release-focused-build.log` です。
+
+最終read-only確認で、MASKだけ自動比較がmodel領域に限られていると指摘されました。保存PPMは全画面でも一致していましたが、検査も全640×480へ広げ、結果JSONへ比較画素数を記録するようにしました。Runtimeとfixtureは変更せず、この強い条件をReleaseで再検査してからDebugの全体検査を実行します。
+
+全画面比較へ広げたRelease遮蔽GPUも成功（56.69秒）しました。MASKを含む各参照比較は307,200画素を対象とし、最大差0です。ミップ有無の差の検査は指定model領域45,000画素を対象にしています。ログは `model-occlusion-release-strict-tests.log` です。
+
+Debugも全53/53成功（371.43秒）しました。取得43画像と判定JSONはRelease/Debugで完全一致、全参照比較は307,200画素・差0でした。従来normal38・sampler34・mip28画像もbyte単位一致しています。ログは `model-occlusion-debug-final-{build,tests}.log` です。Debug画像テストはD3D12 InfoQueueの取得を必須にしており、その条件を通過しました。GPU-based validationは有効にしていません。
+
+検証PCはWindows 11 Pro build26200、RTX 4070 SUPER / driver610.74、VS2026 / v142 14.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。RuntimeOFFはMSVC19.51 / SDK10.0.28000.0です。新規ライブラリや公開shader ABIの変更はありません。画像生成からの動的なAO、全面画質、FPS、他GPU、GPU-based validation、device loss復旧は今回の確認範囲外です。

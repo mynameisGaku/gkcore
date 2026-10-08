@@ -31,6 +31,10 @@ STRUCT(VSOutput)
     DATA(float2, EmissiveUV, TEXCOORD9);
     // RGB係数とHDR強度は材質ごとに固定して渡す。
     DATA(FLAT(float4), EmissiveFactorStrength, TEXCOORD10);
+    // 環境光を弱める画像の独立した座標。
+    DATA(float2, OcclusionUV, TEXCOORD11);
+    // 効果量は材質ごとに固定し、頂点間で補間しない。
+    DATA(FLAT(float), OcclusionStrength, TEXCOORD12);
 };
 
 
@@ -134,8 +138,12 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     // 方向光の強さを掛けたdirect反射。
     const float3 direct = (diffuse + specular) *
         max(gModelLighting.DirectionIntensity.w, 0.0) * nDotL;
+    // 遮蔽は線形のRだけを読み、GBAは効果へ使わない。
+    const float occlusionSample = SampleTex2D(gOcclusionTexture, gOcclusionSampler, input.OcclusionUV).r;
+    // 画像なしや強度0では環境光を維持する。
+    const float ambientVisibility = 1.0 + input.OcclusionStrength * (occlusionSample - 1.0);
     // 基本色にambient強度を掛けた環境光。
-    const float3 ambient = baseColor * max(gModelLighting.Ambient.x, 0.0);
+    const float3 ambient = baseColor * max(gModelLighting.Ambient.x, 0.0) * ambientVisibility;
     // sRGB画像を線形RGBで読み、画像alphaは自己発光に使わない。
     const float3 emissiveSample = SampleTex2D(gEmissiveTexture, gEmissiveSampler, input.EmissiveUV).rgb;
     // 係数と強度を分けて掛け、反射光へ自己発光を加える。
