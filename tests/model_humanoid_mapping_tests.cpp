@@ -122,6 +122,44 @@ bool TestCommonAliases()
 }
 
 /**
+ * 外部motionの太ももからつま先までを、実際のMixamo名と階層で対応付ける。
+ */
+bool TestMixamoLegChains()
+{
+    // 腰の下に左右の太もも、すね、足首、つま先を持つ骨格。
+    FHumanoidMappingSource source;
+    const char* names[] = { "Armature", "mixamorig:Hips", "mixamorig:LeftUpLeg", "mixamorig:LeftLeg", "mixamorig:LeftFoot", "mixamorig:LeftToeBase", "mixamorig1:RightUpLeg", "mixamorig1:RightLeg", "mixamorig1:RightFoot", "mixamorig1:RightToeBase" };
+    const int32_t parents[] = { -1, 0, 1, 2, 3, 4, 1, 6, 7, 8 };
+    if (!SetupSource(source, names, parents, 10))
+    {
+        return false;
+    }
+    // 自動推定前の指定と、推定結果を分けて保持する。
+    gk::Array<uint16_t> existing, output;
+    gk::String error;
+    if (!gk::model::InferHumanoidBoneRoles(source, existing, output, error))
+    {
+        fprintf(stderr, "Mixamo leg inference failed: %s\n", error.CStr());
+        return false;
+    }
+    using Bone = gk::EHumanoidBone;
+    const uint16_t expected[] = { 0, static_cast<uint16_t>(Bone::Hips), static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::LeftFoot), static_cast<uint16_t>(Bone::LeftToes), static_cast<uint16_t>(Bone::RightUpperLeg), static_cast<uint16_t>(Bone::RightLowerLeg), static_cast<uint16_t>(Bone::RightFoot), static_cast<uint16_t>(Bone::RightToes) };
+    if (output.Count() != 10)
+    {
+        return false;
+    }
+    for (uint32_t i = 0; i < 10; ++i)
+    {
+        if (output.At(i) != expected[i])
+        {
+            fprintf(stderr, "Mixamo leg role mismatch at %s: expected=%u actual=%u\n", names[i], expected[i], output.At(i));
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * 日本語のMMD骨名をUTF-8表記のまま照合する。
  */
 bool TestJapaneseAliases()
@@ -234,7 +272,7 @@ bool TestInvalidInputIsAtomicFailure()
 
 int main()
 {
-    if (!TestCommonAliases() || !TestJapaneseAliases() || !TestYumekaBoneAliases() || !TestManualAndUnwritableBones() || !TestDuplicateRoleIsAtomicFailure() || !TestInvalidInputIsAtomicFailure())
+    if (!TestCommonAliases() || !TestMixamoLegChains() || !TestJapaneseAliases() || !TestYumekaBoneAliases() || !TestManualAndUnwritableBones() || !TestDuplicateRoleIsAtomicFailure() || !TestInvalidInputIsAtomicFailure())
         return 1;
     return 0;
 }

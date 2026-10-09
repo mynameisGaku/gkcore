@@ -15,7 +15,7 @@
 
 ## テストと再現性
 
-モデルアニメーションはGLB/FBXのclip・skin・morphと連番OBJに対応し、外部clip、2clipのブレンド、人型ボーンの役割対応、2ボーン・汎用chainのIKを提供します。操作と入力条件は[モデルアニメーション](model-animation.md)を参照してください。描画時点の姿勢を保持し、別instanceの時刻を独立して進めます。骨名から人型の役割を推定し、YUMEKAへMixamoのSilly Dancing・Capoeiraを適用して47本の対応とブレンドを実機で確認しました。材質設定APIと実モデルviewerも用意しています。利用方法と提供assetの扱いは[実モデルviewer](model-viewer.md)を参照してください。
+モデルアニメーションはGLB/FBXのclip・skin・morphと連番OBJに対応し、外部clip、2clipのブレンド、人型ボーンの役割対応、2ボーン・汎用chainのIKを提供します。操作と入力条件は[モデルアニメーション](model-animation.md)を参照してください。描画時点の姿勢を保持し、別instanceの時刻を独立して進めます。骨名から人型の役割を推定し、YUMEKAへMixamoのSilly Dancing・Capoeiraを適用して51本の対応とブレンドを実機で確認しました。左右の太もも・すね・足首・つま先の8役割は、両motionとの実際の対応も確認しています。材質設定APIと実モデルviewerも用意しています。利用方法と提供assetの扱いは[実モデルviewer](model-viewer.md)を参照してください。
 
 2026-10-09、Windows 11 Pro x64 build 26200、RTX 4070 SUPER / driver 617.42、Visual Studio 2026 / v142 14.29（MSVC 19.29.30159）、Windows SDK 10.0.22621.0、CMake 4.3.1でRelease・Debug Runtimeをビルドし、全CTestが各78/78件成功しました。DebugはD3D12 InfoQueueの取得を画像テストで必須確認しています。両構成のForgeライブラリとRuntime出力は別フォルダーへ保存し、install済みSDK consumerでもInit、描画、Present、Shutdownが成功しました。
 
@@ -53,7 +53,7 @@ FSL artifactは`python tests/shader_contract_tests.py`で検査します。固�
 
 ## 次に進める内容
 
-実モデルviewerは、RTX 4070 SUPER・Release・1280×720の3,000frame連続計測で、静止・回転表示が約340FPS、外部motionのブレンドが約338FPSでした。条件と再計測方法は[モデルviewerの処理時間](model-performance.md)を参照してください。他GPUや下記の残作業は別に確認します。
+実モデルviewerは、RTX 4070 SUPER・Release・1280×720の3,000frame連続計測で、静止・回転表示が約340FPS、外部motionのブレンドが約325FPSでした。条件と再計測方法は[モデルviewerの処理時間](model-performance.md)を参照してください。他GPUや下記の残作業は別に確認します。
 
 1. 高負荷での連続描画、入力操作、各エフェクトの個別設定をGPU画像と起動画面で確認し、画質評価を進める。現在の画像テストは代表画素・領域、各効果の個別設定とUI保持、6フレームの設定切り替え、多数の矩形を123フレーム描いた後の出力を検査する。
 2. 初学者向け手引きを使った導入確認と、他GPU・全モデル形式の実機表示を検証する。インストールSDK consumerのInit・最初のPresentは確認済み。

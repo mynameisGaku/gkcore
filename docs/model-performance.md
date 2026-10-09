@@ -10,9 +10,9 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 | --- | --- | --- | --- |
 | YUMEKA 静止 | 3000 / 300 | 340.020 | 2.976ms |
 | YUMEKA 毎frame回転 | 3000 / 300 | 340.020 | 2.974ms |
-| YUMEKA + Silly Dancing / Capoeiraのブレンド | 3000 / 300 | 338.147 | 3.289ms |
+| YUMEKA + Silly Dancing / Capoeiraのブレンド | 3000 / 300 | 324.762 | 3.497ms |
 
-ブレンド再生は計測用コードを含めない通常のRelease Runtimeで、約9秒の連続計測を完走しました。平均300FPS以上を確認した結果で、全frameが3.333ms以下だったことや、全モデル・他GPUで同じFPSが出ることを保証するものではありません。CPUのDebug/Release各53件、native RuntimeのDebug/Release各78件の統合検査とSDK consumerが成功しました。測定ログは`build/native-validation/final-real-model-{static-,rotate-}benchmark.log`、ブレンドは`final-real-model-benchmark.log`です。
+ブレンドは太もも・すねの対応漏れを修正後、両motionを51本の骨へ適用した測定です。再生は計測用コードを含めない通常のRelease Runtimeで、約9秒の連続計測を完走しました。平均300FPS以上を確認した結果で、全frameが3.333ms以下だったことや、全モデル・他GPUで同じFPSが出ることを保証するものではありません。GPU変形追加時点のnative全体検査はDebug/Release各78件が成功しました。脚対応修正後はCPU各53件と、animation・GPU画像・SDK consumerを含む関連統合検査各9件が成功しています。測定ログは`build/native-validation/final-real-model-{static-,rotate-}benchmark.log`、脚対応修正後のブレンドは`mixamo-legs-benchmark.log`です。
 
 ## 再計測
 

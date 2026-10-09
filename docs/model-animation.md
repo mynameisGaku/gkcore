@@ -57,7 +57,7 @@ gk::ApplyModelAnimation(character, motion);
 
 対応表はclipの適用時に確定します。役割を変更した後は再度`ApplyModelAnimation`を呼んでください。異なる体型でも、初期姿勢と役割の設定が適切であることが前提です。
 
-実モデルでは、317骨のYUMEKA FBXへMixamoの`Silly Dancing.fbx`と`Capoeira.fbx`を外部clipとして適用する確認を行いました。両motionは66骨で、名前から役割が推定された骨はYUMEKA側53、motion側48、共通して対応した骨は47です。未対応の役割は初期姿勢のまま残るため、必要なら手動で補います。この結果は該当モデル・motionでの確認であり、任意の人型骨格への完全自動retargetや画質改善を保証しません。調達したCesium Man GLBはローカル検証専用です。元モデルとライセンス情報は[Khronos glTF Sample AssetsのCesiumMan](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)にあり、CC-BY-4.0とCesiumのLegalMark条件が付くため、SDKや配布物には含めません。ユーザー提供のモデルやmotionも、権利確認なしに再配布しないでください。
+実モデルでは、317骨のYUMEKA FBXへMixamoの`Silly Dancing.fbx`と`Capoeira.fbx`を外部clipとして適用する確認を行いました。両motionは66骨で、名前から役割が推定された骨はYUMEKA側53、motion側52、共通して対応した骨は51です。左右の太もも・すね・足首・つま先の8役割は、両motionで実際の対応先を照会して確認しています。未対応の役割は初期姿勢のまま残るため、必要なら手動で補います。この結果は該当モデル・motionでの確認であり、任意の人型骨格への完全自動retargetや画質改善を保証しません。調達したCesium Man GLBはローカル検証専用です。元モデルとライセンス情報は[Khronos glTF Sample AssetsのCesiumMan](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)にあり、CC-BY-4.0とCesiumのLegalMark条件が付くため、SDKや配布物には含めません。ユーザー提供のモデルやmotionも、権利確認なしに再配布しないでください。
 
 `SetModelMaterial`と`FModelMaterialSettings`ではモデル材質の基本色、基本色画像、alpha mode、cutoffを変更できます。材質は複製して更新されるため、同じ形状を使う別instanceや、すでに`DrawModel`で予約した描画の材質は変わりません。`generateMipmaps`は既定でtrueとなり、基本色画像の縮小表示にmip chainを使います。既定alpha modeはOPAQUEで、基本色画像のalphaは無視します。これは任意の元シェーダーやtoon材質を再現する機能ではありません。
 

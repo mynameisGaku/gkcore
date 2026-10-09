@@ -167,8 +167,10 @@ uint16_t MatchRole(const char* sourceName, uint16_t parentRole)
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftLowerArm), static_cast<uint16_t>(Bone::RightLowerArm));
     if (strcmp(name, "hand") == 0 || strcmp(name, "wrist") == 0)
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftHand), static_cast<uint16_t>(Bone::RightHand));
-    if (strcmp(name, "upperleg") == 0 || strcmp(name, "thigh") == 0)
+    if (strcmp(name, "upperleg") == 0 || strcmp(name, "upleg") == 0 || strcmp(name, "thigh") == 0)
+    {
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::RightUpperLeg));
+    }
     if (strcmp(name, "lowerleg") == 0 || strcmp(name, "calf") == 0 || strcmp(name, "knee") == 0)
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::RightLowerLeg));
     if (strcmp(name, "leg") == 0)

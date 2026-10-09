@@ -222,6 +222,38 @@ void ReportAnimationMapping(gk::ModelHandle model, uint32_t slot, const char* la
 }
 
 /**
+ * 左右それぞれ4つの脚roleが指定motionの同じ役割へ結び付いたことを確認する。
+ */
+bool RequireHumanoidLegMappings(gk::ModelHandle model, gk::ModelAnimationHandle animation, uint32_t slot, const char* label)
+{
+    // 必須とする左右の脚役割。
+    const gk::EHumanoidBone roles[] = { gk::EHumanoidBone::LeftUpperLeg, gk::EHumanoidBone::LeftLowerLeg, gk::EHumanoidBone::LeftFoot, gk::EHumanoidBone::LeftToes, gk::EHumanoidBone::RightUpperLeg, gk::EHumanoidBone::RightLowerLeg, gk::EHumanoidBone::RightFoot, gk::EHumanoidBone::RightToes };
+    bool passed = true;
+    for (uint32_t roleIndex = 0; roleIndex < sizeof(roles) / sizeof(roles[0]); ++roleIndex)
+    {
+        // 適用先とmotionで指定役割を持つ骨番号。
+        int32_t targetBone = -1;
+        int32_t sourceBone = -1;
+        for (uint32_t bone = 0; bone < gk::GetModelBoneCount(model); ++bone)
+            if (gk::GetModelBoneRole(model, bone) == roles[roleIndex])
+            {
+                targetBone = static_cast<int32_t>(bone);
+                break;
+            }
+        if (targetBone >= 0)
+            sourceBone = gk::GetModelAnimationSourceBone(model, static_cast<uint32_t>(targetBone), slot);
+        const bool sourceIndexValid = sourceBone >= 0 && static_cast<uint32_t>(sourceBone) < gk::GetAnimationBoneCount(animation);
+        const char* targetName = targetBone >= 0 ? gk::GetModelBoneName(model, static_cast<uint32_t>(targetBone)) : nullptr;
+        const char* sourceName = sourceIndexValid ? gk::GetAnimationBoneName(animation, static_cast<uint32_t>(sourceBone)) : nullptr;
+        const bool mapped = targetBone >= 0 && sourceIndexValid && gk::GetAnimationBoneRole(animation, static_cast<uint32_t>(sourceBone)) == roles[roleIndex];
+        printf("animation-leg-map %s: role=%u target=%s[%d] source=%s[%d] sourceRole=%u result=%s\n", label, static_cast<unsigned int>(roles[roleIndex]), targetName ? targetName : "<missing>", targetBone, sourceName ? sourceName : "<missing>", sourceBone, sourceIndexValid ? static_cast<unsigned int>(gk::GetAnimationBoneRole(animation, static_cast<uint32_t>(sourceBone))) : 0u, mapped ? "ok" : "missing");
+        if (!mapped)
+            passed = false;
+    }
+    return passed;
+}
+
+/**
  * mode名を確認し、描画回数を返す。
  */
 bool ParseMode(const char* text, const char*& mode, uint32_t& frameCount)
@@ -325,6 +357,9 @@ int main(int argc, char** argv)
     double externalDuration = 0.0;
     // blend用motionのclip長を保持する。
     double secondaryDuration = 0.0;
+    // 環境変数で脚roleの対応を必須にする。
+    const char* requireHumanoidLegs = getenv("GKCORE_TEST_REQUIRE_HUMANOID_LEGS");
+    const bool requireHumanoidLegMappings = requireHumanoidLegs && strcmp(requireHumanoidLegs, "1") == 0;
     // 適用後に解放する主motionのhandle。
     gk::ModelAnimationHandle externalAnimation{};
     // 適用後に解放するblend motionのhandle。
@@ -346,6 +381,8 @@ int main(int argc, char** argv)
             passed = passed && Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)");
             if (passed)
                 ReportAnimationMapping(model, 0, "primary");
+            if (passed && requireHumanoidLegMappings)
+                passed = RequireHumanoidLegMappings(model, externalAnimation, 0, "primary") && passed;
         }
         if (passed && externalBlendMode)
         {
@@ -364,6 +401,8 @@ int main(int argc, char** argv)
                 passed = passed && Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)");
                 if (passed)
                     ReportAnimationMapping(model, 1, "secondary");
+                if (passed && requireHumanoidLegMappings)
+                    passed = RequireHumanoidLegMappings(model, secondaryAnimation, 1, "secondary") && passed;
             }
         }
         if (externalAnimation.IsValid() && !Check(gk::DeleteModelAnimation(externalAnimation), "DeleteModelAnimation(primary after apply)"))

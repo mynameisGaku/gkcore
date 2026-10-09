@@ -213,3 +213,11 @@ PNGはPPMのRGBを変更せず保存し、decode後も全画素一致しまし�
 YUMEKAとSilly Dancing・Capoeiraのブレンドを6姿勢で取得しました。Debug/Releaseとも、各姿勢の45,233位置・55,747法線をCPU参照へ比較し、位置の最大差0、法線の最大差約0.000000179で成功しています。許容値0.0005は変更していません。複数model、退化した法線、float overflowと大きい有限値の対照検査も成功しました。
 
 native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、CPUは各53/53件成功しました。実行ログは`build/native-validation/final-native-debug-tests.log`と`final-native-release-confirm-tests.log`、実モデルは`final-yumeka-{debug,release}-capture.log`です。画像は`build/real-model-captures/{Debug,Release}/final-yumeka-blend*.ppm`へ保存しています。通常Runtimeでの表示速度は[モデルviewerの処理時間](model-performance.md)を参照してください。
+
+## Mixamoの脚ボーン対応
+
+以前の自動推定は`UpLeg`を太ももと認識せず、その子の`Leg`もすねへ割り当てていませんでした。その状態のGPU/CPU一致は、motionの全身が正しく転送された証拠ではありません。実際の骨名と階層を使った回帰テストを追加し、描画前に左右の太もも・すね・足首・つま先の8役割を必須確認する`GKCORE_TEST_REQUIRE_HUMANOID_LEGS=1`も検証用captureへ追加しました。
+
+修正後のYUMEKAはSilly Dancing・Capoeiraのそれぞれと51本が対応します。単独再生2種類とブレンドを各6姿勢、Debug/Releaseで取得し、18画像が構成間で全画素一致しました。各姿勢の全45,233位置・55,747法線はCPU参照へ比較して位置差0・法線最大差約0.000000179です。画像は`build/real-model-captures/{Debug,Release}/mixamo-legs/`、ログは`build/native-validation/mixamo-legs-{debug,release}-{silly,capoeira,blend}.log`にあります。
+
+この脚対応修正後のCPU全体はDebug/Release各53件、nativeの対応推定・binding・API・animation画像・BLEND画像・SDK consumerを含む関連9件が両構成で成功しました（Release95.15秒、Debug108.19秒）。native全78件の記録はGPU変形追加時点の結果です。脚修正後のログは`mixamo-legs-native-{debug,release}-tests.log`です。

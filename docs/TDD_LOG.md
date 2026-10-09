@@ -1139,3 +1139,13 @@ compute shaderを含む配布物の必須契約も追加しました。欠落を
 最新shaderを使う通常Release Runtime、metrics OFF、1280×720、300 warmup /3,000測定frameの最終計測は、YUMEKAと両Mixamo motionのブレンド338.147FPS、p95 3.289ms、DrawModel0.679ms、Present2.272msでした。静止340.020FPS /p95 2.976ms、毎frame回転340.020FPS /p95 2.974msです。ログは`final-real-model-benchmark.log`、`final-real-model-static-benchmark.log`、`final-real-model-rotate-benchmark.log`。約9秒間の測定結果であり、全frameや他GPUの性能保証ではありません。
 
 実YUMEKAの最終6姿勢はDebug/ReleaseともGPU readbackに成功し、各姿勢45,233位置・55,747法線で位置差0・法線最大差約0.000000179を確認しました。ログは`final-yumeka-{debug,release}-capture.log`です。
+
+## Mixamoの太もも・すねの対応漏れ
+
+足の動きの不具合報告を受け、実motionの骨名と対応表を確認しました。`mixamorig:LeftUpLeg`・`RightUpLeg`が正規化後の`upleg`に対応せず、親の役割を必要とする`LeftLeg`・`RightLeg`も未割当でした。足首・つま先だけが対応し、太もも・すねはtargetの初期姿勢に残っていました。従来のGPU/CPU一致と47本の件数確認では、この欠落を見逃しています。
+
+左右のUpLeg→Leg→Foot→ToeBaseと腰の実際の階層を使う回帰テストを先に追加しました。DebugのREDは`mixamorig:LeftUpLeg: expected=15 actual=0`。`upleg`を太ももの別名へ加えた後、CPU Debug53/53件（5.72秒）、Release53/53件（3.80秒）が成功しました。ログは`mixamo-legs-red-{build,tests}.log`、`mixamo-legs-cpu-{debug,release}-{build,tests}.log`です。
+
+実モデルcaptureの`GKCORE_TEST_REQUIRE_HUMANOID_LEGS=1`は、targetとmotionの8脚役割・source番号・role一致を描画前に検査します。両Mixamo motionは52role、YUMEKAは53role、対応51本となり、単独2種類・ブレンドの各6姿勢をDebug/Releaseで確認しました。18画像は構成間で全画素一致、位置最大差0、法線最大差約0.000000179です。修正後の通常Release Runtime・1280×720・300 warmup /3,000frameブレンドは324.762FPS、p95 3.497ms、DrawModel0.696ms、Present2.376msで完走しました。ログは`mixamo-legs-benchmark.log`です。全frameの300FPS保証ではありません。
+
+native関連9/9件もRelease95.15秒、Debug108.19秒で成功しました。対応推定・binding・API・rig API・animation画像・BLEND画像・packageを含みます。全78件のGPU変形追加時点の結果と、今回の関連検査を区別して記録します。ログは`mixamo-legs-native-{debug,release}-tests.log`です。native CPU契約のtargetも最新sourceで再ビルドして再検査しています。
