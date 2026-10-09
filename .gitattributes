@@ -18,3 +18,6 @@ third_party/** -text -whitespace
 /CMakeLists.txt text eol=crlf
 /tests/package/consumer/CMakeLists.txt text eol=crlf
 /cmake/*.cmake.in text eol=crlf
+
+# 固定依存物のGPU設定は取得元と同じbyte列を保持する。
+/cmake/gpu.cfg -text -whitespace

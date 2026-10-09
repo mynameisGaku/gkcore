@@ -133,3 +133,7 @@ GLBの接線生成は `src/model/ModelTangents.cpp` がprimitive-local位置・�
 GLB接線自動生成の追加後、Runtime Release/Debugは全CTest各57/57、RuntimeOFF Debug/Releaseは各39/39成功しました。追加32画像と判定JSONは両Runtime構成で完全一致しています。SDK consumerとnotice必須の配布物検査も両構成で確認しました。条件と結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
 GLBの法線欠損は `ModelNormals.cpp` で面法線を作り、法線画像を使う場合だけ `ModelTangents.cpp` へ接続します。NORMAL/TANGENT生成はnode変換前、変換・index再登録は `GlbLoader.cpp` で行います。追加後のRuntime Release/Debugは各60/60、RuntimeOFFは各41/41、取得35画像とJSONは両構成で完全一致しました。実行条件と限界は[TDDログ](TDD_LOG.md)へ記録しています。
+
+## mainへの公開
+
+devは実装・tests・検証ツール・作業記録を保持します。mainはゲーム構築用のファイルに限定します。tools/prepare_game_repository.pyで、checkout外の空のstaging directoryへ公開構成を生成し、Runtime・サンプル・install済みSDKの利用アプリを確認してから、mainの新コミットとして反映します。devをそのままmergeしてmainへ入れる操作は行いません。mainの既存履歴を親として保持し、通常pushで公開します。生成処理のallowlistと契約はtests/package/test_game_repository.pyで確認します。

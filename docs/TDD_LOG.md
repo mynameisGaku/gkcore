@@ -1149,3 +1149,15 @@ compute shaderを含む配布物の必須契約も追加しました。欠落を
 実モデルcaptureの`GKCORE_TEST_REQUIRE_HUMANOID_LEGS=1`は、targetとmotionの8脚役割・source番号・role一致を描画前に検査します。両Mixamo motionは52role、YUMEKAは53role、対応51本となり、単独2種類・ブレンドの各6姿勢をDebug/Releaseで確認しました。18画像は構成間で全画素一致、位置最大差0、法線最大差約0.000000179です。修正後の通常Release Runtime・1280×720・300 warmup /3,000frameブレンドは324.762FPS、p95 3.497ms、DrawModel0.696ms、Present2.376msで完走しました。ログは`mixamo-legs-benchmark.log`です。全frameの300FPS保証ではありません。
 
 native関連9/9件もRelease95.15秒、Debug108.19秒で成功しました。対応推定・binding・API・rig API・animation画像・BLEND画像・packageを含みます。全78件のGPU変形追加時点の結果と、今回の関連検査を区別して記録します。ログは`mixamo-legs-native-{debug,release}-tests.log`です。native CPU契約のtargetも最新sourceで再ビルドして再検査しています。
+
+## Unrealモデルの外部アニメーション
+
+Sci-Fi TrooperとClown Monsterのuassetを検証用プロジェクトへコピーし、Unreal Engine 5.8.3でFBXと基本色PNG、Idle/Walkを出力しました。spine_01とneck_01の役割未割当を回帰テストで先にREDにし、背骨・首・指のゼロ埋め名・ballへ対応した後GREEN。CPU Debug/Release53/53件（5.58秒/3.56秒）が成功しました。元motionとMixamoブレンドを両モデル・両構成で各6姿勢、計24画像の構成間一致と8脚役割を確認しました。全位置・法線のGPU/CPU比較は位置差0・法線最大差約1.79e-7で成功しています。
+
+mainはゲーム構築用のファイルだけを公開する運用へ変更しました。testsはdevへ残し、allowlistから作るtools/prepare_game_repository.pyで公開構成を生成します。CMakeのtest/capture/benchmark target、開発用shader reflection実行、検証記録と私有assetは公開側に含めません。setupはtestのない構成でCTestを実行せず、カスタム効果サンプルのshaderもexamplesのHLSLから生成します。
+
+Unreal由来のモーションを別人型へ移す確認は、ClownMonsterWalk→TrooperとSciFITrooperIdle→Clownの両方向・両構成で各6姿勢が成功しました。人型役割52、名前での補助骨を含む対応68、脚8役割とGPU/CPU参照一致を確認。Mixamo専用の経路ではありません。
+
+公開用構成はtestsのない300ファイルからReleaseのRuntimeと5サンプルをビルドし、installしたSDKだけを使う別アプリのInit・描画・Present・Shutdownに成功しました。ログはgame-main-{config,build,install}.log、game-main-consumer-{config,build,run}.logです。作業コピー全体の削除と個別削除は自動承認レビューに拒否されたため、古い作業コピーを消す方式は止め、公開用の新しいGit treeを作る方式へ変更しました。元のdevと履歴は保持します。
+
+任意の異なる骨名と、異なる初期回転・骨長を持つ5ボーンの汎用人型binding契約も追加しました。FBX source/GLB targetという形式指定で、人型役割による対応、期待回転、骨長保持と三角関数から独立に求めた足位置を確認し、Debug/Releaseとも成功。新しい公開構成契約を含むCPU全体はDebug54/54件（4.73秒）、Release54/54件（3.99秒）です。起動メニュー6項目のファイル・材質・両motionもCheckOnlyで通過しました。

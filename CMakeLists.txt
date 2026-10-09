@@ -105,6 +105,7 @@ endfunction()
 if(GKCORE_BUILD_TESTS)
     enable_testing()
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME gkcore.game_repository COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_game_repository.py")
 
     set(_gkcore_animation_math_sources src/model/animation/ModelPose.cpp src/model/animation/ModelIk.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)

@@ -2,10 +2,10 @@
 
 ## Branches and commits
 
-- Develop only on `dev`. Promote reviewed, tested, stable, useful checkpoints from `dev` to `main`; do not wait for the entire SDK to be finished.
+- Develop only on `dev`; keep tests and development records there. Publish reviewed, tested game-building files to `main` with `tools/prepare_game_repository.py`; never merge the whole development tree into `main`. Do not wait for the entire SDK to be finished.
 - The root agent owns commits and pushes so parallel work does not race.
 - 使い終わった一時ファイル・調査用プログラム・重複した検証buildは作業後に片づける。ユーザーの元データ、現在のbuild、必要な最新検証記録は保持し、削除前に対象がworkspace内の生成物であることを確認する。
-- Keep each small, verified change in a `dev` commit and push it to the remote `dev` branch. Promote stable, reviewed checkpoints from `dev` to `main`.
+- Keep each small, verified change in a `dev` commit and push it to remote `dev`. At stable checkpoints, publish the curated game-building tree to `main`; exclude tests, validation tools, private assets, and development records.
 - Write commit messages in Japanese using one of these forms:
   - `feat (x): 〇〇のため、△△を追加`
   - `fix (x): 〇〇のため、△△を修正`

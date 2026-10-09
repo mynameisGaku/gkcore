@@ -120,6 +120,14 @@ def ctest_command(build_dir: Path, gpu_check: bool = False, configuration: str =
     return ["ctest", "--test-dir", str(build_dir), "-C", configuration, "--output-on-failure"]
 
 
+def tests_enabled(root: Path, requested: bool | None) -> bool:
+    """開発checkoutでは既定でテストを実行し、テストのないcheckoutでは省略する。"""
+    present = (root / "tests").is_dir()
+    if requested is True and not present:
+        raise SetupError("The --tests option requires a tests directory in this checkout.")
+    return present if requested is None else requested
+
+
 def ensure_dependencies() -> None:
     if not FORGE.exists():
         run([sys.executable, str(ROOT / "tools/fetch_forge.py"), "--destination", str(FORGE)])
@@ -131,9 +139,12 @@ def ensure_dependencies() -> None:
         run([sys.executable, str(ROOT / "tools/verify_dxc.py"), "--root", str(DXC)])
 
 
-def prepare(gpu_check: bool = False, configuration: str = "Release") -> None:
+def prepare(gpu_check: bool = False, configuration: str = "Release", run_tests: bool | None = None) -> None:
     if configuration not in ("Debug", "Release"):
         raise SetupError(f"Unsupported build configuration: {configuration}")
+    run_tests = tests_enabled(ROOT, run_tests)
+    if gpu_check and not run_tests:
+        raise SetupError("The --gpu-check option requires tests to be enabled in a development checkout.")
     forge_build = FORGE_BUILD if configuration == "Release" else DEBUG_FORGE_BUILD
     build_dir = BUILD if configuration == "Release" else DEBUG_BUILD
     toolchain = require_windows_toolchain()
@@ -143,23 +154,30 @@ def prepare(gpu_check: bool = False, configuration: str = "Release") -> None:
          "--configuration", configuration])
     run([sys.executable, str(ROOT / "tools/build_gkcore_shaders.py"), "--forge-root", str(FORGE),
          "--dxc-root", str(DXC), "--output-dir", str(SHADER_BUILD)])
+    cmake_source = (ROOT / "CMakeLists.txt").read_text(encoding="utf-8-sig")
     configure = ["cmake", "-S", str(ROOT), "-B", str(build_dir), "-G", toolchain.generator,
                  "-A", "x64", "-T", "v142", f"-DCMAKE_GENERATOR_INSTANCE={toolchain.installation_path}",
                  f"-DCMAKE_SYSTEM_VERSION={toolchain.windows_sdk_version}",
                  f"-DCMAKE_VS_WINDOWS_TARGET_PLATFORM_VERSION_MAXIMUM={toolchain.windows_sdk_version}",
                  f"-DCMAKE_CONFIGURATION_TYPES={configuration}",
-                 "-DGKCORE_BUILD_TESTS=ON", "-DGKCORE_BUILD_RUNTIME=ON",
+                 f"-DGKCORE_BUILD_RUNTIME=ON",
                  f"-DGKCORE_FORGE_ROOT={FORGE}", f"-DGKCORE_DXC_ROOT={DXC}",
-                 f"-DGKCORE_FORGE_BUILD_DIR={forge_build}", f"-DGKCORE_SHADER_BUILD_DIR={SHADER_BUILD}",
-                 f"-DGKCORE_RUN_BACKEND_SMOKE={'ON' if gpu_check else 'OFF'}"]
+                 f"-DGKCORE_FORGE_BUILD_DIR={forge_build}", f"-DGKCORE_SHADER_BUILD_DIR={SHADER_BUILD}"]
+    if "option(GKCORE_BUILD_TESTS" in cmake_source:
+        configure.append(f"-DGKCORE_BUILD_TESTS={'ON' if run_tests else 'OFF'}")
+    if "option(GKCORE_RUN_BACKEND_SMOKE" in cmake_source:
+        configure.append(f"-DGKCORE_RUN_BACKEND_SMOKE={'ON' if gpu_check else 'OFF'}")
     run(configure)
     run(["cmake", "--build", str(build_dir), "--config", configuration, "--parallel"])
-    run(ctest_command(build_dir, gpu_check, configuration))
+    if run_tests:
+        run(ctest_command(build_dir, gpu_check, configuration))
     if gpu_check:
         print("BUILD READY: library, tests, sample, and the requested Direct3D 12 GPU smoke check passed.", flush=True)
-    else:
+    elif run_tests:
         print("BUILD READY: library, tests, and sample compiled; Direct3D 12 rendering was not smoke-tested. "
               "Run PRE_SETUP.bat --gpu-check on a DX12-capable GPU when you want that check.", flush=True)
+    else:
+        print("BUILD READY: library and sample compiled; this checkout has no enabled test suite.", flush=True)
 
 
 def main() -> int:
@@ -167,9 +185,15 @@ def main() -> int:
     parser.add_argument("--gpu-check", action="store_true", help="run the optional Direct3D 12 host-GPU smoke test")
     parser.add_argument("--configuration", choices=("Debug", "Release"), default="Release",
                         help="select the isolated Visual Studio build configuration")
+    test_group = parser.add_mutually_exclusive_group()
+    test_group.add_argument("--tests", dest="run_tests", action="store_true",
+                            help="require and run the development test suite")
+    test_group.add_argument("--no-tests", dest="run_tests", action="store_false",
+                            help="build the Runtime and examples without running tests")
+    parser.set_defaults(run_tests=None)
     args = parser.parse_args()
     try:
-        prepare(gpu_check=args.gpu_check, configuration=args.configuration)
+        prepare(gpu_check=args.gpu_check, configuration=args.configuration, run_tests=args.run_tests)
         return 0
     except (OSError, subprocess.CalledProcessError, SetupError) as exc:
         print(f"gkcore setup stopped: {exc}", file=sys.stderr)
