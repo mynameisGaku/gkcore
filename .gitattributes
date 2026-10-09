@@ -1,20 +1,13 @@
+# Runtimeとゲーム例の自作ソースをCRLFで保つ。
 third_party/** -text -whitespace
 *.bat text eol=crlf
-
-# 自作ソースのチェックアウト時の改行をCRLFに揃える。
 /include/** text eol=crlf
 /src/** text eol=crlf
 /shaders/** text eol=crlf
 /examples/*.cpp text eol=crlf
 /examples/shaders/*.hlsl text eol=crlf
 /tools/*.py text eol=crlf
-/tools/*.ps1 text eol=crlf
-/samples/*.ps1 text eol=crlf
-/tests/*.cpp text eol=crlf
-/tests/*.py text eol=crlf
-/tests/support/** text eol=crlf
-/tests/package/*.py text eol=crlf
-/tests/package/consumer/*.cpp text eol=crlf
 /CMakeLists.txt text eol=crlf
-/tests/package/consumer/CMakeLists.txt text eol=crlf
 /cmake/*.cmake.in text eol=crlf
+/examples/assets/*.glb binary
+/cmake/gpu.cfg -text -whitespace

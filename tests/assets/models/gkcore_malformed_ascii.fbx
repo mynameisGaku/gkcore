@@ -1,3 +1,0 @@
-; FBX 7.4.0 project file
-FBXHeaderExtension: { FBXVersion: 7400 }
-Objects: { Geometry: { Vertices: *3 { a: 0, 0, }

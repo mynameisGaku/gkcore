@@ -1,55 +1,85 @@
-# はじめての gkcore
+# はじめてのgkcore
 
-利用側は `<gkcore.h>` だけを読み込み、`gk::` の関数でウィンドウ、入力、描画を操作します。The Forge API はアプリ側へ公開しません。公開 API とサンプルは C++ 標準ライブラリ/STL に依存しない方針です。
+`<gkcore.h>`と`gk::`の関数で、ウィンドウ・入力・2D・3D描画を扱います。
+The ForgeのAPIをゲーム側から使う必要はありません。
+
+## サンプルを起動する
+
+Windows x64のC++開発環境、v142 14.29 toolset、Windows SDK 10.0.22621.0、CMake、Python 3.9以降を用意して、リポジトリ直下で次を実行します。
+現在の固定版の依存物は、このtoolsetとSDKでビルドします。
+
+```bat
+PRE_SETUP.bat
+build\runtime-windows\Release\gkcore_mixed_scene.exe
+```
+
+セットアップは依存物を`.devtools/`へ取得し、Runtimeとサンプルを`build/runtime-windows/`へ出力します。
+Visual Studioでは同じフォルダーの`gkcore.slnx`または`gkcore.sln`を開き、Release・x64を選びます。
+最初の編集対象は[examples/mixed_scene.cpp](../examples/mixed_scene.cpp)です。
 
 ## 最小ループ
 
 ```cpp
 #include <gkcore.h>
-
-int main() {
-    if (gk::SetWindowSize(1280, 720) != 0) return 1;
-    if (gk::Init() != 0) return 1;
-
-    while (gk::ProcessEvents() && !(gk::IsKeyDown(gk::Key::Escape) || gk::WasKeyPressed(gk::Key::Escape))) {
-        if (gk::BeginFrame() != 0 ||
-            gk::SetDrawLayer(gk::DrawLayer::Scene) != 0 ||
-            gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f,
-                         gk::ColorRGB(70, 150, 240), true) != 0 ||
-            gk::SetDrawLayer(gk::DrawLayer::UI) != 0 ||
-            gk::DrawString(32.0f, 660.0f, "Escape キーで終了", gk::ColorRGB(255, 255, 255)) != 0 ||
-            gk::Present() != 0) break;
+/**
+ * ウィンドウを作り、終了要求まで矩形を描く。
+ */
+int main()
+{
+    if (gk::SetWindowSize(1280, 720) != 0 || gk::Init() != 0)
+    {
+        return 1;
     }
-
+    while (gk::ProcessEvents() && !gk::IsKeyDown(gk::Key::Escape))
+    {
+        if (gk::BeginFrame() != 0 || gk::DrawRect(32.0f, 32.0f, 208.0f, 112.0f, gk::ColorRGB(70, 150, 240), true) != 0 || gk::Present() != 0)
+        {
+            break;
+        }
+    }
     gk::Shutdown();
     return 0;
 }
 ```
 
-失敗した関数の直後に `gk::GetLastErrorMessage()` を使うと、原因の文字列を確認できます。`ProcessEvents()` はウィンドウが閉じられるまで `true` を返します。短い押下で機能を切り替える場合は`WasKeyPressed`、押し続ける操作には`IsKeyDown`を使います。[キー入力](input.md)に使用例をまとめています。
+描画は`BeginFrame()`と`Present()`の間に登録します。
+APIが失敗した直後に`GetLastErrorMessage()`を呼ぶと、原因を取得できます。
+短いキー入力の切り替えには`WasKeyPressed()`、押し続ける操作には`IsKeyDown()`を使います。
 
-## 2D と 3D を同じフレームに描く
+`DrawLayer::Scene`にゲームの2D・3Dを、`DrawLayer::UI`にHUDを描きます。
+SceneにBloom・トーンマッピング・FXAAなどを適用してからUIを合成します。
+効果の設定は次の`BeginFrame()`で反映します。
 
-[`examples/mixed_scene.cpp`](../examples/mixed_scene.cpp) は同じフレームの `Scene` 層に 3D 三角形と 2D 矩形を置き、`UI` 層に矩形と日本語文字を描く例です。`gk::DrawString` は Windows のシステム標準フォントを使い、同じ文字列・色・大きさの描画を上限付きキャッシュで再利用します。フォントファイルを別途用意する必要はありません。
+画像は`LoadImage()`、モデルは`LoadModel()`で読み込みます。
+モデルの位置・回転・scaleとカメラを設定し、`DrawModel()`で描きます。
+GLB・FBXのアニメーションと連番OBJ、外部モーション、ブレンド、ヒューマノイド対応、IKも利用できます。
 
-PNG / BMP 画像と OBJ / GLB 2.0 / FBX の静的メッシュを読み込めます。FBX の ASCII・バイナリ形式、基本色係数、相対パスの PNG 画像取り込みは CPU テストで確認しています。GLB の metallic / roughness 係数と基本色、方向光・一様な環境光によるモデル照明を実装しています。OBJ / FBX は非金属・粗い材質の係数で描画します。影、環境マップ、metallic-roughness texture、normal map、alpha mode は未対応です。照明設定、法線、材質計画の CPU テストと Linux shader compile/reflection に加え、Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER での GPU smoke を確認しています。smokeでは描画API、Present、resize、再初期化を検査し、別の画像テストではサンプルGLBの色と照明変化を確認しています。個別形式の手順は [モデルの読み込み](models.md)、[モデル照明ガイド](lighting.md)、機能一覧は [ROADMAP](ROADMAP.md) を確認してください。
+## 自分のゲームをビルドする
 
-3D カメラには `gk::SetCamera(gk::Vec3{...}, gk::Vec3{...})` で位置と注視点を渡します。モデルハンドルは `gk::LoadModel` で取得し、`gk::SetModelPosition`、`gk::SetModelRotation`、`gk::SetModelScale` で指定した値が後続の `gk::DrawModel` に使われます。使い終えたら `gk::DeleteModel` で解放します。画像も `ImageHandle` で管理します。
+SDKを出力します。
 
-描画命令は `gk::BeginFrame()` と `gk::Present()` の間に追加します。`gk::DrawLayer::Scene` に 2D/3D のゲーム描画を置くと、HDR 描画先へまとめて描画されます。Scene には Bloom、露出、トーンマッピング、彩度・コントラスト調整、FXAA を適用し、その後 `gk::DrawLayer::UI` の HUD を合成します。Scene と UI は別の描画層で、それぞれの中の命令順を保ちます。効果の設定は `BeginFrame()` の時点で取り込まれるので、変更する場合は次のフレームが始まる前に設定します。
+```bat
+cmake --install build/runtime-windows --config Release --component Runtime --prefix sdk
+```
 
-## キーとマウス
+ゲーム側に`main.cpp`と次の`CMakeLists.txt`を置きます。
 
-`gk::IsKeyDown(gk::Key::ArrowLeft)` などでキーの現在状態を、`gk::IsMouseButtonDown(gk::MouseButton::Left)` でマウスボタンの状態を調べます。`gk::GetMousePosition(x, y)` はクライアント領域内の座標を返します。入力はアプリの main thread から問い合わせます。ウィンドウに focus がない間はボタン状態が false になり、座標取得は false を返して `x` と `y` に 0 を書き込みます。
+```cmake
+cmake_minimum_required(VERSION 3.20)
+project(MyGame LANGUAGES CXX)
+find_package(gkcore CONFIG REQUIRED)
+add_executable(MyGame main.cpp)
+target_compile_features(MyGame PRIVATE cxx_std_17)
+target_link_libraries(MyGame PRIVATE gkcore::gkcore)
+# RuntimeのDLL、標準shader、GPU設定をゲームの実行ファイルへ添える。
+get_target_property(gkcore_runtime gkcore::gkcore IMPORTED_LOCATION_RELEASE)
+get_filename_component(gkcore_bin "${gkcore_runtime}" DIRECTORY)
+add_custom_command(TARGET MyGame POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${gkcore_bin}" "$<TARGET_FILE_DIR:MyGame>"
+    VERBATIM)
+```
 
-## ポストエフェクト
+構成時に`-DCMAKE_PREFIX_PATH=C:/path/to/gkcore/sdk`を指定し、x64・Releaseでビルドします。
+アプリの実行にはSDKの`bin/`一式が必要です。
 
-`gk::SetBloomEnabled`、`gk::SetBloomIntensity`、`gk::SetExposure`、`gk::SetToneMappingEnabled`、`gk::SetSaturation`、`gk::SetContrast`、`gk::SetFxaaEnabled` で効果を調整できます。Bloom、トーンマッピング、FXAA は初期設定で有効です。彩度とコントラストの `1.0f` は補正なしです。設定できる範囲や例は [ポストエフェクトの使い方](effects.md) を参照してください。Windows/MSVC Runtime Release build/link と RTX 4070 SUPER での GPU smoke は確認済みです。GPU画像テストではFXAA有効・無効時の基本描画と、tintによるSceneの色変更、UIの色の維持を確認しています。[描画確認](render-validation.md)に画像と検証範囲を記載しています。
-
-## カスタムシェーダー
-
-HLSL のソースは開発用コンパイラーで gkcore 用 artifact に変換し、`gk::LoadPixelShader` で読み込みます。最小の tint shader、共通入力、定数の渡し方は [カスタムシェーダーガイド](custom-shader.md) にあります。Windows/MSVC Runtime Release build/link、COM reflection、および RTX 4070 SUPER で shader を使う GPU smoke を確認しています。smokeはAPI戻り値とPresentを検査します。別の実GPU画像テストでは、定数slot 0と63、描画ごとの値の保持、PNGのScene/UI描画と6フレームの更新を確認しました。全面画像の画質判定ではありません。詳しい対応状況は [機能一覧](ROADMAP.md) を参照してください。
-
-## 開発環境
-
-開発環境は Windows 10/11 x64、Visual Studio 2022 または Visual Studio 2026 の C++ 開発環境と v142 14.29 toolset が対象です。CMake は Visual Studio 2022 では 3.21 以降、Visual Studio 2026 では 4.2 以降が必要です。The Forge/DXC の取得、ビルドとテストの手順は [`PRE_SETUP.bat`](../PRE_SETUP.bat) にあります。セットアップが成功すると `BUILD READY` と表示します。実 GPU の描画確認は DX12 対応 Windows PC で `PRE_SETUP.bat --gpu-check` を実行します。
+使い方は[入力](input.md)、[画像](images.md)、[モデル](models.md)、[モデルアニメーション](model-animation.md)、[照明](lighting.md)、[ポストエフェクト](effects.md)にまとめています。

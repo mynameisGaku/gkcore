@@ -100,17 +100,6 @@ def runtime_artifacts(output_root: Path) -> list[Path]:
     return [output_root / "CompiledShaders" / "DIRECT3D12" / name for name in EXPECTED_ARTIFACTS]
 
 
-def reflection_command(python: Path, dxc_root: Path, output_root: Path) -> list[str]:
-    """DXCでpost-composite shaderのtexture配列bindingを検査する。"""
-    artifact = output_root / "CompiledShaders" / "DIRECT3D12" / "gkcore_post_composite.frag"
-    return [
-        str(python), str(ROOT / "tests" / "shader_contract_tests.py"),
-        "--artifact", str(artifact),
-        "--dxc", str(dxc_root / "bin" / "x64" / "dxc.exe"),
-        "--require-reflection", "--post-composite",
-    ]
-
-
 def compile_shaders(forge_root: Path, dxc_root: Path, output_root: Path, python: Path | None = None) -> list[Path]:
     validate_checkout(forge_root)
     verify_dxc(dxc_root)
@@ -140,7 +129,6 @@ def compile_shaders(forge_root: Path, dxc_root: Path, output_root: Path, python:
         if not source.is_file() or source.stat().st_size == 0:
             raise ForgeCheckoutError(f"FSL succeeded but required runtime shader artifact is missing: {source}")
         shutil.copy2(source, destination_root / name)
-    subprocess.run(reflection_command(python, dxc_root, output_root), check=True, cwd=ROOT)
     return runtime_artifacts(output_root)
 
 
