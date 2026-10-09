@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 
-#include "../foundation/String.h"
+#include "foundation/String.h"
 #include <stdint.h>
 
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Reads a UTF-8 resource path into gk-owned memory within the supplied limit.

@@ -2,7 +2,7 @@
 #ifndef GKCORE_MODEL_MODEL_TANGENTS_H
 #define GKCORE_MODEL_MODEL_TANGENTS_H
 
-#include "../resources/Resources.h"
+#include "resources/Resources.h"
 
 /**
  * model用の接線生成処理をまとめる。

@@ -1,6 +1,6 @@
-﻿#include "FbxGeometry.h"
-#include "FbxMaterial.h"
-#include "../foundation/Memory.h"
+﻿#include "model/FbxGeometry.h"
+#include "model/FbxMaterial.h"
+#include "foundation/Memory.h"
 #include <math.h>
 #include <stddef.h>
 #include <string.h>

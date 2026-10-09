@@ -1,10 +1,10 @@
 ﻿#include <gkcore.h>
 
-#include "../core/Context.h"
-#include "../effects/Effects.h"
-#include "../effects/Lighting.h"
-#include "../resources/Resources.h"
-#include "../model/animation/FModelPlayback.h"
+#include "core/Context.h"
+#include "effects/Effects.h"
+#include "effects/Lighting.h"
+#include "resources/Resources.h"
+#include "model/animation/FModelPlayback.h"
 
 /**
  * 公開API関数の実装。

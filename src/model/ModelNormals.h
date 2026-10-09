@@ -2,7 +2,7 @@
 #ifndef GKCORE_MODEL_MODEL_NORMALS_H
 #define GKCORE_MODEL_MODEL_NORMALS_H
 
-#include "../resources/Resources.h"
+#include "resources/Resources.h"
 
 /**
  * model primitiveの平面法線生成処理をまとめる。

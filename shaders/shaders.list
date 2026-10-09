@@ -1,4 +1,4 @@
-#include "defaults.h"
+﻿#include "defaults.h"
 
 #rootsig default.rootsig
 #end
@@ -28,6 +28,10 @@
 
 #frag gkcore_model.frag
 #include "gkcore_model.frag.fsl"
+#end
+
+#comp gkcore_model_skinning.comp
+#include "gkcore_model_skinning.comp.fsl"
 #end
 
 #vert gkcore_post.vert

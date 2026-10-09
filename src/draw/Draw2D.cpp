@@ -1,31 +1,36 @@
-#include "Draw2D.h"
+﻿#include "draw/Draw2D.h"
 
-#include "../core/Context.h"
-#include "../core/Frame.h"
-#include "../resources/Resources.h"
+#include "core/Context.h"
+#include "core/Frame.h"
+#include "resources/Resources.h"
 
 #include <math.h>
 
-namespace gk {
-namespace {
+namespace gk
+{
+namespace
+{
 /**
  * Rejects non-finite values before they are stored in a draw packet.
  */
-bool IsFinite(float value) { return isfinite(value) != 0; }
+bool IsFinite(float value)
+{
+    return isfinite(value) != 0;
+}
 
 /**
  * Checks that the rectangle extent can be represented by finite coordinates.
  */
-bool IsValidRectangle(float x, float y, float width, float height) {
-    return IsFinite(x) && IsFinite(y) && IsFinite(width) && IsFinite(height) &&
-           width > 0.0f && height > 0.0f && IsFinite(x + width) && IsFinite(y + height);
+bool IsValidRectangle(float x, float y, float width, float height)
+{
+    return IsFinite(x) && IsFinite(y) && IsFinite(width) && IsFinite(height) && width > 0.0f && height > 0.0f && IsFinite(x + width) && IsFinite(y + height);
 }
 
 /**
  * Validates and queues both filled rectangles and their inward-stroke variant.
  */
-int QueueRectangle(float x, float y, float width, float height, uint32_t color,
-                   bool filled, float outlineThickness) {
+int QueueRectangle(float x, float y, float width, float height, uint32_t color, bool filled, float outlineThickness)
+{
     if (!IsValidRectangle(x, y, width, height))
         return detail::SetError("rectangle values must be finite with positive dimensions");
     if (!IsFinite(outlineThickness) || outlineThickness <= 0.0f)
@@ -43,20 +48,25 @@ int QueueRectangle(float x, float y, float width, float height, uint32_t color,
 }
 }
 
-int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled) {
+int DrawRect(float x, float y, float width, float height, uint32_t color, bool filled)
+{
     return QueueRectangle(x, y, width, height, color, filled, 1.0f);
 }
 
-int DrawRectOutline(float x, float y, float width, float height, uint32_t color,
-                    float thickness) {
+int DrawRectOutline(float x, float y, float width, float height, uint32_t color, float thickness)
+{
     return QueueRectangle(x, y, width, height, color, false, thickness);
 }
 
-int DrawImage(ImageHandle image, float x, float y, bool alphaBlend) {
-    if (!image.IsValid()) return detail::SetError("invalid image handle");
-    if (!IsFinite(x) || !IsFinite(y)) return detail::SetError("image coordinates must be finite");
+int DrawImage(ImageHandle image, float x, float y, bool alphaBlend)
+{
+    if (!image.IsValid())
+        return detail::SetError("invalid image handle");
+    if (!IsFinite(x) || !IsFinite(y))
+        return detail::SetError("image coordinates must be finite");
     detail::ImageResource* resource = detail::FindImage(image);
-    if (!resource) return detail::SetError("invalid image handle");
+    if (!resource)
+        return detail::SetError("invalid image handle");
     detail::DrawPacket packet{};
     packet.kind = detail::DrawKind::Image;
     packet.flags = alphaBlend ? static_cast<uint8_t>(detail::DrawAlphaBlend) : 0u;
@@ -69,18 +79,18 @@ int DrawImage(ImageHandle image, float x, float y, bool alphaBlend) {
     return detail::QueueDraw(packet);
 }
 
-int DrawImageRotated(ImageHandle image, float centerX, float centerY,
-                     float scale, float angleRadians, bool alphaBlend) {
-    if (!image.IsValid()) return detail::SetError("invalid image handle");
-    if (!IsFinite(centerX) || !IsFinite(centerY) || !IsFinite(scale) ||
-        !IsFinite(angleRadians) || scale <= 0.0f)
+int DrawImageRotated(ImageHandle image, float centerX, float centerY, float scale, float angleRadians, bool alphaBlend)
+{
+    if (!image.IsValid())
+        return detail::SetError("invalid image handle");
+    if (!IsFinite(centerX) || !IsFinite(centerY) || !IsFinite(scale) || !IsFinite(angleRadians) || scale <= 0.0f)
         return detail::SetError("image transform must be finite and scale must be positive");
     detail::ImageResource* resource = detail::FindImage(image);
-    if (!resource) return detail::SetError("invalid image handle");
+    if (!resource)
+        return detail::SetError("invalid image handle");
     detail::DrawPacket packet{};
     packet.kind = detail::DrawKind::Image;
-    packet.flags = static_cast<uint8_t>((alphaBlend ? static_cast<uint8_t>(detail::DrawAlphaBlend) : 0u) |
-                                         static_cast<uint8_t>(detail::DrawImageCentered));
+    packet.flags = static_cast<uint8_t>((alphaBlend ? static_cast<uint8_t>(detail::DrawAlphaBlend) : 0u) | static_cast<uint8_t>(detail::DrawImageCentered));
     packet.resource = image.value;
     packet.image = resource;
     packet.rect[0] = centerX;

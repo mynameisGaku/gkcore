@@ -1,5 +1,5 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ModelIk.h"
+#include "model/animation/ModelIk.h"
 
 #include <float.h>
 #include <math.h>

@@ -1,9 +1,18 @@
-#include "Image.h"
+﻿#include "image/Image.h"
 
-namespace gk::detail {
-ImageResource* CreateImageResource() {
+namespace gk::detail
+{
+ImageResource* CreateImageResource()
+{
     ImageResource* image = nullptr;
-    try { image = new ImageResource; } catch (...) { return nullptr; }
+    try
+    {
+        image = new ImageResource;
+    }
+    catch (...)
+    {
+        return nullptr;
+    }
     image->reference.references = 1;
     image->reference.destroy = DestroyImageResource;
     image->width = 0;
@@ -11,7 +20,8 @@ ImageResource* CreateImageResource() {
     return image;
 }
 
-void DestroyImageResource(RefCounted* object) {
+void DestroyImageResource(RefCounted* object)
+{
     delete reinterpret_cast<ImageResource*>(object);
 }
 }

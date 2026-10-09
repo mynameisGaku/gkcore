@@ -3,7 +3,7 @@
 
 #include <Graphics/Interfaces/IGraphics.h>
 
-#include "../../src/foundation/String.h"
+#include "foundation/String.h"
 
 /**
  * 開発テスト用のDirect3D 12画素読み戻し機能をまとめる。

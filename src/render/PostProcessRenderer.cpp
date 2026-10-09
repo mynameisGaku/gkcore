@@ -1,11 +1,11 @@
-﻿#include "PostProcessRenderer.h"
-#include "PostProcessPlan.h"
+﻿#include "render/PostProcessRenderer.h"
+#include "render/PostProcessPlan.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 #include <float.h>
 #include <math.h>
 #include <Graphics/FSL/defaults.h>
-#include "../../shaders/gkcore_postprocess.srt.h"
+#include "shaders/gkcore_postprocess.srt.h"
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
 #include <stddef.h>
 #include <string.h>

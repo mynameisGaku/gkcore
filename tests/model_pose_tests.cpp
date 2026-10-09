@@ -1,5 +1,5 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/model/animation/ModelPose.h"
+#include "model/animation/ModelPose.h"
 
 #include <math.h>
 #include <stdio.h>

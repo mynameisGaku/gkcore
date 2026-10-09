@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include "../internal/Backend.hpp"
-#include "../platform/WindowsWindow.h"
+#include "internal/Backend.hpp"
+#include "platform/WindowsWindow.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
-#include "../render/ForgeRenderer.h"
+#include "render/ForgeRenderer.h"
 
 /**
  * Production backend factory and platform service coordination.
@@ -22,6 +22,17 @@ class ForgeBackend final : public Backend
      * Initializes The Forge services, Win32 window, and GPU renderer.
      */
     bool Initialize(uint32_t width, uint32_t height, uint32_t colorDepth, String& error) override;
+    /**
+     * sparse姿勢の位置・法線をGPUで参照するmodel描画を提供する。
+     */
+    bool SupportsSparseModelPoses() const override
+    {
+        return true;
+    }
+    /**
+     * rendererが倍精度GPU skinningを使えるか返す。
+     */
+    bool SupportsGpuModelSkinning() const override;
     /**
      * Releases platform and renderer state in reverse initialization order.
      */

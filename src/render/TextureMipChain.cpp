@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "TextureMipChain.h"
-#include "PostProcess.h"
+#include "render/TextureMipChain.h"
+#include "render/PostProcess.h"
 
 #include <math.h>
 #include <stdint.h>

@@ -69,7 +69,7 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     const float4 baseSample = SampleTex2D(gImageTexture, gImageSampler, input.UV);
     // 画像のアルファは線形値で読み、材質のアルファ係数を掛ける。
     const float coverageAlpha = baseSample.a * input.Color.a;
-    if (input.AlphaMaskCutoff.x > 0.5 && coverageAlpha < input.AlphaMaskCutoff.y)
+    if (input.AlphaMaskCutoff.x > 0.5 && input.AlphaMaskCutoff.x < 1.5 && coverageAlpha < input.AlphaMaskCutoff.y)
     {
         // 破棄した画素は色と深度を更新しない。境界値と等しい画素は残す。
         discard;
@@ -150,6 +150,7 @@ float4 PS_MAIN(VSOutput input) : SV_Target0
     const float3 emission = (emissiveSample * input.EmissiveFactorStrength.rgb) * input.EmissiveFactorStrength.w;
     // HDR render targetへ書き込む有限範囲の最終照明値。
     const float3 radiance = clamp(direct + ambient + emission, 0.0, 65504.0);
-    // OPAQUEと、MASKで残した画素は不透明として出力する。
-    RETURN(float4(radiance, 1.0));
+    // BLENDだけcoverage alphaを返し、RGBはstraight alphaのまま出力する。
+    const float outputAlpha = input.AlphaMaskCutoff.x > 1.5 ? coverageAlpha : 1.0;
+    RETURN(float4(radiance, outputAlpha));
 }

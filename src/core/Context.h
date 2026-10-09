@@ -2,10 +2,10 @@
 #ifndef GKCORE_CORE_CONTEXT_H
 #define GKCORE_CORE_CONTEXT_H
 
-#include "../internal/Backend.hpp"
-#include "../foundation/Array.h"
-#include "../foundation/String.h"
-#include "../effects/Shaders.h"
+#include "internal/Backend.hpp"
+#include "foundation/Array.h"
+#include "foundation/String.h"
+#include "effects/Shaders.h"
 #include <gkcore.h>
 
 /**
@@ -61,6 +61,8 @@ struct Context
     uint32_t height = 720;
     // 表示色深度。
     uint32_t colorDepth = 32;
+    // 次frameで画面の更新を待つか。
+    bool vSyncEnabled = true;
     // Init前にwindow寸法が設定されたか。
     bool windowConfigured = true;
     // backend初期化済みか。

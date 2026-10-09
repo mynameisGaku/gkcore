@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/model/ModelNormals.h"
-#include "../src/foundation/Memory.h"
+#include "model/ModelNormals.h"
+#include "foundation/Memory.h"
 
 #include <math.h>
 #include <stdio.h>

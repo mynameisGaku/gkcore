@@ -1,12 +1,20 @@
 ﻿#pragma once
 
-#include "../foundation/Array.h"
-#include "../foundation/String.h"
-#include "../foundation/RefCount.h"
-#include "../resources/Resources.h"
-#include "../effects/Shaders.h"
-#include "../effects/Lighting.h"
+#include "foundation/Array.h"
+#include "foundation/String.h"
+#include "foundation/RefCount.h"
+#include "resources/Resources.h"
+#include "effects/Shaders.h"
+#include "effects/Lighting.h"
 #include <gkcore.h>
+
+/**
+ * 描画時点で固定したsparse姿勢の内部所有者。
+ */
+namespace gk::model
+{
+struct FModelDeferredPose;
+}
 
 /**
  * Internal packets and platform boundary shared by the framework core and renderer.
@@ -51,6 +59,8 @@ struct DrawPacket
     ShaderHandle shader;
     ImageResource* image;
     ModelResource* model;
+    // modelの原型と組み合わせて描画する独立したsparse姿勢。
+    model::FModelDeferredPose* deferredPose = nullptr;
     Vec3 points[3];
     Vec3 cameraPosition;
     Vec3 cameraTarget;
@@ -76,6 +86,8 @@ struct FramePacket
     uint32_t height;
     Vec3 cameraPosition;
     Vec3 cameraTarget;
+    // BeginFrameで固定した画面更新への同期設定。
+    bool vSyncEnabled = true;
     bool bloomEnabled;
     float bloomIntensity;
     float exposure;
@@ -157,6 +169,20 @@ class Backend
      * Renders the captured frame and reports backend failures through error.
      */
     virtual bool Present(const FramePacket& frame, String& error) = 0;
+    /**
+     * 原型geometryと独立したsparse姿勢をGPUで描画できるか返す。
+     */
+    virtual bool SupportsSparseModelPoses() const
+    {
+        return false;
+    }
+    /**
+     * GPU skinning用姿勢入力を受け取れるか返す。
+     */
+    virtual bool SupportsGpuModelSkinning() const
+    {
+        return false;
+    }
     /**
      * Rasterizes UTF-8 text into a caller-owned RGBA image. A renderer without
      * a system-font adapter reports failure instead of silently dropping text.

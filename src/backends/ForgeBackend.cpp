@@ -1,5 +1,5 @@
-﻿#include "ForgeBackend.h"
-#include "../platform/WindowsText.h"
+﻿#include "backends/ForgeBackend.h"
+#include "platform/WindowsText.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
@@ -223,6 +223,11 @@ bool ForgeBackend::Present(const FramePacket& frame, String& error)
     if (!initialized_)
         return SetError(error, "The Forge renderer is not initialized");
     return renderer_.Present(frame, error);
+}
+
+bool ForgeBackend::SupportsGpuModelSkinning() const
+{
+    return initialized_ && renderer_.SupportsGpuModelSkinning();
 }
 
 ShaderHandle ForgeBackend::LoadPixelShader(const char* path, String& error)

@@ -1,11 +1,11 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ObjSequence.h"
-#include "AModelAnimationSource.h"
-#include "ModelPose.h"
-#include "../Model.h"
-#include "../ObjLoader.h"
-#include "../../resources/ResourceIO.h"
-#include "../../foundation/Memory.h"
+#include "model/animation/ObjSequence.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/ModelPose.h"
+#include "model/Model.h"
+#include "model/ObjLoader.h"
+#include "resources/ResourceIO.h"
+#include "foundation/Memory.h"
 #include <math.h>
 #include <string.h>
 

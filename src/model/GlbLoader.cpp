@@ -1,12 +1,12 @@
-﻿#include "GlbLoader.h"
-#include "../image/ImageLoader.h"
-#include "../foundation/Memory.h"
-#include "../resources/TextureSampler.h"
-#include "ModelNormals.h"
-#include "ModelTangents.h"
-#include "animation/GlbAnimation.h"
-#include "animation/ModelPose.h"
-#include "../../third_party/cgltf/cgltf.h"
+﻿#include "model/GlbLoader.h"
+#include "image/ImageLoader.h"
+#include "foundation/Memory.h"
+#include "resources/TextureSampler.h"
+#include "model/ModelNormals.h"
+#include "model/ModelTangents.h"
+#include "model/animation/GlbAnimation.h"
+#include "model/animation/ModelPose.h"
+#include <cgltf/cgltf.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -390,19 +390,15 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
     material.normalScale = 1.0f;
     material.emissiveTextureIndex = -1;
     material.occlusionTextureIndex = -1;
+    material.alphaBlend = false;
     if (source)
     {
         // source材質がdata内にあることを確かめるindex。
         const cgltf_size sourceIndex = cgltf_material_index(data, source);
         if (sourceIndex >= data->materials_count)
             return -1;
-        // 対応していない混合描画と、不正なalpha境界値を拒否する。
-        if (source->alpha_mode == cgltf_alpha_mode_blend)
-        {
-            error.Assign("GLB BLEND alpha mode is unsupported");
-            return -1;
-        }
-        if (source->alpha_mode != cgltf_alpha_mode_opaque && source->alpha_mode != cgltf_alpha_mode_mask)
+        // 不明なalpha modeと、不正なalpha境界値を拒否する。
+        if (source->alpha_mode != cgltf_alpha_mode_opaque && source->alpha_mode != cgltf_alpha_mode_mask && source->alpha_mode != cgltf_alpha_mode_blend)
         {
             error.Assign("GLB alpha mode is invalid");
             return -1;
@@ -413,6 +409,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
             return -1;
         }
         material.alphaMask = source->alpha_mode == cgltf_alpha_mode_mask;
+        material.alphaBlend = source->alpha_mode == cgltf_alpha_mode_blend;
         material.alphaCutoff = source->alpha_cutoff;
     }
     if (source && source->has_pbr_metallic_roughness)
@@ -507,7 +504,7 @@ int32_t AddMaterial(cgltf_data* data, cgltf_material* source, ModelResource& mod
         // 比較対象の既登録材質。
         const ModelMaterial& existing = model.materials.At(i);
         // 全factorとtexture indexが一致するかを累積する値。
-        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaCutoff == material.alphaCutoff && existing.emissiveStrength == material.emissiveStrength && existing.emissiveTextureIndex == material.emissiveTextureIndex && existing.occlusionStrength == material.occlusionStrength && existing.occlusionTextureIndex == material.occlusionTextureIndex && AreTextureSamplersEqual(existing.baseColorSampler, material.baseColorSampler) && AreTextureSamplersEqual(existing.metallicRoughnessSampler, material.metallicRoughnessSampler) && AreTextureSamplersEqual(existing.normalSampler, material.normalSampler) && AreTextureSamplersEqual(existing.emissiveSampler, material.emissiveSampler) && AreTextureSamplersEqual(existing.occlusionSampler, material.occlusionSampler);
+        bool equal = existing.metallicFactor == material.metallicFactor && existing.roughnessFactor == material.roughnessFactor && existing.baseColorTextureIndex == material.baseColorTextureIndex && existing.metallicRoughnessTextureIndex == material.metallicRoughnessTextureIndex && existing.normalTextureIndex == material.normalTextureIndex && existing.normalScale == material.normalScale && existing.alphaMask == material.alphaMask && existing.alphaBlend == material.alphaBlend && existing.alphaCutoff == material.alphaCutoff && existing.emissiveStrength == material.emissiveStrength && existing.emissiveTextureIndex == material.emissiveTextureIndex && existing.occlusionStrength == material.occlusionStrength && existing.occlusionTextureIndex == material.occlusionTextureIndex && AreTextureSamplersEqual(existing.baseColorSampler, material.baseColorSampler) && AreTextureSamplersEqual(existing.metallicRoughnessSampler, material.metallicRoughnessSampler) && AreTextureSamplersEqual(existing.normalSampler, material.normalSampler) && AreTextureSamplersEqual(existing.emissiveSampler, material.emissiveSampler) && AreTextureSamplersEqual(existing.occlusionSampler, material.occlusionSampler);
         // RGBA factorの各成分を比較するloop。
         for (uint32_t component = 0; component < 4; ++component)
             equal = equal && existing.baseColorFactor[component] == material.baseColorFactor[component];

@@ -1,9 +1,9 @@
-﻿#include "Resources.h"
-#include "../foundation/HandleTable.h"
-#include "../foundation/Memory.h"
-#include "../image/ImageLoader.h"
-#include "../model/ModelLoader.h"
-#include "../model/animation/ModelAnimationResources.h"
+﻿#include "resources/Resources.h"
+#include "foundation/HandleTable.h"
+#include "foundation/Memory.h"
+#include "image/ImageLoader.h"
+#include "model/ModelLoader.h"
+#include "model/animation/ModelAnimationResources.h"
 
 /**
  * image・model registryとresource寿命を扱う内部処理。
@@ -130,6 +130,38 @@ bool DeleteModel(ModelHandle handle, String& error)
 ModelResource* FindModel(ModelHandle handle)
 {
     return modelHandles.Find(handle);
+}
+
+bool ReplaceModelResource(ModelHandle handle, ModelResource* replacement, ModelResource*& previous, String& error)
+{
+    previous = nullptr;
+    // handleが現在登録しているresource。
+    auto* current = modelHandles.Find(handle);
+    if (!current || !replacement || current == replacement)
+    {
+        error.Assign("invalid model resource replacement");
+        return false;
+    }
+    // 登録済みobject配列内で置換する位置。
+    uint32_t objectIndex = modelObjects.Count();
+    // 対応するregistry objectを特定する。
+    for (uint32_t i = 0; i < modelObjects.Count(); ++i)
+    {
+        if (modelObjects.At(i) == current)
+        {
+            objectIndex = i;
+            break;
+        }
+    }
+    if (objectIndex == modelObjects.Count() || !modelHandles.Replace(handle, replacement, previous) || previous != current)
+    {
+        previous = nullptr;
+        error.Assign("model resource registry is inconsistent");
+        return false;
+    }
+    modelObjects.At(objectIndex) = replacement;
+    error.Clear();
+    return true;
 }
 
 void ClearResources()

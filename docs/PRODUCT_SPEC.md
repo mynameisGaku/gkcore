@@ -63,7 +63,7 @@ int main() {
 
 ### 2D と 3D
 
-- 3D のシーン描画命令は深度テストを使い、同じ層の命令順を保つ。UI 層はポスト処理後に重ね、UI 層の中でも命令順を保つ。Scene と UI の順序は層の指定で決まり、両層をまたいだ全体の呼び出し順とは異なる。
+- 3D のシーン描画は深度テストを使う。不透明描画は命令順を保ち、BLEND材質は同じcameraを使う連続した標準Model draw群の中でtriangleを奥から手前へ並べる。非モデル/custom描画とcamera変更はsortの境界にする。UI層はポスト処理後に重ね、深度を使わず命令順を保つ。SceneとUIの順序は層の指定で決まり、両層をまたいだ全体の呼び出し順とは異なる。
 - 深度テストのある 3D 描画と、画面座標の 2D 描画を明快に使い分けられる。2D/3D の切替を毎回明示的なパス構築として利用者に要求しない。
 - 画像はアルファ付き PNG と BMP を読み込める。2D には拡大縮小、回転、透明度、ブレンドと滑らかな拡大縮小を備える。
 - `gk::DrawRectOutline(x, y, width, height, color, thickness=1)` で線幅を指定した輪郭矩形を描く。座標、寸法、`x + width`、`y + height`、太さは有限で、幅・高さ・太さは正の値だけを受け付ける。線は指定した外枠の内側へ収め、`2 * thickness >= min(width, height)` なら外枠全体を塗りつぶす。Scene/UI の層と描画 shader を通常の矩形と共有し、UV は矩形全体で連続させる。
@@ -76,8 +76,8 @@ int main() {
 - モデル専用材質shaderはGLBの基本色係数・画像と、metallic / roughnessの係数・画像を使う。基本色はsRGB、金属度・粗さの画像は線形値で扱い、Gの粗さ・Bの金属度へ材質係数を掛ける。各画像のUV指定とsamplerを独立して保持する。標準GLBモデルはRepeat/MirroredRepeat/ClampToEdgeとNearest/Linearの拡大・縮小補間に対応し、ミップ指定の画像は色空間を保って1×1まで生成し、画素間と縮小段の補間指定をそれぞれ保持する。occlusionTextureは線形Rとstrengthから環境光を残す割合を求め、方向光と自己発光を変えずに環境光だけへ適用する。独立UVとsamplerを保持し、MR画像の同じ線形ミップ構成は共有する。自己発光はemissiveFactor・emissiveTexture・KHR_materials_emissive_strengthを使い、線形RGBの発光を反射光に加えてHDRへ渡す。画像のアルファは使わず、UVとsamplerは独立して保持する。NORMALがないGLBは三角形ごとの面法線を生成し、鋭い辺で頂点を分ける。法線欠損時の入力TANGENTは無視する。法線画像を使いTANGENTが欠けている場合は、法線画像のUVから接線を生成する。生成はnode変換前に行い、接線の不連続には頂点分割で対応する。normalTextureはRGBを線形接線法線へ展開し、scaleをXYへ掛け、node/runtime鏡映の向きを保持する。拡散反射は Lambert、直接光の鏡面反射は GGX 分布、Fresnel、Smith masking-shadowing を使う。均一な環境光は簡易な Lambert 寄与とし、環境マップとは区別する。
 - 頂点法線はワールド変換の逆転置で変換し正規化する。法線がない三角形には面法線を使い、退化面には不正な法線を生成しない。
 - 2D 図形・画像・文字と公開カスタム pixel shader は従来どおり unlit で描画する。モデルは UI 層でも材質照明を使い、UI 合成位置に従う。モデル材質用公開 shader ABI は別途固定する。
-- GLBの標準材質はOPAQUEとMASKに対応する。MASKでは画像のアルファと基本色のアルファ係数を掛け、alphaCutoff未満の画素を破棄して色と深度を更新しない。境界値と等しい画素は残す。BLENDは未対応として読み込み時に診断を返す。
-- 完成時の対応目標として、影、環境マップ / IBL、BLENDの合成を標準機能に追加する。現在の対応範囲は機能一覧へ記載する。
+- GLBの標準材質はOPAQUE、MASK、BLENDに対応する。OPAQUEはalphaを無視し、MASKでは画像のalphaと基本色のalpha係数を掛けて判定する。alphaCutoff未満の画素を破棄して色と深度を更新せず、境界値と等しい画素は残す。BLENDは同じalpha積をcoverageとして、基本色RGBをstraight alphaで合成する。Sceneの同一cameraを使う連続した標準Model draw群では、OPAQUE/MASKを深度書き込み付きで先に描き、BLEND triangleを重心view depthで奥から手前へsortする。非モデル/custom描画とcamera変更はsort範囲を区切って命令順を保ち、UIモデルは深度なしで元の順に合成する。BLENDはSceneで深度テストを行い、深度を書き込まない。交差面・循環重なりは重心sortで完全には解決できない。透過入力triangleはframe全体で最大349,525件で、clip外のtriangleも数える。clip後の頂点上限1,048,576件は他の描画と共有し、入力上限以内でもPresent成功を保証しない。独自pixel shaderはalpha mode情報を受け取れないため、MASK/BLEND材質との組み合わせを拒否する。
+- 完成時の対応目標として、影と環境マップ / IBLを標準機能に追加する。現在の対応範囲は機能一覧へ記載する。
 
 ### ポストエフェクトとシェーダー
 

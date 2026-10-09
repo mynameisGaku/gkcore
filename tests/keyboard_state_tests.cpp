@@ -1,4 +1,5 @@
 ﻿#include "platform/FKeyboardState.h"
+#include "platform/WindowsWindow.h"
 
 #include <stdio.h>
 
@@ -125,10 +126,20 @@ bool TestKeyRange()
     return true;
 }
 
+/**
+ * capture用buildだけwindowを表示せず、通常buildの表示を維持する。
+ */
+bool TestWindowVisibilityPolicy()
+{
+    CHECK(!gk::platform::ShouldShowWindowForBuild(true));
+    CHECK(gk::platform::ShouldShowWindowForBuild(false));
+    return true;
+}
+
 }
 
 int main()
 {
-    const bool passed = TestAllVirtualKeyPressReleasePulses() && TestAllVirtualKeySeedRepeatAndClear() && TestKeyRange();
+    const bool passed = TestAllVirtualKeyPressReleasePulses() && TestAllVirtualKeySeedRepeatAndClear() && TestKeyRange() && TestWindowVisibilityPolicy();
     return passed ? 0 : 1;
 }

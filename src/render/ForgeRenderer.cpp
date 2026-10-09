@@ -1,25 +1,304 @@
-﻿#include "ForgeRenderer.h"
-#include "../resources/TextureSampler.h"
+﻿#if defined(_WIN32) && defined(DIRECT3D12) && defined(_DEBUG)
+#include <Graphics/ThirdParty/OpenSource/Direct3d12Agility/include/d3d12.h>
+#endif
+#include "render/ForgeRenderer.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/FModelDeferredPose.h"
+#include "model/animation/ModelSnapshot.h"
+#include "resources/TextureSampler.h"
+#include "render/ModelTransparency.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "../image/Image.h"
-#include "../resources/Resources.h"
+#include "image/Image.h"
+#include "resources/Resources.h"
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+#include "foundation/Memory.h"
+#endif
 
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#if defined(_DEBUG)
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+#if defined(GKCORE_RENDER_PERFORMANCE_METRICS) && !defined(GKCORE_TEST_FRAME_CAPTURE)
+#include <windows.h>
+#endif
 
 namespace gk::render
 {
 namespace
 {
 
+/**
+ * scene透明描画の参照part範囲を保持する。
+ */
+struct FTransparentPartRange
+{
+    // 全draw共通part配列内の開始位置。
+    uint32_t first;
+    // このdrawに属するpart数。
+    uint32_t count;
+};
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+/**
+ * 自動capture時だけ描画準備のCPU時間を集計する。
+ */
+struct FRenderProfileState
+{
+    // QPCの1秒あたりtick数。
+    int64_t frequency = 0;
+    // 正常に提示したframe数。
+    uint64_t frames = 0;
+    // 各phaseで消費したQPC tick。
+    uint64_t ticks[6]{};
+    // skin geometry cacheの再利用と新規pack件数。
+    uint64_t skinGeometryCacheHits = 0;
+    uint64_t skinGeometryCacheMisses = 0;
+    // GPU skin dispatch数と、CPU経路へ戻った数。
+    uint64_t gpuSkinningDispatches = 0;
+    uint64_t gpuSkinningFallbacks = 0;
+    // 環境変数で計測が有効か示す。
+    bool enabled = false;
+    // Shutdown時の二重出力を防ぐ。
+    bool reported = false;
+};
+
+FRenderProfileState gRenderProfile{};
+
+/**
+ * QPC値を取得し、失敗時は0を返す。
+ */
+int64_t ReadRenderProfileCounter()
+{
+    LARGE_INTEGER counter{};
+    return QueryPerformanceCounter(&counter) ? counter.QuadPart : 0;
+}
+
+/**
+ * 開始・終了counterから負値を含まないtick数を得る。
+ */
+uint64_t MeasureRenderProfileTicks(int64_t start, int64_t end)
+{
+    return end > start ? static_cast<uint64_t>(end - start) : 0;
+}
+
+/**
+ * 正常に提示したframeの6phase時間を平均集計へ加える。
+ */
+void AccumulateRenderProfileFrame(const uint64_t ticks[6])
+{
+    if (!gRenderProfile.enabled)
+        return;
+    for (uint32_t i = 0; i < 6; ++i)
+        gRenderProfile.ticks[i] += ticks[i];
+    ++gRenderProfile.frames;
+}
+
+/**
+ * 環境変数から計測状態を初期化する。
+ */
+void InitializeRenderProfile()
+{
+    gRenderProfile = FRenderProfileState{};
+    const char* enabled = getenv("GKCORE_RENDER_PROFILE");
+    LARGE_INTEGER frequency{};
+    gRenderProfile.enabled = enabled && enabled[0] == '1' && enabled[1] == '\0' && QueryPerformanceFrequency(&frequency);
+    gRenderProfile.frequency = gRenderProfile.enabled ? frequency.QuadPart : 0;
+}
+
+/**
+ * Shutdown時に平均phase時間をJSON一行で出力する。
+ */
+void ReportRenderProfile()
+{
+    if (!gRenderProfile.enabled || gRenderProfile.reported)
+        return;
+    gRenderProfile.reported = true;
+    if (gRenderProfile.frames == 0 || gRenderProfile.frequency <= 0)
+    {
+        fprintf(stderr, "{\"type\":\"gkcore_render_profile\",\"frames\":0}\n");
+        return;
+    }
+    const double millisecondsPerTick = 1000.0 / static_cast<double>(gRenderProfile.frequency);
+    fprintf(stderr, "{\"type\":\"gkcore_render_profile\",\"frames\":%llu,\"transparentPlanMeanMs\":%.6f,\"modelPrepMeanMs\":%.6f,\"fenceWaitMeanMs\":%.6f,\"bufferPrepareUploadMeanMs\":%.6f,\"cmdRecordMeanMs\":%.6f,\"submitPresentMeanMs\":%.6f,\"skinGeometryCacheHits\":%llu,\"skinGeometryCacheMisses\":%llu,\"gpuSkinningDispatches\":%llu,\"gpuSkinningFallbacks\":%llu}\n", static_cast<unsigned long long>(gRenderProfile.frames), gRenderProfile.ticks[0] * millisecondsPerTick / gRenderProfile.frames, gRenderProfile.ticks[1] * millisecondsPerTick / gRenderProfile.frames, gRenderProfile.ticks[2] * millisecondsPerTick / gRenderProfile.frames, gRenderProfile.ticks[3] * millisecondsPerTick / gRenderProfile.frames, gRenderProfile.ticks[4] * millisecondsPerTick / gRenderProfile.frames, gRenderProfile.ticks[5] * millisecondsPerTick / gRenderProfile.frames, static_cast<unsigned long long>(gRenderProfile.skinGeometryCacheHits), static_cast<unsigned long long>(gRenderProfile.skinGeometryCacheMisses), static_cast<unsigned long long>(gRenderProfile.gpuSkinningDispatches), static_cast<unsigned long long>(gRenderProfile.gpuSkinningFallbacks));
+}
+#endif
+
 bool SetError(String& error, const char* message)
 {
     error.Assign(message);
     return false;
 }
+
+#if defined(_DEBUG)
+bool EnableGpuDiagnostics()
+{
+    const char* enabled = getenv("GKCORE_GPU_DIAGNOSTICS");
+    if (!enabled || enabled[0] != '1' || enabled[1] != '\0')
+        return false;
+    ID3D12Debug1* debug = nullptr;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))
+    {
+        debug->EnableDebugLayer();
+        debug->SetEnableGPUBasedValidation(TRUE);
+        debug->Release();
+    }
+    ID3D12DeviceRemovedExtendedDataSettings* dred = nullptr;
+    if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dred))))
+    {
+        dred->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        dred->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+        dred->Release();
+    }
+    return true;
+}
+
+void __stdcall ReportD3D12Message(D3D12_MESSAGE_CATEGORY category, D3D12_MESSAGE_SEVERITY severity, D3D12_MESSAGE_ID id, LPCSTR description, void* context)
+{
+    (void)context;
+    fprintf(stderr, "D3D12 validation category=%u severity=%u id=%u: %s\n", static_cast<uint32_t>(category), static_cast<uint32_t>(severity), static_cast<uint32_t>(id), description ? description : "(no description)");
+    fflush(stderr);
+}
+#endif
+
+bool AppendSkinningRecord(Array<FModelSkinningRecord>& records, uint32_t x, uint32_t y = 0, uint32_t z = 0, uint32_t w = 0)
+{
+    const FModelSkinningRecord record = { { x, y, z, w } };
+    return records.Append(record);
+}
+
+bool AppendDoublePair(Array<FModelSkinningRecord>& records, double first, double second)
+{
+    uint64_t firstBits = 0;
+    uint64_t secondBits = 0;
+    memcpy(&firstBits, &first, sizeof(firstBits));
+    memcpy(&secondBits, &second, sizeof(secondBits));
+    return AppendSkinningRecord(records, static_cast<uint32_t>(firstBits), static_cast<uint32_t>(firstBits >> 32), static_cast<uint32_t>(secondBits), static_cast<uint32_t>(secondBits >> 32));
+}
+
+/**
+ * CPU参照姿勢の位置と法線をGPU pose streamへ追加する。
+ */
+bool AppendSparsePoseVertices(const model::animation::FModelSparsePoseGeometry& geometry, Array<FModelPoseVertex>& output, String& error)
+{
+    const uint64_t required = static_cast<uint64_t>(geometry.positions.Count()) + geometry.normals.Count();
+    if (required > UINT32_MAX - output.Count() || !output.Reserve(output.Count() + static_cast<uint32_t>(required)))
+        return SetError(error, "The sparse pose pool allocation failed");
+    for (uint32_t index = 0; index < geometry.positions.Count(); ++index)
+    {
+        FModelPoseVertex vertex{};
+        memcpy(vertex.position, geometry.positions.At(index).value, sizeof(vertex.position));
+        if (!output.Append(vertex))
+            return SetError(error, "The sparse model position allocation failed");
+    }
+    for (uint32_t index = 0; index < geometry.normals.Count(); ++index)
+    {
+        FModelPoseVertex vertex{};
+        memcpy(vertex.normal, geometry.normals.At(index).value, sizeof(vertex.normal));
+        if (!output.Append(vertex))
+            return SetError(error, "The sparse model normal allocation failed");
+    }
+    return true;
+}
+
+/**
+ * GPUが全属性を書き換えるrangeの位置・法線placeholderをまとめて追加する。
+ */
+bool AppendSparsePosePlaceholders(uint32_t count, Array<FModelPoseVertex>& output, String& error)
+{
+    static const FModelPoseVertex zeros[256]{};
+    if (count > UINT32_MAX - output.Count() || !output.Reserve(output.Count() + count))
+        return SetError(error, "The sparse pose placeholder allocation failed");
+    while (count)
+    {
+        const uint32_t chunkCount = count < 256 ? count : 256;
+        if (!output.AppendRange(zeros, chunkCount))
+            return SetError(error, "The sparse pose placeholder allocation failed");
+        count -= chunkCount;
+    }
+    return true;
+}
+
+bool PackSkinningMatrices(const Array<model::animation::FModelGpuSkinningGeometry::FMatrix>& matrices, uint32_t matrixOffset, FModelSkinningDispatch& dispatch, uint32_t positionOffset, uint32_t normalOffset, Array<FModelSkinningRecord>& records, String& error)
+{
+    if (matrices.Count() != dispatch.matricesCount || positionOffset > UINT32_MAX / 3u || normalOffset > (UINT32_MAX - 1u) / 3u || matrices.Count() > UINT32_MAX / 6u || static_cast<uint64_t>(matrixOffset) + static_cast<uint64_t>(matrices.Count()) * 6u > UINT32_MAX)
+        return SetError(error, "FBX GPU skinning matrix dimensions are invalid");
+    Array<FModelSkinningRecord> candidate;
+    if (!candidate.Reserve(matrices.Count() * 6u))
+        return SetError(error, "FBX GPU skinning matrix allocation failed");
+    dispatch.matricesOffset = matrixOffset;
+    for (uint32_t index = 0; index < matrices.Count(); ++index)
+    {
+        const double* matrix = matrices.At(index).value;
+        for (uint32_t row = 0; row < 3; ++row)
+        {
+            const double* values = matrix + row * 4;
+            if (!isfinite(values[0]) || !isfinite(values[1]) || !isfinite(values[2]) || !isfinite(values[3]) || !AppendDoublePair(candidate, values[0], values[1]) || !AppendDoublePair(candidate, values[2], values[3]))
+                return SetError(error, "FBX GPU skinning matrix is invalid or out of memory");
+        }
+    }
+    dispatch.outputPositionsOffset = positionOffset * 3u;
+    dispatch.outputPositionsCount = dispatch.positionsCount;
+    dispatch.outputNormalsOffset = normalOffset * 3u + 1u;
+    dispatch.outputNormalsCount = dispatch.normalGroupRangesCount;
+    if (!records.AppendRange(candidate.Data(), candidate.Count()))
+        return SetError(error, "FBX GPU skinning matrix append failed");
+    error.Clear();
+    return true;
+}
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+/**
+ * 現在frame用のGPU_TO_CPU bufferを必要容量まで再利用する。
+ */
+bool EnsureSkinningReadbackBuffer(Renderer* renderer, Buffer*& buffer, uint64_t& capacity, uint64_t requiredBytes, String& error)
+{
+    if (!renderer || requiredBytes == 0)
+        return SetError(error, "The GPU skinning verification readback size is invalid");
+    if (buffer && capacity >= requiredBytes && buffer->pCpuMappedAddress)
+    {
+        error.Clear();
+        return true;
+    }
+    if (buffer)
+    {
+        removeResource(buffer);
+        buffer = nullptr;
+        capacity = 0;
+    }
+    BufferLoadDesc desc{};
+    desc.mDesc.mSize = requiredBytes;
+    desc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_GPU_TO_CPU;
+    desc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
+    desc.mDesc.mStartState = RESOURCE_STATE_COPY_DEST;
+    desc.mDesc.mQueueType = QUEUE_TYPE_GRAPHICS;
+    desc.mDesc.pName = "gkcore GPU skinning verification readback";
+    desc.ppBuffer = &buffer;
+    addResource(&desc, nullptr);
+    if (!buffer || !buffer->pCpuMappedAddress)
+    {
+        if (buffer)
+        {
+            removeResource(buffer);
+            buffer = nullptr;
+        }
+        return SetError(error, "The GPU skinning verification readback buffer could not be created or mapped");
+    }
+    capacity = buffer->mSize;
+    error.Clear();
+    return true;
+}
+#endif
 
 }
 
@@ -32,6 +311,13 @@ bool ForgeRenderer::Initialize(HWND window, uint32_t width, uint32_t height, Str
 {
     if (renderer_)
         return SetError(error, "The Forge renderer is already initialized");
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    InitializeRenderProfile();
+#endif
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    const char* verifyGpuSkinning = getenv("GKCORE_VERIFY_GPU_SKINNING");
+    verifyGpuSkinning_ = verifyGpuSkinning && verifyGpuSkinning[0] == '1' && verifyGpuSkinning[1] == '\0';
+#endif
     windowHandle_ = {};
     windowHandle_.type = WINDOW_HANDLE_TYPE_WIN32;
     windowHandle_.window = window;
@@ -40,9 +326,26 @@ bool ForgeRenderer::Initialize(HWND window, uint32_t width, uint32_t height, Str
     rendererDesc.mDx.mFeatureLevel = D3D_FEATURE_LEVEL_11_0;
     rendererDesc.mShaderTarget = SHADER_TARGET_5_1;
     rendererDesc.mGpuMode = GPU_MODE_SINGLE;
+#if defined(_DEBUG)
+    gpuDiagnosticsEnabled_ = EnableGpuDiagnostics();
+    rendererDesc.mEnableGpuBasedValidation = gpuDiagnosticsEnabled_;
+#endif
     initRenderer("gkcore", &rendererDesc, &renderer_);
     if (!renderer_)
         return SetError(error, "The Forge renderer failed to initialize Direct3D 12");
+#if defined(_DEBUG)
+    if (gpuDiagnosticsEnabled_ && renderer_->mDx.pDevice)
+    {
+        ID3D12InfoQueue1* infoQueue = nullptr;
+        if (SUCCEEDED(renderer_->mDx.pDevice->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+        {
+            if (SUCCEEDED(infoQueue->RegisterMessageCallback(ReportD3D12Message, D3D12_MESSAGE_CALLBACK_IGNORE_FILTERS, nullptr, &gpuInfoCallbackCookie_)))
+                gpuInfoQueue_ = infoQueue;
+            else
+                infoQueue->Release();
+        }
+    }
+#endif
     setupGPUConfigurationPlatformParameters(renderer_, nullptr);
 
     QueueDesc queueDesc{};
@@ -77,7 +380,27 @@ bool ForgeRenderer::Initialize(HWND window, uint32_t width, uint32_t height, Str
     height_ = height;
     initResourceLoaderInterface(renderer_);
     resourceLoaderInitialized_ = true;
+    if (!modelGeometryCache_.Initialize(renderer_, graphicsQueue_, error))
+    {
+        Shutdown();
+        return false;
+    }
+    if (!modelSparseMapCache_.Initialize(renderer_, graphicsQueue_, error))
+    {
+        Shutdown();
+        return false;
+    }
+    if (!modelSkinningGeometryCache_.Initialize(renderer_, graphicsQueue_, error))
+    {
+        Shutdown();
+        return false;
+    }
     if (!InitializeGraphicsResources(error))
+    {
+        Shutdown();
+        return false;
+    }
+    if (!modelSkinning_.Initialize(renderer_, error))
     {
         Shutdown();
         return false;
@@ -86,12 +409,20 @@ bool ForgeRenderer::Initialize(HWND window, uint32_t width, uint32_t height, Str
     return true;
 }
 
+bool ForgeRenderer::SupportsGpuModelSkinning() const
+{
+    return modelSkinning_.SupportsDoublePrecision();
+}
+
 void ForgeRenderer::Shutdown()
 {
     if (graphicsQueue_)
         waitQueueIdle(graphicsQueue_);
 #if defined(GKCORE_TEST_FRAME_CAPTURE)
     testFrameCapture_.Reset();
+#endif
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    ReportRenderProfile();
 #endif
     if (renderer_)
     {
@@ -113,12 +444,28 @@ void ForgeRenderer::Shutdown()
             exitQueue(renderer_, graphicsQueue_);
             graphicsQueue_ = nullptr;
         }
+#if defined(_DEBUG)
+        if (gpuInfoQueue_)
+        {
+            ID3D12InfoQueue1* infoQueue = static_cast<ID3D12InfoQueue1*>(gpuInfoQueue_);
+            infoQueue->UnregisterMessageCallback(gpuInfoCallbackCookie_);
+            infoQueue->Release();
+            gpuInfoQueue_ = nullptr;
+            gpuInfoCallbackCookie_ = 0;
+        }
+#endif
         exitRenderer(renderer_);
         renderer_ = nullptr;
     }
     width_ = height_ = 0;
     vertices_.Clear();
     modelVertices_.Clear();
+    modelIndices_.Clear();
+    modelDrawConstants_.Clear();
+    modelPoseVertices_.Clear();
+    modelSkinningRecords_.Clear();
+    modelSkinningDispatches_.Clear();
+    modelSparseMaps_.Clear();
     runs_.Clear();
     customDraws_.Clear();
 }
@@ -321,6 +668,18 @@ bool ForgeRenderer::InitializeGraphicsResources(String& error)
         bufferDesc.mDesc.pName = "gkcore Dynamic Vertex Buffer";
         bufferDesc.ppBuffer = &vertexBuffers_[i];
         addResource(&bufferDesc, nullptr);
+        BufferLoadDesc indexDesc{};
+        indexDesc.mDesc.mSize = static_cast<uint64_t>(kVertexCapacity) * sizeof(uint32_t);
+        indexDesc.mDesc.mMemoryUsage = RESOURCE_MEMORY_USAGE_CPU_TO_GPU;
+        indexDesc.mDesc.mFlags = BUFFER_CREATION_FLAG_PERSISTENT_MAP_BIT;
+        indexDesc.mDesc.mDescriptors = DESCRIPTOR_TYPE_INDEX_BUFFER;
+        indexDesc.mDesc.mStartState = RESOURCE_STATE_INDEX_BUFFER;
+        indexDesc.mDesc.mQueueType = QUEUE_TYPE_GRAPHICS;
+        indexDesc.mDesc.pName = "gkcore Model Triangle Order";
+        indexDesc.ppBuffer = &modelIndexBuffers_[i];
+        addResource(&indexDesc, nullptr);
+        if (!modelIndexBuffers_[i])
+            return SetError(error, "The Forge could not allocate a model index buffer");
         if (!vertexBuffers_[i])
             return SetError(error, "The Forge renderer could not allocate a dynamic vertex buffer");
     }
@@ -337,6 +696,29 @@ void ForgeRenderer::DestroyGraphicsResources()
     if (!renderer_)
         return;
     postEffect_.DiscardPendingFrame();
+    modelSkinning_.Shutdown();
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+    {
+        if (skinningReadbackBuffers_[frame])
+        {
+            removeResource(skinningReadbackBuffers_[frame]);
+            skinningReadbackBuffers_[frame] = nullptr;
+        }
+        skinningReadbackCapacities_[frame] = 0;
+    }
+#endif
+    modelSparseMapCache_.Shutdown();
+    modelSkinningGeometryCache_.Shutdown();
+    modelGeometryCache_.Shutdown();
+    for (uint32_t frame = 0; frame < kFramesInFlight; ++frame)
+    {
+        if (modelIndexBuffers_[frame])
+        {
+            removeResource(modelIndexBuffers_[frame]);
+            modelIndexBuffers_[frame] = nullptr;
+        }
+    }
     postEffect_.Shutdown();
     modelLighting_.Shutdown();
     customShaders_.Shutdown();
@@ -424,9 +806,99 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
         return SetError(error, "The Forge renderer is not initialized");
     if (frame.width == 0 || frame.height == 0)
         return SetError(error, "The frame size must be positive");
+    // 同期設定を切り替えるときだけ、使用中のswapchain処理を完了させる。
+    if (static_cast<bool>(swapChain_->mEnableVsync) != frame.vSyncEnabled)
+    {
+        waitQueueIdle(graphicsQueue_);
+        toggleVSync(renderer_, &swapChain_);
+    }
     const PostProcessSettings settings = { frame.bloomEnabled, frame.bloomIntensity, frame.exposure, frame.toneMappingEnabled, frame.saturation, frame.contrast, frame.fxaaEnabled };
     if (!IsPostProcessSettingsValid(settings))
         return SetError(error, "The frame post-process settings are invalid");
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    uint64_t profileTicks[6]{};
+    int64_t profileStart = 0;
+    if (gRenderProfile.enabled)
+        profileStart = ReadRenderProfileCounter();
+#endif
+
+    // sceneの透明modelを三角形単位で奥から描く順序へ並べる。
+    modelGeometryCache_.BeginFrame();
+    modelSparseMapCache_.BeginFrame();
+    modelSkinningGeometryCache_.BeginFrame();
+    modelSparseMaps_.Clear();
+    modelIndices_.Clear();
+    modelDrawConstants_.Clear();
+    modelPoseVertices_.Clear();
+    modelSkinningRecords_.Clear();
+    const FModelSkinningRecord skinningErrorSeed = {};
+    if (!modelSkinningRecords_.Append(skinningErrorSeed))
+        return SetError(error, "The model skinning error seed allocation failed");
+    modelSkinningDispatches_.Clear();
+    modelSkinningGeometryBuffers_.Clear();
+    /**
+     * 同じ描画snapshotがGPU姿勢buffer内で使う先頭。
+     */
+    struct FPreparedPoseRange
+    {
+        // frameが保持している独立snapshotを借用する。
+        const detail::ModelResource* model;
+        // dummyを除き1から始まるGPU頂点offset。
+        uint32_t offset;
+    };
+    Array<FPreparedPoseRange> preparedPoseRanges;
+    /**
+     * 同じdeferred snapshotが参照する位置・法線poolと元map。
+     */
+    struct FPreparedSparseRange
+    {
+        // frameが保持する予約時の姿勢を借用する。
+        const model::FModelDeferredPose* pose;
+        // 原型を保持するGPU map。
+        Buffer* map;
+        // 位置と法線の1-based pool先頭。
+        uint32_t positionOffset;
+        uint32_t normalOffset;
+        bool gpuSkinning;
+    };
+    Array<FPreparedSparseRange> preparedSparseRanges;
+    uint32_t cachedModelVertexCount = 0;
+    bool hasLitModelRuns = false;
+    Array<ModelDrawPlan::FRange> modelDrawPlanRanges;
+    Array<ModelPartPlan> modelDrawPlanParts;
+    if (!modelDrawPlanRanges.Reserve(frame.draws.Count()))
+        return SetError(error, "The model draw plan range allocation failed");
+    for (uint32_t drawIndex = 0; drawIndex < frame.draws.Count(); ++drawIndex)
+    {
+        ModelDrawPlan::FRange range{};
+        range.firstPart = modelDrawPlanParts.Count();
+        const auto& draw = frame.draws.At(drawIndex);
+        if (draw.kind == detail::DrawKind::Model && draw.model)
+        {
+            ModelDrawPlan plan;
+            if (!BuildModelDrawPlan(*draw.model, plan, error) || !modelDrawPlanParts.AppendRange(plan.parts.Data(), plan.parts.Count()))
+            {
+                if (error.Empty())
+                    error.Assign("The frame model draw plan allocation failed");
+                return false;
+            }
+            range.partCount = plan.parts.Count();
+        }
+        if (!modelDrawPlanRanges.Append(range))
+            return SetError(error, "The model draw plan range allocation failed");
+    }
+    Array<FModelTransparencyDraw> transparencyPlan;
+    if (!BuildModelTransparencyPlan(frame, kVertexCapacity / 3, transparencyPlan, error, modelDrawPlanRanges.Data(), modelDrawPlanRanges.Count(), modelDrawPlanParts.Data(), modelDrawPlanParts.Count()))
+        return false;
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[0] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+        profileStart = phaseEnd;
+    }
+#endif
 
     textureCache_.BeginFrame();
     if (!textureCache_.DrainPendingUploads(error))
@@ -436,7 +908,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     runs_.Clear();
     customDraws_.Clear();
     uint32_t customDrawCount = 0;
-    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* materialSampler = nullptr, const detail::FTextureSampler* surfaceNormalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissionSampler = nullptr, detail::ImageResource* occlusionImage = nullptr, const detail::FTextureSampler* ambientOcclusionSampler = nullptr) -> bool
+    auto appendRun = [&](uint32_t first, uint32_t count, bool depthTest, bool textured, bool alphaBlend, detail::ImageResource* image, const detail::DrawPacket& draw, bool customShader, bool litModel, uint32_t customDrawIndex, detail::ImageResource* metallicRoughnessImage = nullptr, detail::ImageResource* normalImage = nullptr, const detail::FTextureSampler* baseSampler = nullptr, const detail::FTextureSampler* materialSampler = nullptr, const detail::FTextureSampler* surfaceNormalSampler = nullptr, detail::ImageResource* emissiveImage = nullptr, const detail::FTextureSampler* emissionSampler = nullptr, detail::ImageResource* occlusionImage = nullptr, const detail::FTextureSampler* ambientOcclusionSampler = nullptr, Buffer* cachedModelBuffer = nullptr, uint32_t modelDrawConstantIndex = 0, bool indexedModel = false) -> bool
     {
         if (count == 0)
             return true;
@@ -448,14 +920,277 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
         const detail::FTextureSampler emissiveValue = emissionSampler ? *emissionSampler : detail::FTextureSampler{};
         // 遮蔽画像も描画登録元から独立したsampler値で保持する。
         const detail::FTextureSampler occlusionValue = ambientOcclusionSampler ? *ambientOcclusionSampler : detail::FTextureSampler{};
-        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage && runs_.At(runs_.Count() - 1).emissiveImage == emissiveImage && runs_.At(runs_.Count() - 1).occlusionImage == occlusionImage && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).baseColorSampler, baseValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).metallicRoughnessSampler, materialValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).normalSampler, normalValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).emissiveSampler, emissiveValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).occlusionSampler, occlusionValue);
+        const bool canBatch = !customShader && runs_.Count() && !runs_.At(runs_.Count() - 1).customShader && runs_.At(runs_.Count() - 1).first + runs_.At(runs_.Count() - 1).count == first && runs_.At(runs_.Count() - 1).depthTest == depthTest && runs_.At(runs_.Count() - 1).textured == textured && runs_.At(runs_.Count() - 1).alphaBlend == alphaBlend && runs_.At(runs_.Count() - 1).litModel == litModel && runs_.At(runs_.Count() - 1).cachedModelBuffer == cachedModelBuffer && runs_.At(runs_.Count() - 1).modelDrawConstantIndex == modelDrawConstantIndex && runs_.At(runs_.Count() - 1).indexedModel == indexedModel && runs_.At(runs_.Count() - 1).layer == draw.layer && runs_.At(runs_.Count() - 1).image == image && runs_.At(runs_.Count() - 1).metallicRoughnessImage == metallicRoughnessImage && runs_.At(runs_.Count() - 1).normalImage == normalImage && runs_.At(runs_.Count() - 1).emissiveImage == emissiveImage && runs_.At(runs_.Count() - 1).occlusionImage == occlusionImage && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).baseColorSampler, baseValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).metallicRoughnessSampler, materialValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).normalSampler, normalValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).emissiveSampler, emissiveValue) && detail::AreTextureSamplersEqual(runs_.At(runs_.Count() - 1).occlusionSampler, occlusionValue);
         if (canBatch)
         {
             runs_.At(runs_.Count() - 1).count += count;
             return true;
         }
-        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage, baseValue, materialValue, normalValue, emissiveImage, emissiveValue, occlusionImage, occlusionValue };
+        const RenderRun run{ first, count, depthTest, textured, alphaBlend, draw.layer, image, draw.shader, customDrawIndex, customShader, litModel, metallicRoughnessImage, normalImage, baseValue, materialValue, normalValue, emissiveImage, emissiveValue, occlusionImage, occlusionValue, cachedModelBuffer, modelDrawConstantIndex, indexedModel };
         return runs_.Append(run);
+    };
+    auto appendLitPart = [&](const detail::DrawPacket& draw, const ModelPartPlan& part, const uint32_t* firstIndices = nullptr, uint32_t triangleCount = 0) -> bool
+    {
+        bool cached = false;
+        Buffer* cachedBuffer = nullptr;
+        uint32_t count = 0;
+        FModelDrawConstants drawConstants{};
+        bool gpuTransformSafe = modelDrawConstants_.Count() < kModelDrawMaximumConstants && PackModelDrawConstants(frame, draw, drawConstants, error);
+        Buffer* sparseMap = nullptr;
+        if (gpuTransformSafe && draw.deferredPose)
+        {
+            uint32_t positionOffset = 0;
+            uint32_t normalOffset = 0;
+            bool gpuSkinning = false;
+            for (uint32_t range = 0; range < preparedSparseRanges.Count(); ++range)
+            {
+                if (preparedSparseRanges.At(range).pose == draw.deferredPose)
+                {
+                    positionOffset = preparedSparseRanges.At(range).positionOffset;
+                    normalOffset = preparedSparseRanges.At(range).normalOffset;
+                    sparseMap = preparedSparseRanges.At(range).map;
+                    gpuSkinning = preparedSparseRanges.At(range).gpuSkinning;
+                    break;
+                }
+            }
+            if (positionOffset == 0)
+            {
+                const auto& geometry = draw.deferredPose->geometry;
+                const uint64_t required = static_cast<uint64_t>(geometry.positions.Count()) + geometry.normals.Count();
+                if (required > kVertexCapacity - modelPoseVertices_.Count() || !modelSparseMapCache_.Prepare(*draw.model, sparseMap, error))
+                {
+                    error.Clear();
+                    gpuTransformSafe = false;
+                }
+                else
+                {
+                    positionOffset = modelPoseVertices_.Count() + 1;
+                    normalOffset = positionOffset + geometry.positions.Count();
+                    const auto* animationSource = draw.deferredPose->source && draw.deferredPose->source->animation ? draw.deferredPose->source->animation->source : nullptr;
+                    const auto* gpuGeometry = animationSource ? animationSource->GpuSkinningGeometry() : nullptr;
+                    const auto* gpuSparseMap = animationSource ? animationSource->SparseVertexMap() : nullptr;
+                    if (gpuGeometry && draw.deferredPose->gpuSkinningMatrices.Count() && modelSkinning_.SupportsDoublePrecision())
+                    {
+                        Buffer* geometryBuffer = nullptr;
+                        FModelSkinningDispatch dispatch{};
+                        Array<FModelSkinningRecord> matrixRecords;
+                        bool geometryCacheHit = false;
+                        const bool geometryCached = gpuSparseMap && modelSkinningGeometryCache_.Prepare(*draw.model, *gpuGeometry, *gpuSparseMap, geometryBuffer, dispatch, geometryCacheHit, error);
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+                        if (gRenderProfile.enabled && geometryCached && geometryBuffer)
+                        {
+                            if (geometryCacheHit)
+                                ++gRenderProfile.skinGeometryCacheHits;
+                            else
+                                ++gRenderProfile.skinGeometryCacheMisses;
+                        }
+#endif
+                        const bool prepared = geometryCached && geometryBuffer && PackSkinningMatrices(draw.deferredPose->gpuSkinningMatrices, modelSkinningRecords_.Count(), dispatch, positionOffset, normalOffset, matrixRecords, error) && modelSkinningDispatches_.Reserve(modelSkinningDispatches_.Count() + 1) && modelSkinningGeometryBuffers_.Reserve(modelSkinningGeometryBuffers_.Count() + 1) && modelSkinningRecords_.Reserve(modelSkinningRecords_.Count() + matrixRecords.Count());
+                        if (prepared && modelSkinningRecords_.AppendRange(matrixRecords.Data(), matrixRecords.Count()) && modelSkinningDispatches_.Append(dispatch) && modelSkinningGeometryBuffers_.Append(geometryBuffer))
+                        {
+                            gpuSkinning = true;
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+                            if (gRenderProfile.enabled)
+                                ++gRenderProfile.gpuSkinningDispatches;
+#endif
+                        }
+                        else
+                            error.Clear();
+                    }
+                    if (draw.deferredPose->gpuEvaluationOnly && gpuSkinning)
+                    {
+                        if (!AppendSparsePosePlaceholders(static_cast<uint32_t>(required), modelPoseVertices_, error))
+                            return false;
+                    }
+                    else if (draw.deferredPose->gpuEvaluationOnly)
+                    {
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+                        if (gRenderProfile.enabled)
+                            ++gRenderProfile.gpuSkinningFallbacks;
+#endif
+                        model::animation::FModelSparsePoseGeometry fallbackGeometry;
+                        if (!animationSource || !animationSource->DeformSparse(draw.deferredPose->frozenPose, fallbackGeometry, error) || fallbackGeometry.positions.Count() != geometry.positions.Count() || fallbackGeometry.normals.Count() != geometry.normals.Count() || !AppendSparsePoseVertices(fallbackGeometry, modelPoseVertices_, error))
+                        {
+                            if (error.Empty())
+                                error.Assign("The deferred GPU pose could not be restored for CPU rendering");
+                            return false;
+                        }
+                    }
+                    else if (!AppendSparsePoseVertices(geometry, modelPoseVertices_, error))
+                        return false;
+                    const FPreparedSparseRange range{ draw.deferredPose, sparseMap, positionOffset, normalOffset, gpuSkinning };
+                    if (!preparedSparseRanges.Append(range))
+                        return SetError(error, "The sparse pose range allocation failed");
+                }
+            }
+            if (gpuTransformSafe)
+            {
+                drawConstants.flags[0] = 3.0f;
+                drawConstants.flags[1] = static_cast<float>(positionOffset);
+                drawConstants.flags[2] = static_cast<float>(normalOffset);
+            }
+        }
+        if (gpuTransformSafe && draw.model->isPoseSnapshot)
+        {
+            gpuTransformSafe = draw.model->geometrySource && IsModelPosePartGpuSafe(*draw.model, part);
+            if (gpuTransformSafe)
+            {
+                uint32_t poseOffset = 0;
+                for (uint32_t range = 0; range < preparedPoseRanges.Count(); ++range)
+                {
+                    if (preparedPoseRanges.At(range).model == draw.model)
+                    {
+                        poseOffset = preparedPoseRanges.At(range).offset;
+                        break;
+                    }
+                }
+                if (poseOffset == 0)
+                {
+                    const uint32_t firstPoseVertex = modelPoseVertices_.Count();
+                    if (AppendModelPoseVertices(*draw.model, modelPoseVertices_, kVertexCapacity, error))
+                    {
+                        poseOffset = firstPoseVertex + 1;
+                        const FPreparedPoseRange range{ draw.model, poseOffset };
+                        if (!preparedPoseRanges.Append(range))
+                            return SetError(error, "The GPU pose range allocation failed");
+                    }
+                    else
+                    {
+                        error.Clear();
+                        gpuTransformSafe = false;
+                    }
+                }
+                if (gpuTransformSafe)
+                {
+                    drawConstants.flags[0] = 2.0f;
+                    drawConstants.flags[1] = static_cast<float>(poseOffset);
+                }
+            }
+        }
+        if (gpuTransformSafe)
+        {
+            if (!modelGeometryCache_.Prepare(frame, draw, part, firstIndices, firstIndices ? triangleCount : part.indexCount / 3, cached, cachedBuffer, count, error))
+                return false;
+        }
+        else
+            error.Clear();
+        uint32_t constantIndex = 0;
+        bool indexedModel = false;
+        uint32_t first = cached ? 0 : modelVertices_.Count();
+        if (cached)
+        {
+            if (firstIndices)
+                count = triangleCount * 3;
+            if (vertices_.Count() > kVertexCapacity || modelVertices_.Count() > kVertexCapacity - vertices_.Count() || cachedModelVertexCount > kVertexCapacity - vertices_.Count() - modelVertices_.Count() || count > kVertexCapacity - vertices_.Count() - modelVertices_.Count() - cachedModelVertexCount)
+            {
+                cached = false;
+                cachedBuffer = nullptr;
+                first = modelVertices_.Count();
+            }
+        }
+        if (!cached)
+        {
+            detail::DrawPacket cpuDraw = draw;
+            detail::ModelResource* materialized = nullptr;
+            if (draw.deferredPose)
+            {
+                materialized = model::MaterializeDeferredModelPose(*draw.deferredPose, error);
+                if (!materialized)
+                    return false;
+                cpuDraw.model = materialized;
+                cpuDraw.deferredPose = nullptr;
+            }
+            const bool appended = firstIndices ? AppendLitModelTriangles(frame, cpuDraw, part, firstIndices, triangleCount, modelVertices_, kVertexCapacity, error) : AppendLitModelPart(frame, cpuDraw, part, modelVertices_, kVertexCapacity, error);
+            if (materialized)
+                Release(&materialized->reference);
+            if (!appended)
+                return false;
+            count = modelVertices_.Count() - first;
+        }
+        else
+        {
+            for (uint32_t index = 0; index < modelDrawConstants_.Count(); ++index)
+            {
+                if (modelSparseMaps_.At(index) == sparseMap && memcmp(&modelDrawConstants_.At(index), &drawConstants, sizeof(drawConstants)) == 0)
+                {
+                    constantIndex = index + 1;
+                    break;
+                }
+            }
+            if (constantIndex == 0)
+            {
+                if (!modelDrawConstants_.Append(drawConstants) || !modelSparseMaps_.Append(sparseMap))
+                    return SetError(error, "The GPU model transform allocation failed");
+                constantIndex = modelDrawConstants_.Count();
+            }
+            if (firstIndices)
+            {
+                if (count > kVertexCapacity - modelIndices_.Count())
+                    return SetError(error, "The sorted GPU model indices exceed the frame capacity");
+                first = modelIndices_.Count();
+                for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+                {
+                    const uint32_t localIndex = firstIndices[triangle] - part.firstIndex;
+                    const uint32_t indices[3] = { localIndex, localIndex + 1, localIndex + 2 };
+                    if (!modelIndices_.AppendRange(indices, 3))
+                        return SetError(error, "The sorted GPU model index allocation failed");
+                }
+                indexedModel = true;
+            }
+            cachedModelVertexCount += count;
+        }
+        if (count == 0)
+            return true;
+        detail::ImageResource* image = part.textureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.textureIndex)) : whiteImage_;
+        detail::ImageResource* metallicRoughnessImage = part.metallicRoughnessTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.metallicRoughnessTextureIndex)) : whiteImage_;
+        detail::ImageResource* normalImage = part.normalTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.normalTextureIndex)) : whiteImage_;
+        detail::ImageResource* emissiveImage = part.emissiveTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.emissiveTextureIndex)) : whiteImage_;
+        detail::ImageResource* occlusionImage = part.occlusionTextureIndex >= 0 ? draw.model->textures.At(static_cast<uint32_t>(part.occlusionTextureIndex)) : whiteImage_;
+        if (!image || !metallicRoughnessImage || !normalImage || !emissiveImage || !occlusionImage || !textureCache_.PrepareModel(image, metallicRoughnessImage, error, normalImage, &part.baseColorSampler, &part.metallicRoughnessSampler, &part.normalSampler, emissiveImage, &part.emissiveSampler, occlusionImage, &part.occlusionSampler))
+            return false;
+        if (!appendRun(first, count, draw.layer == 0, true, part.alphaBlend, image, draw, false, true, 0, metallicRoughnessImage, normalImage, &part.baseColorSampler, &part.metallicRoughnessSampler, &part.normalSampler, emissiveImage, &part.emissiveSampler, occlusionImage, &part.occlusionSampler, cachedBuffer, constantIndex, indexedModel))
+            return SetError(error, "The frame draw-run allocation failed");
+        hasLitModelRuns = true;
+        return true;
+    };
+    Array<ModelPartPlan> transparencyParts;
+    Array<FTransparentPartRange> transparencyRanges;
+    if (!transparencyRanges.Reserve(frame.draws.Count()))
+        return SetError(error, "The transparent model range allocation failed");
+    for (uint32_t drawIndex = 0; drawIndex < frame.draws.Count(); ++drawIndex)
+        if (!transparencyRanges.Append({ 0, 0 }))
+            return SetError(error, "The transparent model range allocation failed");
+    uint32_t transparencyCursor = 0;
+    // 同じmodel・材質が連続する透明triangleを指定順にまとめる。
+    Array<uint32_t> sortedTriangleFirstIndices;
+    auto flushDeferred = [&](uint32_t beforeIndex) -> bool
+    {
+        while (transparencyCursor < transparencyPlan.Count() && transparencyPlan.At(transparencyCursor).barrierIndex <= beforeIndex)
+        {
+            const FModelTransparencyDraw& entry = transparencyPlan.At(transparencyCursor);
+            if (entry.drawIndex >= frame.draws.Count())
+                return SetError(error, "The transparent model draw reference is invalid");
+            const FTransparentPartRange& range = transparencyRanges.At(entry.drawIndex);
+            if (entry.partIndex >= range.count || range.first > transparencyParts.Count() || range.count > transparencyParts.Count() - range.first)
+                return SetError(error, "The transparent model part reference is invalid");
+            const ModelPartPlan& part = transparencyParts.At(range.first + entry.partIndex);
+            sortedTriangleFirstIndices.Clear();
+            const uint32_t groupDraw = entry.drawIndex;
+            const uint32_t groupPart = entry.partIndex;
+            const uint32_t groupBarrier = entry.barrierIndex;
+            while (transparencyCursor < transparencyPlan.Count())
+            {
+                const auto& next = transparencyPlan.At(transparencyCursor);
+                if (next.drawIndex != groupDraw || next.partIndex != groupPart || next.barrierIndex != groupBarrier)
+                    break;
+                if (!sortedTriangleFirstIndices.Append(next.firstIndex))
+                    return SetError(error, "The sorted model triangle allocation failed");
+                ++transparencyCursor;
+            }
+            if (!appendLitPart(frame.draws.At(groupDraw), part, sortedTriangleFirstIndices.Data(), sortedTriangleFirstIndices.Count()))
+                return false;
+        }
+        return true;
     };
     for (uint32_t layer = 0; layer < 2; ++layer)
     {
@@ -466,6 +1201,8 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                 return SetError(error, "The draw packet has an invalid layer");
             if (draw.layer != layer)
                 continue;
+            if (layer == 0 && !flushDeferred(i))
+                return false;
 
             const bool customShader = draw.shader.IsValid();
             if (customShader)
@@ -479,19 +1216,30 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
 
             if (draw.kind == detail::DrawKind::Model && draw.model)
             {
-                ModelDrawPlan plan;
-                if (!BuildModelDrawPlan(*draw.model, plan, error))
-                    return false;
-                if (plan.parts.Count() == 0)
+                const ModelDrawPlan::FRange& drawPlanRange = modelDrawPlanRanges.At(i);
+                const uint32_t partCount = drawPlanRange.partCount;
+                const uint32_t firstPart = drawPlanRange.firstPart;
+                if (firstPart > modelDrawPlanParts.Count() || partCount > modelDrawPlanParts.Count() - firstPart)
+                    return SetError(error, "The model draw plan range is invalid");
+                if (partCount == 0)
                     continue;
+                if (layer == 0)
+                {
+                    FTransparentPartRange& range = transparencyRanges.At(i);
+                    range.first = transparencyParts.Count();
+                    range.count = partCount;
+                    if (!transparencyParts.AppendRange(modelDrawPlanParts.Data() + firstPart, partCount))
+                        return SetError(error, "The transparent model part allocation failed");
+                }
                 // 独自ピクセルシェーダーの入力には材質の切り抜き条件がないため、無視して描かない。
                 if (customShader)
                 {
-                    for (uint32_t partIndex = 0; partIndex < plan.parts.Count(); ++partIndex)
+                    for (uint32_t partIndex = 0; partIndex < partCount; ++partIndex)
                     {
-                        if (plan.parts.At(partIndex).alphaMask)
+                        const ModelPartPlan& part = modelDrawPlanParts.At(firstPart + partIndex);
+                        if (part.alphaMask || part.alphaBlend)
                         {
-                            return SetError(error, "custom pixel shaders do not support masked model materials");
+                            return SetError(error, part.alphaMask ? "custom pixel shaders do not support masked model materials" : "custom pixel shaders do not support blended model materials");
                         }
                     }
                 }
@@ -506,9 +1254,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     if (!customDraws_.Append(snapshot))
                         return SetError(error, "The custom shader draw snapshot allocation failed");
                 }
-                for (uint32_t partIndex = 0; partIndex < plan.parts.Count(); ++partIndex)
+                for (uint32_t partIndex = 0; partIndex < partCount; ++partIndex)
                 {
-                    const ModelPartPlan& part = plan.parts.At(partIndex);
+                    const ModelPartPlan& part = modelDrawPlanParts.At(firstPart + partIndex);
+                    if (!customShader)
+                    {
+                        if (layer == 0 && part.alphaBlend)
+                            continue;
+                        if (!appendLitPart(draw, part))
+                            return false;
+                        continue;
+                    }
                     const bool litModel = !customShader;
                     const uint32_t first = litModel ? modelVertices_.Count() : vertices_.Count();
                     if (litModel)
@@ -600,6 +1356,8 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             if (customShader)
                 ++customDrawCount;
         }
+        if (layer == 0 && !flushDeferred(frame.draws.Count()))
+            return false;
     }
     PostEffectPlan postEffectPlan{};
     if (!BuildPostEffectPlan(frame, customDrawCount, postEffectPlan, error))
@@ -616,9 +1374,17 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     }
     if (customDraws_.Count() != postEffectPlan.preparedDrawCount)
         return SetError(error, "The custom shader draw snapshot count does not match the frame plan");
-    if (vertices_.Count() > kVertexCapacity || modelVertices_.Count() > kVertexCapacity - vertices_.Count())
+    if (vertices_.Count() > kVertexCapacity || modelVertices_.Count() > kVertexCapacity - vertices_.Count() || cachedModelVertexCount > kVertexCapacity - vertices_.Count() - modelVertices_.Count())
         return SetError(error, "The frame exceeds the dynamic vertex capacity");
 
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[1] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+        profileStart = phaseEnd;
+    }
+#endif
     GpuCmdRingElement element = getNextGpuCmdRingElement(&commandRing_, true, 1);
     if (!element.pCmdPool || !element.pFence || !element.pSemaphore)
         return SetError(error, "The Forge command ring is not ready");
@@ -627,12 +1393,68 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     if (fenceStatus == FENCE_STATUS_INCOMPLETE)
         waitForFences(renderer_, 1, &element.pFence);
     resetCmdPool(renderer_, element.pCmdPool);
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[2] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+        profileStart = phaseEnd;
+    }
+#endif
 
     const uint32_t frameIndex = commandRing_.mPoolIndex;
     if (!customShaders_.PrepareFrame(frameIndex, customDraws_.Data(), customDraws_.Count(), error))
         return false;
-    if (modelVertices_.Count() && !modelLighting_.PrepareFrame(frameIndex, modelVertices_.Data(), modelVertices_.Count(), frame.lighting, error))
+    if (hasLitModelRuns && !modelLighting_.PrepareFrame(frameIndex, modelVertices_.Data(), modelVertices_.Count(), frame.lighting, error))
         return false;
+    uint32_t poseFloat4Count = 0;
+    Buffer* poseBufferOverride = nullptr;
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    uint64_t skinningReadbackByteCount = 0;
+#endif
+    if (hasLitModelRuns)
+    {
+        const uint64_t requiredFloat4Count = (static_cast<uint64_t>(modelPoseVertices_.Count()) + 1u) * 3u;
+        if (requiredFloat4Count > UINT32_MAX)
+            return SetError(error, "The model pose stream exceeds its GPU index range");
+        poseFloat4Count = static_cast<uint32_t>(requiredFloat4Count);
+        if (modelSkinningDispatches_.Count())
+        {
+            if (!modelSkinning_.PrepareFrame(frameIndex, modelSkinningRecords_.Data(), modelSkinningRecords_.Count(), modelSkinningGeometryBuffers_.Data(), modelSkinningDispatches_.Data(), modelSkinningDispatches_.Count(), poseFloat4Count, error))
+                return false;
+            poseBufferOverride = modelSkinning_.OutputBuffer(frameIndex);
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+            if (verifyGpuSkinning_)
+            {
+                skinningReadbackByteCount = static_cast<uint64_t>(poseFloat4Count) * sizeof(float) * 4u;
+                if (!EnsureSkinningReadbackBuffer(renderer_, skinningReadbackBuffers_[frameIndex], skinningReadbackCapacities_[frameIndex], skinningReadbackByteCount, error))
+                    return false;
+            }
+#endif
+        }
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+        else if (verifyGpuSkinning_)
+            return SetError(error, "GPU skinning verification is enabled, but this frame has no GPU skinning dispatch");
+#endif
+        bool skipPoseUpload = poseBufferOverride && preparedPoseRanges.Count() == 0;
+        for (uint32_t rangeIndex = 0; skipPoseUpload && rangeIndex < preparedSparseRanges.Count(); ++rangeIndex)
+            skipPoseUpload = preparedSparseRanges.At(rangeIndex).gpuSkinning;
+        if (!modelLighting_.PreparePoseVertices(frameIndex, modelPoseVertices_.Data(), modelPoseVertices_.Count(), poseBufferOverride, poseFloat4Count, skipPoseUpload, error))
+            return false;
+    }
+    if (hasLitModelRuns && !modelLighting_.PrepareDrawConstants(frameIndex, modelDrawConstants_.Data(), modelDrawConstants_.Count(), error, modelSparseMaps_.Data()))
+        return false;
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (verifyGpuSkinning_ && !hasLitModelRuns)
+        return SetError(error, "GPU skinning verification is enabled, but this frame has no lit model draws");
+#endif
+    if (modelIndices_.Count())
+    {
+        Buffer* indexBuffer = modelIndexBuffers_[frameIndex];
+        if (!indexBuffer || !indexBuffer->pCpuMappedAddress)
+            return SetError(error, "The GPU model index buffer is unavailable");
+        memcpy(indexBuffer->pCpuMappedAddress, modelIndices_.Data(), static_cast<size_t>(modelIndices_.Count()) * sizeof(uint32_t));
+    }
     if (!textureCache_.UploadPending(error))
         return false;
 
@@ -651,8 +1473,39 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
         endUpdateResource(&update);
     }
 
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[3] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+        profileStart = phaseEnd;
+    }
+#endif
+
     Cmd* command = element.pCmds[0];
     beginCmd(command);
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    bool skinningReadbackRecorded = false;
+#endif
+    if (modelSkinningDispatches_.Count())
+    {
+        if (!modelSkinning_.SeedOutputBuffer(command, frameIndex, modelLighting_.PoseVertexBuffer(frameIndex), poseFloat4Count, error) || !modelSkinning_.Dispatch(command, frameIndex, error))
+        {
+            endCmd(command);
+            return false;
+        }
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (verifyGpuSkinning_)
+        {
+            if (!test_support::RecordModelSkinningReadback(renderer_, command, modelSkinning_.OutputBuffer(frameIndex), skinningReadbackBuffers_[frameIndex], skinningReadbackByteCount, error))
+            {
+                endCmd(command);
+                return false;
+            }
+            skinningReadbackRecorded = true;
+        }
+#endif
+    }
     RenderTarget* renderTarget = swapChain_->ppRenderTargets[imageIndex];
     RenderTargetBarrier toRenderTarget{ renderTarget, RESOURCE_STATE_PRESENT, RESOURCE_STATE_RENDER_TARGET };
     cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &toRenderTarget);
@@ -671,20 +1524,20 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     RenderTarget* sceneTarget = postProcess_.SceneTarget();
     cmdSetViewport(command, 0.0f, 0.0f, static_cast<float>(sceneTarget->mWidth), static_cast<float>(sceneTarget->mHeight), 0.0f, 1.0f);
     cmdSetScissor(command, 0, 0, sceneTarget->mWidth, sceneTarget->mHeight);
-    if (vertices_.Count() || modelVertices_.Count())
+    if (vertices_.Count() || modelVertices_.Count() || cachedModelVertexCount)
     {
         for (uint32_t i = 0; i < runs_.Count(); ++i)
         {
             const RenderRun& run = runs_.At(i);
             if (run.layer != 0)
                 continue;
-            Buffer* vertexBuffer = run.litModel ? modelLighting_.VertexBuffer(frameIndex) : vertexBuffers_[frameIndex];
+            Buffer* vertexBuffer = run.litModel ? (run.cachedModelBuffer ? run.cachedModelBuffer : modelLighting_.VertexBuffer(frameIndex)) : vertexBuffers_[frameIndex];
             const uint32_t stride = run.litModel ? sizeof(ModelRenderVertex) : sizeof(Vertex);
             const uint64_t offset = 0;
             cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
             if (run.litModel)
             {
-                if (!modelLighting_.Bind(command, frameIndex, false, error))
+                if (!modelLighting_.Bind(command, frameIndex, false, run.alphaBlend, error, run.modelDrawConstantIndex))
                 {
                     endCmd(command);
                     return false;
@@ -713,7 +1566,13 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     return false;
                 }
             }
-            cmdDraw(command, run.count, run.first);
+            if (run.indexedModel)
+            {
+                cmdBindIndexBuffer(command, modelIndexBuffers_[frameIndex], INDEX_TYPE_UINT32, 0);
+                cmdDrawIndexed(command, run.count, run.first, 0);
+            }
+            else
+                cmdDraw(command, run.count, run.first);
         }
     }
     cmdBindRenderTargets(command, nullptr);
@@ -755,13 +1614,13 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
             const RenderRun& run = runs_.At(i);
             if (run.layer != 1)
                 continue;
-            Buffer* vertexBuffer = run.litModel ? modelLighting_.VertexBuffer(frameIndex) : vertexBuffers_[frameIndex];
+            Buffer* vertexBuffer = run.litModel ? (run.cachedModelBuffer ? run.cachedModelBuffer : modelLighting_.VertexBuffer(frameIndex)) : vertexBuffers_[frameIndex];
             const uint32_t stride = run.litModel ? sizeof(ModelRenderVertex) : sizeof(Vertex);
             const uint64_t offset = 0;
             cmdBindVertexBuffer(command, 1, &vertexBuffer, &stride, &offset);
             if (run.litModel)
             {
-                if (!modelLighting_.Bind(command, frameIndex, true, error))
+                if (!modelLighting_.Bind(command, frameIndex, true, run.alphaBlend, error, run.modelDrawConstantIndex))
                 {
                     endCmd(command);
                     return false;
@@ -790,7 +1649,13 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                     return false;
                 }
             }
-            cmdDraw(command, run.count, run.first);
+            if (run.indexedModel)
+            {
+                cmdBindIndexBuffer(command, modelIndexBuffers_[frameIndex], INDEX_TYPE_UINT32, 0);
+                cmdDrawIndexed(command, run.count, run.first, 0);
+            }
+            else
+                cmdDraw(command, run.count, run.first);
         }
         cmdBindRenderTargets(command, nullptr);
     }
@@ -804,6 +1669,15 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
 #endif
     cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &toPresent);
     endCmd(command);
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[4] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+        profileStart = phaseEnd;
+    }
+#endif
 
     FlushResourceUpdateDesc flushUpdates{};
     const bool hasTextureUploads = textureCache_.HasPendingSubmission();
@@ -838,6 +1712,36 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
     present.ppWaitSemaphores = &element.pSemaphore;
     present.mWaitSemaphoreCount = 1;
     queuePresent(graphicsQueue_, &present);
+    if (modelSkinningDispatches_.Count() && !modelSkinning_.ReadErrorFlag(frameIndex, element.pFence, error))
+        return false;
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (verifyGpuSkinning_)
+    {
+        test_support::FModelSkinningReadbackSummary summary{};
+        const size_t allocationSize = static_cast<size_t>(skinningReadbackByteCount);
+        void* readbackBytes = Allocate(allocationSize);
+        bool readbackValid = skinningReadbackRecorded && readbackBytes && test_support::ReadModelSkinningReadback(renderer_, element.pFence, skinningReadbackBuffers_[frameIndex], skinningReadbackByteCount, readbackBytes, error);
+        if (readbackValid)
+            readbackValid = test_support::CompareModelSkinningReadback(static_cast<const float*>(readbackBytes), poseFloat4Count, modelSkinningDispatches_.Data(), modelSkinningDispatches_.Count(), modelPoseVertices_.Data(), modelPoseVertices_.Count(), 0.0005f, summary, error);
+        fprintf(stdout, "{\"type\":\"gkcore_gpu_skinning_validation\",\"frame\":%u,\"dispatches\":%u,\"positions\":%llu,\"normals\":%llu,\"maxPositionAbsError\":%.9g,\"maxNormalAbsError\":%.9g,\"tolerance\":0.0005,\"valid\":%s}\n", frameIndex, modelSkinningDispatches_.Count(), static_cast<unsigned long long>(summary.positionCount), static_cast<unsigned long long>(summary.normalCount), summary.maximumPositionError, summary.maximumNormalError, readbackValid ? "true" : "false");
+        fflush(stdout);
+        Deallocate(readbackBytes);
+        if (!readbackValid)
+        {
+            if (error.Empty())
+                error.Assign("GPU skinning verification readback allocation failed");
+            fprintf(stderr, "GPU skinning verification failed: %s\n", error.CStr());
+            return false;
+        }
+    }
+#endif
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    if (gRenderProfile.enabled)
+    {
+        const int64_t phaseEnd = ReadRenderProfileCounter();
+        profileTicks[5] = MeasureRenderProfileTicks(profileStart, phaseEnd);
+    }
+#endif
 #if defined(GKCORE_TEST_FRAME_CAPTURE)
     // 画像取得に失敗しても取得済みimageとcommandを提出してから呼出元へ返す。
     if (!captureError.Empty())
@@ -850,6 +1754,9 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
         error.MoveFrom(captureError);
         return false;
     }
+#endif
+#if defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS)
+    AccumulateRenderProfileFrame(profileTicks);
 #endif
     error.Clear();
     return true;

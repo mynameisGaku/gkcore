@@ -2,9 +2,9 @@
 #ifndef GKCORE_RESOURCES_FTEXTURESAMPLER_H
 #define GKCORE_RESOURCES_FTEXTURESAMPLER_H
 
-#include "ETextureAddressMode.h"
-#include "ETextureFilter.h"
-#include "ETextureMipFilter.h"
+#include "resources/ETextureAddressMode.h"
+#include "resources/ETextureFilter.h"
+#include "resources/ETextureMipFilter.h"
 
 /**
  * 材質ごとの画像参照設定。

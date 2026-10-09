@@ -1,10 +1,10 @@
-﻿#include "TextureCache.h"
+﻿#include "render/TextureCache.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
 #include <Graphics/FSL/defaults.h>
-#include "../../shaders/gkcore_model_textures.srt.h"
-#include "../../shaders/gkcore_sprite.srt.h"
+#include "shaders/gkcore_model_textures.srt.h"
+#include "shaders/gkcore_sprite.srt.h"
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
 
 #include <float.h>

@@ -1,10 +1,12 @@
-﻿#include "../src/render/ModelGeometry.h"
+﻿#include "render/ModelGeometry.h"
 
-#include "../src/foundation/Memory.h"
+#include "foundation/Memory.h"
 
 #include <limits>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 
 namespace
 {
@@ -126,6 +128,30 @@ bool TestVertexContractAndBasicLightingPayload()
             return false;
     }
     return true;
+}
+
+bool TestAlphaModePayloadValues()
+{
+    const Vec3 points[3] = { { -0.5f, -0.5f, 0.0f }, { 0.5f, -0.5f, 0.0f }, { 0.0f, 0.5f, 0.0f } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> vertices;
+    String error;
+    ModelPartPlan part = Part();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error) && Near(vertices.At(0).alphaMaskCutoff[0], 0.0f), "opaque mode uses zero alpha tag"))
+        return false;
+    part.alphaMask = true;
+    vertices.Clear();
+    if (!Check(AppendLitModelPart(frame, draw, part, vertices, 32, error) && Near(vertices.At(0).alphaMaskCutoff[0], 1.0f), "mask mode uses one alpha tag"))
+        return false;
+    part.alphaMask = false;
+    part.alphaBlend = true;
+    vertices.Clear();
+    return Check(AppendLitModelPart(frame, draw, part, vertices, 32, error) && Near(vertices.At(0).alphaMaskCutoff[0], 2.0f), "blend mode uses two alpha tag");
 }
 
 /**
@@ -730,10 +756,174 @@ bool TestCapacityAndAllocationFailuresPreserveOutput()
     return Check(vertices.Count() == oldCount && vertices.At(0).surface.position[0] == 91.0f, "allocation failure preserves existing output");
 }
 
+/**
+ * 三角形を複数回追加しても頂点順と既存出力を保ち、配列を段階的に拡張する。
+ */
+bool TestRepeatedModelPartAppendsRetainGeometryAndGrowCapacity()
+{
+    const Vec3 points[3] = { { -0.5f, -0.5f, 0 }, { 0.5f, -0.5f, 0 }, { 0, 0.5f, 0 } };
+    const Vec3 normals[3] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    Array<ModelRenderVertex> reference;
+    Array<ModelRenderVertex> streamed;
+    String error;
+    if (!Check(AppendLitModelPart(frame, draw, Part(), reference, 128, error), "reference triangle is generated"))
+        return false;
+    ModelRenderVertex sentinel{};
+    sentinel.surface.position[0] = 91.0f;
+    if (!Check(streamed.Append(sentinel), "streamed output accepts its existing prefix"))
+        return false;
+    const uint32_t prefixCapacity = streamed.Capacity();
+    constexpr uint32_t appendCount = 16;
+    for (uint32_t append = 0; append < appendCount; ++append)
+        if (!Check(AppendLitModelPart(frame, draw, Part(), streamed, 128, error), "repeated triangle append succeeds"))
+            return false;
+    if (!Check(streamed.Count() == 1 + appendCount * reference.Count(), "repeated appends retain every projected vertex"))
+        return false;
+    if (!Check(streamed.Capacity() > streamed.Count() && streamed.Capacity() > prefixCapacity, "streamed output grows capacity geometrically"))
+        return false;
+    if (!Check(streamed.At(0).surface.position[0] == 91.0f, "repeated appends preserve the existing prefix"))
+        return false;
+    for (uint32_t append = 0; append < appendCount; ++append)
+    {
+        for (uint32_t vertex = 0; vertex < reference.Count(); ++vertex)
+        {
+            const ModelRenderVertex& actual = streamed.At(1 + append * reference.Count() + vertex);
+            const ModelRenderVertex& expected = reference.At(vertex);
+            if (!Check(memcmp(&actual, &expected, sizeof(ModelRenderVertex)) == 0, "repeated appends preserve exact vertex payload and order"))
+                return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * 指定順のtriangle batchが単体描画と一致し、範囲・容量エラー時に出力を保つ。
+ */
+bool TestModelTriangleBatchOrderAndAtomicFailure()
+{
+    const Vec3 points[6] = { { -0.8f, -0.5f, 0 }, { -0.2f, -0.5f, 0 }, { -0.5f, 0.5f, 0 }, { 0.2f, -0.5f, 0 }, { 0.8f, -0.5f, 0 }, { 0.5f, 0.5f, 0 } };
+    const Vec3 normals[6] = { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } };
+    detail::ModelResource model{};
+    for (uint32_t i = 0; i < 6; ++i)
+        model.vertices.Append(MakeVertex(points[i].x, points[i].y, points[i].z, normals[i].x, normals[i].y, normals[i].z, static_cast<float>(i % 3 == 1), static_cast<float>(i % 3 == 2)));
+    for (uint32_t i = 0; i < 6; ++i)
+        model.indices.Append(i);
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    const ModelPartPlan wholePart = Part(0, 6);
+    const uint32_t shuffledFirstIndices[2] = { 3, 0 };
+    Array<ModelRenderVertex> batch;
+    String error;
+    if (!Check(AppendLitModelTriangles(frame, draw, wholePart, shuffledFirstIndices, 2, batch, 64, error), "shuffled triangle batch succeeds"))
+        return false;
+    Array<ModelRenderVertex> firstTriangle;
+    Array<ModelRenderVertex> secondTriangle;
+    if (!Check(AppendLitModelPart(frame, draw, Part(3, 3), firstTriangle, 64, error), "first reference triangle succeeds") || !Check(AppendLitModelPart(frame, draw, Part(0, 3), secondTriangle, 64, error), "second reference triangle succeeds"))
+        return false;
+    if (!Check(batch.Count() == firstTriangle.Count() + secondTriangle.Count(), "batch emits all selected triangle vertices"))
+        return false;
+    for (uint32_t i = 0; i < firstTriangle.Count(); ++i)
+        if (!Check(memcmp(&batch.At(i), &firstTriangle.At(i), sizeof(ModelRenderVertex)) == 0, "batch follows caller triangle order"))
+            return false;
+    for (uint32_t i = 0; i < secondTriangle.Count(); ++i)
+        if (!Check(memcmp(&batch.At(firstTriangle.Count() + i), &secondTriangle.At(i), sizeof(ModelRenderVertex)) == 0, "batch preserves later triangle payload"))
+            return false;
+
+    ModelRenderVertex sentinel{};
+    sentinel.surface.position[0] = 91.0f;
+    Array<ModelRenderVertex> unchanged;
+    if (!Check(unchanged.Append(sentinel), "atomic batch output starts with a sentinel"))
+        return false;
+    const uint32_t invalidFirstIndices[2] = { 0, 1 };
+    if (!Check(!AppendLitModelTriangles(frame, draw, wholePart, invalidFirstIndices, 2, unchanged, 64, error), "misaligned triangle index is rejected"))
+        return false;
+    if (!Check(unchanged.Count() == 1 && unchanged.At(0).surface.position[0] == 91.0f, "invalid batch preserves prior output"))
+        return false;
+    if (!Check(!AppendLitModelTriangles(frame, draw, wholePart, shuffledFirstIndices, 2, unchanged, 4, error), "batch vertex capacity is enforced"))
+        return false;
+    return Check(unchanged.Count() == 1 && unchanged.At(0).surface.position[0] == 91.0f, "capacity failure preserves prior output");
+}
+
+/**
+ * 共有contextでも従来のprojection結果を保ち、triangle群でのCPU時間を記録する。
+ */
+bool TestReusableTransformContextAndManyTriangles()
+{
+    const Vec3 points[3] = { { -0.7f, -0.4f, 0.2f }, { 0.8f, -0.5f, 0.4f }, { 0.1f, 0.9f, -0.3f } };
+    const Vec3 normals[3] = { { 0.2f, 0.1f, 1.0f }, { 0.0f, 0.3f, 1.0f }, { -0.1f, 0.2f, 1.0f } };
+    detail::ModelResource model{};
+    MakeTriangle(model, normals, points);
+    detail::FramePacket frame{};
+    Frame(frame);
+    detail::DrawPacket draw = Draw(model);
+    draw.cameraPosition = { 1.2f, -0.8f, -5.0f };
+    draw.cameraTarget = { 0.2f, 0.4f, 0.0f };
+    draw.modelScale = { 1.7f, 0.8f, 1.2f };
+    draw.modelRotation = { 0.13f, -0.21f, 0.17f };
+    draw.modelPosition = { -0.3f, 0.2f, 0.1f };
+    WorldVertex source[3]{};
+    for (uint32_t corner = 0; corner < 3; ++corner)
+    {
+        const detail::ModelVertex& vertex = model.vertices.At(corner);
+        source[corner].position = { vertex.position[0], vertex.position[1], vertex.position[2] };
+        source[corner].normal = { vertex.normal[0], vertex.normal[1], vertex.normal[2] };
+        source[corner].uv[0] = vertex.uv[0];
+        source[corner].uv[1] = vertex.uv[1];
+    }
+    String error;
+    FWorldGeometryContext context{};
+    if (!Check(BuildWorldGeometryContext(draw, true, context, error), "model/camera context builds"))
+        return false;
+    ProjectedWorldVertex independent[18]{};
+    ProjectedWorldVertex reused[18]{};
+    uint32_t independentCount = 0;
+    uint32_t reusedCount = 0;
+    if (!Check(ProjectWorldTriangle(frame, draw, source, true, true, nullptr, independent, independentCount, error), "per-call projection is valid") || !Check(ProjectWorldTriangle(frame, draw, context, source, true, nullptr, reused, reusedCount, error), "shared-context projection is valid"))
+        return false;
+    bool sameProjection = independentCount == reusedCount;
+    for (uint32_t vertex = 0; sameProjection && vertex < independentCount; ++vertex)
+    {
+        sameProjection = memcmp(independent[vertex].surface.position, reused[vertex].surface.position, sizeof(independent[vertex].surface.position)) == 0 && memcmp(independent[vertex].surface.color, reused[vertex].surface.color, sizeof(independent[vertex].surface.color)) == 0 && memcmp(independent[vertex].surface.uv, reused[vertex].surface.uv, sizeof(independent[vertex].surface.uv)) == 0 && memcmp(independent[vertex].worldNormal, reused[vertex].worldNormal, sizeof(independent[vertex].worldNormal)) == 0 && memcmp(independent[vertex].viewDirection, reused[vertex].viewDirection, sizeof(independent[vertex].viewDirection)) == 0 && memcmp(independent[vertex].metallicRoughnessUv, reused[vertex].metallicRoughnessUv, sizeof(independent[vertex].metallicRoughnessUv)) == 0 && memcmp(independent[vertex].normalUv, reused[vertex].normalUv, sizeof(independent[vertex].normalUv)) == 0 && memcmp(independent[vertex].worldTangent, reused[vertex].worldTangent, sizeof(independent[vertex].worldTangent)) == 0 && memcmp(independent[vertex].emissiveUv, reused[vertex].emissiveUv, sizeof(independent[vertex].emissiveUv)) == 0 && memcmp(independent[vertex].occlusionUv, reused[vertex].occlusionUv, sizeof(independent[vertex].occlusionUv)) == 0;
+    }
+    if (!Check(sameProjection, "shared context preserves exact projected attributes"))
+        return false;
+
+    // 実モデルで多いtriangle数に合わせ、両経路の処理時間を測る。
+    constexpr uint32_t triangleCount = 84000;
+    const clock_t independentStart = clock();
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+    {
+        ProjectedWorldVertex projected[18];
+        uint32_t projectedCount = 0;
+        if (!ProjectWorldTriangle(frame, draw, source, true, true, nullptr, projected, projectedCount, error))
+            return Check(false, "per-call projection benchmark remains valid");
+    }
+    const clock_t independentEnd = clock();
+    const clock_t reusedStart = clock();
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
+    {
+        ProjectedWorldVertex projected[18];
+        uint32_t projectedCount = 0;
+        if (!ProjectWorldTriangle(frame, draw, context, source, true, nullptr, projected, projectedCount, error))
+            return Check(false, "shared-context projection benchmark remains valid");
+    }
+    const clock_t reusedEnd = clock();
+    const double independentMilliseconds = 1000.0 * static_cast<double>(independentEnd - independentStart) / CLOCKS_PER_SEC;
+    const double reusedMilliseconds = 1000.0 * static_cast<double>(reusedEnd - reusedStart) / CLOCKS_PER_SEC;
+    fprintf(stdout, "model geometry 84000 triangles: per-call %.3f ms, reused context %.3f ms\n", independentMilliseconds, reusedMilliseconds);
+    return true;
+}
+
 // namespace
 }
 
 int main()
 {
-    return TestVertexContractAndBasicLightingPayload() && TestEmissivePayloadAndClipping() && TestOcclusionPayloadAndClipping() && TestOcclusionFarPlaneClipping() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() ? 0 : 1;
+    return TestVertexContractAndBasicLightingPayload() && TestAlphaModePayloadValues() && TestEmissivePayloadAndClipping() && TestOcclusionPayloadAndClipping() && TestOcclusionFarPlaneClipping() && TestInverseScaleRotationAndNegativeScale() && TestZeroNormalFallbacks() && TestExtremeFiniteViewDirectionsDoNotOverflowDuringClipping() && TestZeroNormalFallbackIsAlreadyInWorldSpace() && TestClippingInterpolatesLightingAndRejectsNonFiniteInputs() && TestNormalMapPayloadAndTransformedTangentFrame() && TestNormalMapAttributesInterpolateThroughClipping() && TestInvalidNormalMapBasisPreservesOutput() && TestCapacityAndAllocationFailuresPreserveOutput() && TestRepeatedModelPartAppendsRetainGeometryAndGrowCapacity() && TestModelTriangleBatchOrderAndAtomicFailure() && TestReusableTransformContextAndManyTriangles() ? 0 : 1;
 }

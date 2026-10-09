@@ -1,22 +1,24 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "PostEffectPlan.h"
-#include "CustomShaders.h"
+#include "render/PostEffectPlan.h"
+#include "render/CustomShaders.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 
 /**
  * Records a captured custom shader over the HDR scene as a full-screen pass.
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
  * Owns the optional HDR output target, fullscreen geometry, sampler, and source descriptors.
  */
-class PostEffectRenderer {
-public:
+class PostEffectRenderer
+{
+  public:
     /**
      * Starts without Forge resources; initialization creates a same-size HDR output target.
      */
@@ -39,8 +41,7 @@ public:
     /**
      * Records the captured shader and restores the scene target for subsequent rendering.
      */
-    bool Apply(Cmd* command, RenderTarget* scene, CustomShaders& shaders, uint32_t frameIndex,
-               const PostEffectPlan& plan, String& error);
+    bool Apply(Cmd* command, RenderTarget* scene, CustomShaders& shaders, uint32_t frameIndex, const PostEffectPlan& plan, String& error);
     /**
      * Discards staged states before every attempted presentation recording.
      */
@@ -58,7 +59,7 @@ public:
      */
     RenderTarget* OutputTarget() const;
 
-private:
+  private:
     /**
      * Creates one render-target texture in the HDR format and requested dimensions.
      */

@@ -1,5 +1,5 @@
-﻿#include "Model.h"
-#include "animation/FModelAnimationAsset.h"
+﻿#include "model/Model.h"
+#include "model/animation/FModelAnimationAsset.h"
 
 /**
  * model resourceの生成と破棄を管理する処理。
@@ -40,6 +40,8 @@ void DestroyModelResource(RefCounted* object)
     ModelResource* model = reinterpret_cast<ModelResource*>(object);
     if (model->animation)
         Release(&model->animation->reference);
+    if (model->geometrySource)
+        Release(&model->geometrySource->reference);
     for (uint32_t i = 0; i < model->textures.Count(); ++i)
     {
         if (model->textures.At(i))

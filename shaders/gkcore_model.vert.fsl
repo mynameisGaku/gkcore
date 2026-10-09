@@ -34,6 +34,36 @@ STRUCT(VSInput)
 };
 
 /**
+ * model位置とcamera射影に使う13行の定数。
+ */
+STRUCT(ModelDrawConstants)
+{
+    // model回転行列の各行。
+    DATA(float4, RotationRow0, None);
+    DATA(float4, RotationRow1, None);
+    DATA(float4, RotationRow2, None);
+    // 回転後のworld位置への移動量。
+    DATA(float4, Translation, None);
+    // 法線へ適用する逆scale。
+    DATA(float4, InverseScale, None);
+    // model位置と接線へ適用するscale。
+    DATA(float4, Scale, None);
+    // cameraの前・右・上方向と位置。
+    DATA(float4, CameraForward, None);
+    DATA(float4, CameraRight, None);
+    DATA(float4, CameraUp, None);
+    DATA(float4, CameraPosition, None);
+    // focal/aspect, focal, far/(far-near), -far*near/(far-near)。
+    DATA(float4, Projection, None);
+    // 入力頂点色へ掛ける線形RGBA。
+    DATA(float4, Tint, None);
+    // xは変換mode、y/zはpose streamの位置/法線offset。
+    DATA(float4, Flags, None);
+};
+
+#include "gkcore_model_draw.srt.h"
+
+/**
  * 画素shaderへ渡すmodel表面と照明属性。
  */
 STRUCT(VSOutput)
@@ -71,23 +101,90 @@ STRUCT(VSOutput)
 };
 
 /**
- * 投影済み表面、照明、材質属性を画素shaderへ渡す。
+ * 数値範囲を守りながら頂点shader内のvectorを正規化する。
  */
+float3 SafeNormalizeModelVertex(float3 value, float3 fallbackValue)
+{
+    if (!all(isfinite(value)))
+    {
+        return fallbackValue;
+    }
+    // 長さ計算前に成分の最大値で縮める。
+    const float scale = max(abs(value.x), max(abs(value.y), abs(value.z)));
+    if (!(scale > 0.0))
+    {
+        return fallbackValue;
+    }
+    // 縮小後の長さを使ってoverflowを避ける。
+    const float3 scaled = value / scale;
+    return scaled * rsqrt(max(dot(scaled, scaled), 0.00000001));
+}
+
 ROOT_SIGNATURE(DefaultRootSignature)
 VSOutput VS_MAIN(VSInput input)
 {
     INIT_MAIN;
     // 次段shaderへ渡す属性一式。
     VSOutput output;
-    output.Position = input.Position;
-    output.Color = input.Color;
+    if (gModelDraw.Flags.x > 0.5)
+    {
+        // pose streamを参照するmodeではCPU変形済み位置・法線を使う。
+        float3 sourcePosition = input.Position.xyz;
+        float3 sourceNormal = input.WorldNormal;
+        float4 sourceTangent = input.WorldTangent;
+        if (gModelDraw.Flags.x > 2.5)
+        {
+            const uint2 sourceMap = gModelSparseVertexMap[uint(input.Position.w)];
+            const uint positionVertex = (uint(gModelDraw.Flags.y) + sourceMap.x) * 3;
+            const uint normalVertex = (uint(gModelDraw.Flags.z) + sourceMap.y) * 3;
+            sourcePosition = gModelPoseVertices[positionVertex].xyz;
+            sourceNormal = gModelPoseVertices[normalVertex + 1].xyz;
+        }
+        else if (gModelDraw.Flags.x > 1.5)
+        {
+            const uint poseVertex = (uint(gModelDraw.Flags.y) + uint(input.Position.w)) * 3;
+            sourcePosition = gModelPoseVertices[poseVertex].xyz;
+            sourceNormal = gModelPoseVertices[poseVertex + 1].xyz;
+            sourceTangent = gModelPoseVertices[poseVertex + 2];
+        }
+        // model scale後の頂点位置。
+        const float3 scaledPosition = sourcePosition * gModelDraw.Scale.xyz;
+        // translationとcamera位置の差を先に取り、遠方でも頂点精度を保つ。
+        const float3 translatedCameraRelative = gModelDraw.Translation.xyz - gModelDraw.CameraPosition.xyz;
+        const float3 cameraRelative = float3(dot(gModelDraw.RotationRow0.xyz, scaledPosition), dot(gModelDraw.RotationRow1.xyz, scaledPosition), dot(gModelDraw.RotationRow2.xyz, scaledPosition)) + translatedCameraRelative;
+        // model位置をcamera viewへ移す。
+        const float3 viewPosition = float3(dot(cameraRelative, gModelDraw.CameraRight.xyz), dot(cameraRelative, gModelDraw.CameraUp.xyz), dot(cameraRelative, gModelDraw.CameraForward.xyz));
+        output.Position = float4(viewPosition.x * gModelDraw.Projection.x, viewPosition.y * gModelDraw.Projection.y, viewPosition.z * gModelDraw.Projection.z + gModelDraw.Projection.w, viewPosition.z);
+        output.Color = input.Color * gModelDraw.Tint;
+        // 逆scaleと回転で法線を変換する。
+        output.WorldNormal = SafeNormalizeModelVertex(float3(dot(gModelDraw.RotationRow0.xyz, sourceNormal * gModelDraw.InverseScale.xyz), dot(gModelDraw.RotationRow1.xyz, sourceNormal * gModelDraw.InverseScale.xyz), dot(gModelDraw.RotationRow2.xyz, sourceNormal * gModelDraw.InverseScale.xyz)), float3(0.0, 1.0, 0.0));
+        output.ViewDirection = -cameraRelative;
+        if (input.NormalParameters.x > 0.5)
+        {
+            // 接線へscaleと回転を適用してから法線に直交させる。
+            const float3 scaledTangent = sourceTangent.xyz * gModelDraw.Scale.xyz;
+            const float3 rotatedTangent = float3(dot(gModelDraw.RotationRow0.xyz, scaledTangent), dot(gModelDraw.RotationRow1.xyz, scaledTangent), dot(gModelDraw.RotationRow2.xyz, scaledTangent));
+            const float3 tangent = SafeNormalizeModelVertex(rotatedTangent - output.WorldNormal * dot(output.WorldNormal, rotatedTangent), float3(1.0, 0.0, 0.0));
+            const float3 scaleSign = float3(gModelDraw.Scale.x < 0.0 ? -1.0 : 1.0, gModelDraw.Scale.y < 0.0 ? -1.0 : 1.0, gModelDraw.Scale.z < 0.0 ? -1.0 : 1.0);
+            output.WorldTangent = float4(tangent, sourceTangent.w * scaleSign.x * scaleSign.y * scaleSign.z);
+        }
+        else
+        {
+            output.WorldTangent = input.WorldTangent;
+        }
+    }
+    else
+    {
+        output.Position = input.Position;
+        output.Color = input.Color;
+        output.WorldNormal = input.WorldNormal;
+        output.ViewDirection = input.ViewDirection;
+        output.WorldTangent = input.WorldTangent;
+    }
     output.UV = input.UV;
-    output.WorldNormal = input.WorldNormal;
-    output.ViewDirection = input.ViewDirection;
     output.MetallicRoughness = input.MetallicRoughness;
     output.AlphaMaskCutoff = input.AlphaMaskCutoff;
     output.MetallicRoughnessUV = input.MetallicRoughnessUV;
-    output.WorldTangent = input.WorldTangent;
     output.NormalUV = input.NormalUV;
     output.NormalParameters = input.NormalParameters;
     output.EmissiveUV = input.EmissiveUV;

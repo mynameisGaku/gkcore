@@ -1,5 +1,5 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ModelTangents.h"
+#include "model/ModelTangents.h"
 
 #include <math.h>
 #include <float.h>
@@ -9,7 +9,7 @@
 
 extern "C"
 {
-#include "../../third_party/mikktspace/mikktspace.h"
+#include <mikktspace/mikktspace.h>
 }
 
 namespace gk::model

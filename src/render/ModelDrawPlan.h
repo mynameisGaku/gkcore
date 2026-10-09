@@ -2,7 +2,7 @@
 #ifndef GKCORE_RENDER_MODELDRAWPLAN_H
 #define GKCORE_RENDER_MODELDRAWPLAN_H
 
-#include "../resources/Resources.h"
+#include "resources/Resources.h"
 
 /**
  * 静的model描画に使うCPU検証と材質対応付け。
@@ -57,6 +57,8 @@ struct ModelPartPlan
     int32_t occlusionTextureIndex = -1;
     // 環境遮蔽画像の座標処理と補間方法。
     detail::FTextureSampler occlusionSampler{};
+    // 基本色alphaを混合描画に使う場合はtrue。
+    bool alphaBlend = false;
 };
 
 /**
@@ -64,6 +66,17 @@ struct ModelPartPlan
  */
 struct ModelDrawPlan
 {
+    /**
+     * frame内の共有primitive配列にある描画計画の範囲。
+     */
+    struct FRange
+    {
+        // 共有primitive配列の先頭index。
+        uint32_t firstPart;
+        // modelが持つprimitive数。
+        uint32_t partCount;
+    };
+
     // 描画順のprimitive情報。
     Array<ModelPartPlan> parts;
 

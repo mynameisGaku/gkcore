@@ -1,6 +1,6 @@
-﻿#include "../src/resources/Resources.h"
-#include "../src/render/ModelDrawPlan.h"
-#include "../src/render/ModelGeometry.h"
+﻿#include "resources/Resources.h"
+#include "render/ModelDrawPlan.h"
+#include "render/ModelGeometry.h"
 
 #include <filesystem>
 #include <fstream>
@@ -66,7 +66,7 @@ bool CheckFixtureFile(const std::filesystem::path& directory, const char* filena
 /**
  * 正常GLBのalpha mode、cutoff、material共有、埋込画像を確認する。
  */
-bool CheckLoadedFixture(const std::filesystem::path& directory, const char* filename, const bool* expectedMasks, const float* expectedCutoffs, uint32_t expectedMaterialCount, float expectedBaseAlpha, bool expectTexture, gk::String& failure)
+bool CheckLoadedFixture(const std::filesystem::path& directory, const char* filename, const bool* expectedMasks, const bool* expectedBlends, const float* expectedCutoffs, uint32_t expectedMaterialCount, float expectedBaseAlpha, bool expectTexture, gk::String& failure)
 {
     // model loaderへ渡すUTF-8 path。
     const std::string path = (directory / filename).u8string();
@@ -132,7 +132,7 @@ bool CheckLoadedFixture(const std::filesystem::path& directory, const char* file
         {
             // 読み込まれた材質alpha設定。
             const gk::detail::ModelMaterial& material = model->materials.At(index);
-            if (material.alphaMask != expectedMasks[index] || !Near(material.alphaCutoff, expectedCutoffs[index]) || !Near(material.baseColorFactor[3], expectedBaseAlpha))
+            if (material.alphaMask != expectedMasks[index] || material.alphaBlend != expectedBlends[index] || !Near(material.alphaCutoff, expectedCutoffs[index]) || !Near(material.baseColorFactor[3], expectedBaseAlpha))
             {
                 failure.Assign("GLB alpha mode or cutoff was not retained: ");
                 failure.Append(filename);
@@ -187,7 +187,7 @@ bool CheckLoadedFixture(const std::filesystem::path& directory, const char* file
                 const gk::render::ModelPartPlan& part = plan.parts.At(index);
                 // modeにかかわらずGLB指定cutoffをplanへ保持する。
                 const float expectedPlanCutoff = expectedCutoffs[index];
-                if (part.alphaMask != expectedMasks[index] || !Near(part.alphaCutoff, expectedPlanCutoff))
+                if (part.alphaMask != expectedMasks[index] || part.alphaBlend != expectedBlends[index] || !Near(part.alphaCutoff, expectedPlanCutoff))
                 {
                     failure.Assign("GLB alpha mode or cutoff did not reach the draw plan: ");
                     failure.Append(filename);
@@ -208,7 +208,8 @@ bool CheckLoadedFixture(const std::filesystem::path& directory, const char* file
                 {
                     // 描画に使う現在の頂点。
                     const gk::render::ModelRenderVertex& vertex = vertices.At(vertexIndex);
-                    if (!Near(vertex.alphaMaskCutoff[0], expectedMasks[index] ? 1.0f : 0.0f) || !Near(vertex.alphaMaskCutoff[1], expectedPlanCutoff))
+                    const float expectedAlphaMode = expectedBlends[index] ? 2.0f : (expectedMasks[index] ? 1.0f : 0.0f);
+                    if (!Near(vertex.alphaMaskCutoff[0], expectedAlphaMode) || !Near(vertex.alphaMaskCutoff[1], expectedPlanCutoff))
                     {
                         failure.Assign("GLB alpha mask payload did not reach model vertices: ");
                         failure.Append(filename);
@@ -368,17 +369,21 @@ int main(int argc, char** argv)
     }
     // alpha maskを無効にするOPAQUE材質の期待値。
     const bool opaqueMask[1] = { false };
+    const bool opaqueBlend[1] = { false };
     // MASK材質で保持するcutoffの期待値。
     const bool maskEnabled[1] = { true };
+    const bool maskBlend[1] = { false };
     const float cutoffDefault[1] = { 0.5f };
     const float cutoffZero[1] = { 0.0f };
     const float cutoffOne[1] = { 1.0f };
     const float cutoffTwo[1] = { 2.0f };
     const float cutoffEquality[1] = { 128.0f / 255.0f };
     // mixed fixtureはopaque、既定MASK、cutoff 1の順。
-    const bool mixedMasks[3] = { false, true, true };
-    const float mixedCutoffs[3] = { 0.5f, 0.5f, 1.0f };
-    if (!CheckLoadedFixture(directory, "opaque-default.glb", opaqueMask, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "opaque.glb", opaqueMask, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "opaque-cutoff-two.glb", opaqueMask, cutoffTwo, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-default.glb", maskEnabled, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-zero.glb", maskEnabled, cutoffZero, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-one.glb", maskEnabled, cutoffOne, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-two.glb", maskEnabled, cutoffTwo, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-factor-half.glb", maskEnabled, cutoffDefault, 1, 0.5f, true, failure) || !CheckLoadedFixture(directory, "mask-factor-quarter.glb", maskEnabled, cutoffDefault, 1, 0.25f, true, failure) || !CheckLoadedFixture(directory, "mask-equality.glb", maskEnabled, cutoffEquality, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-no-texture.glb", maskEnabled, cutoffDefault, 1, 0.25f, false, failure) || !CheckLoadedFixture(directory, "mixed-materials.glb", mixedMasks, mixedCutoffs, 3, 1.0f, true, failure) || !CheckRejectedFixture(directory, "blend.glb", failure) || !CheckRejectedFixture(directory, "negative-cutoff.glb", failure) || !CheckRejectedFixture(directory, "nonfinite-cutoff.glb", failure))
+    const bool mixedMasks[4] = { false, true, true, false };
+    const bool mixedBlends[4] = { false, false, false, true };
+    const float mixedCutoffs[4] = { 0.5f, 0.5f, 1.0f, 0.5f };
+    const bool blendEnabled[1] = { true };
+    if (!CheckLoadedFixture(directory, "opaque-default.glb", opaqueMask, opaqueBlend, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "opaque.glb", opaqueMask, opaqueBlend, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "opaque-cutoff-two.glb", opaqueMask, opaqueBlend, cutoffTwo, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-default.glb", maskEnabled, maskBlend, cutoffDefault, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-zero.glb", maskEnabled, maskBlend, cutoffZero, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-one.glb", maskEnabled, maskBlend, cutoffOne, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-two.glb", maskEnabled, maskBlend, cutoffTwo, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-factor-half.glb", maskEnabled, maskBlend, cutoffDefault, 1, 0.5f, true, failure) || !CheckLoadedFixture(directory, "mask-factor-quarter.glb", maskEnabled, maskBlend, cutoffDefault, 1, 0.25f, true, failure) || !CheckLoadedFixture(directory, "mask-equality.glb", maskEnabled, maskBlend, cutoffEquality, 1, 1.0f, true, failure) || !CheckLoadedFixture(directory, "mask-no-texture.glb", maskEnabled, maskBlend, cutoffDefault, 1, 0.25f, false, failure) || !CheckLoadedFixture(directory, "mixed-materials.glb", mixedMasks, mixedBlends, mixedCutoffs, 4, 1.0f, true, failure) || !CheckLoadedFixture(directory, "blend.glb", opaqueMask, blendEnabled, cutoffDefault, 1, 0.5f, true, failure) || !CheckRejectedFixture(directory, "negative-cutoff.glb", failure) || !CheckRejectedFixture(directory, "nonfinite-cutoff.glb", failure))
     {
         fprintf(stderr, "%s\n", failure.CStr());
         return 1;

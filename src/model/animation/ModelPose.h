@@ -2,9 +2,9 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODEL_POSE_H
 #define GKCORE_MODEL_ANIMATION_MODEL_POSE_H
 
-#include "FModelPose.h"
-#include "FModelSkeleton.h"
-#include "../../foundation/String.h"
+#include "model/animation/FModelPose.h"
+#include "model/animation/FModelSkeleton.h"
+#include "foundation/String.h"
 #include <stdint.h>
 
 namespace gk::model::animation

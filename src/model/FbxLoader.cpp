@@ -1,9 +1,9 @@
-﻿#include "FbxLoader.h"
-#include "FbxGeometry.h"
-#include "animation/FbxAnimation.h"
-#include "animation/ModelPose.h"
-#include "../foundation/Array.h"
-#include "../foundation/Memory.h"
+﻿#include "model/FbxLoader.h"
+#include "model/FbxGeometry.h"
+#include "model/animation/FbxAnimation.h"
+#include "model/animation/ModelPose.h"
+#include "foundation/Array.h"
+#include "foundation/Memory.h"
 #include <limits.h>
 #include <string.h>
 

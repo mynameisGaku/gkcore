@@ -1,17 +1,17 @@
-#pragma once
+﻿#pragma once
 
-#include "../internal/Backend.hpp"
+#include "internal/Backend.hpp"
 
 /**
  * Bounded cache of retained system-font rasterizations used by DrawString.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Returns an owned image reference, reusing an identical UTF-8/color/size entry.
  */
-ImageResource* GetCachedTextImage(Backend& backend, const char* text, uint32_t pixelSize,
-                                  uint32_t color, String& error);
+ImageResource* GetCachedTextImage(Backend& backend, const char* text, uint32_t pixelSize, uint32_t color, String& error);
 /**
  * Drops cache ownership; queued draws retain their own references independently.
  */

@@ -151,8 +151,8 @@ def generate_fixtures(directory):
         "mask-equality.glb": ([make_material("MASK", 128.0 / 255.0)], [0], True),
         "mask-no-texture.glb": ([make_material("MASK", base_alpha=0.25, texture=False)], [0], False),
         "mixed-materials.glb": ([make_material("OPAQUE"), make_material("MASK"),
-                                  make_material("MASK", 1.0)], [0, 1, 2], True),
-        "blend.glb": ([make_material("BLEND")], [0], True),
+                                  make_material("MASK", 1.0), make_material("BLEND")], [0, 1, 2, 3], True),
+        "blend.glb": ([make_material("BLEND", base_alpha=0.5)], [0], True),
         "negative-cutoff.glb": ([make_material("MASK", -0.1)], [0], True),
         "nonfinite-cutoff.glb": ([make_material("MASK", 1.0e100)], [0], True),
     }

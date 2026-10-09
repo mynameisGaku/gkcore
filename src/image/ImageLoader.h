@@ -1,10 +1,11 @@
-#pragma once
+﻿#pragma once
 
-#include "Image.h"
-#include "../foundation/String.h"
+#include "image/Image.h"
+#include "foundation/String.h"
 #include <stdint.h>
 
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Decodes one supported image file into RGBA resource storage.

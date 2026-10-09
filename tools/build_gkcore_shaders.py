@@ -21,6 +21,7 @@ EXPECTED_ARTIFACTS = (
     "gkcore_sprite.frag",
     "gkcore_model.vert",
     "gkcore_model.frag",
+    "gkcore_model_skinning.comp",
     "gkcore_post.vert",
     "gkcore_bloom_extract.frag",
     "gkcore_bloom_blur.frag",

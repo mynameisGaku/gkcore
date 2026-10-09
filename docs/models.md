@@ -110,7 +110,7 @@ GLBの `metallicRoughnessTexture` は、Gチャンネルから粗さ、Bチャ�
 
 この例では基本色を `TEXCOORD_0`、metallic-roughness画像を `TEXCOORD_1` から読みます。UV1の領域ごとに異なる金属度・粗さを参照画像と比較しました。
 
-MR材質はScene/UIのモデル描画に使う内蔵lighting shaderで処理します。独自pixel shaderを選ぶ公開APIは変更していません。独自pixel shaderは既存の非照明描画経路でモデルを描くため、MR/PBRの材質情報は独自shaderへ渡らず、内蔵shaderのMR計算も行われません。MASKモデルに独自shaderを適用した場合の診断は[GLBの透明部分](#glb-の透明部分)を参照してください。
+MR材質はScene/UIのモデル描画に使う内蔵lighting shaderで処理します。独自pixel shaderを選ぶ公開APIは変更していません。独自pixel shaderは既存の非照明描画経路でモデルを描くため、MR/PBRの材質情報は独自shaderへ渡らず、内蔵shaderのMR計算も行われません。MASK/BLENDモデルに独自shaderを適用した場合の診断は[GLBの透明部分](#glb-の透明部分)を参照してください。
 
 ReleaseのMR画像検査は2/2成功し、Scene 15枚、UI 8枚、連続再読込のframe 130・131の2枚を確認しました。連続再読込では同じGLBを132回新しく読み込み、各frameのPresent前にモデルを削除してから後半2枚を参照画像と比較します。基本色とMRの画像を各モデルごとに作るため、合計264個のtexture resourceを扱い、128 entryのcacheを越えて検査します。これはtexture cacheのentry evictionをまたぐ画像とモデルの寿命検査であり、GPU性能やtexture memory byte budgetの測定ではありません。個別設定と画像は[描画検証](render-validation.md)を参照してください。
 
@@ -166,6 +166,8 @@ minFilterの指定に応じて、画素間の補間と縮小段の選択を別�
 基本色と自己発光画像はsRGBのRGBを線形の明るさへ直して平均し、sRGBへ戻して保存します。アルファ、金属度/粗さ、法線・遮蔽の画像は線形値のまま平均します。法線は画像を読んだ後で描画shaderが正規化します。段ごとの画像サイズは半分にし、奇数サイズは面積に応じた重みで平均して端の画素も含めます。1×N、N×1も1×1まで作ります。元の画像と最初の段は変更しません。
 
 同じ画像と色形式でも、ミップを使う描画と使わない描画のGPU資源は分けます。同じミップ構成は共有し、1×1画像は指定によらず単一段を使います。基本色・自己発光のsRGBと、MR/法線/遮蔽の線形データは別形式です。現在の上限は一辺16384、元画像64M画素、cache128枠・縮小段を含む論理RGBA byte数256MiBです。GPU側の行整列やCPU生成中の一時領域をこのbyte上限へ含めたものではありません。
+
+公開APIの`FModelMaterialSettings::generateMipmaps`は既定でtrueです。`SetModelMaterial`で基本色画像を設定すると、この値に応じて既存のmip chainを利用するか、単一段の画像を使います。モデル読込み時のGLB samplerはGLB側の設定に従い、公開APIで画像を差し替える場合はこの値が基本色画像のmip利用を決めます。
 
 ![元の画像だけを使った縮小描画](images/model-mip-none.png)
 
@@ -326,7 +328,13 @@ ctest --test-dir build/runtime-windows-debug -C Debug -R "gkcore.model_tangent|g
 
 glTFの `alphaMode` を省略した場合と `OPAQUE` では、画像のalphaと材質のalpha係数を無視して不透明に描きます。`MASK` では、画像のalphaに材質の基本色alpha係数を掛けた値を判定します。`alphaCutoff` を省略すると `0.5` です。判定値がcutoff未満の画素だけを描かず、cutoffと等しい画素は残します。cutoff `0` ではalpha値に関係なくすべて残り、`1`を超える有限値ではすべて抜けます。画像がない材質でも、材質alpha係数で同じ判定をします。切り抜きの判定にalphaを使いますが、残った画素のRGBをalphaで暗くしません。
 
-SceneとUIの内蔵モデルshaderでMASKを処理します。抜いた画素はcolorだけでなくdepthも更新しないため、奥に描いた形状がその部分から見えます。次の画像はopaque描画、MASKによる切り抜き、背面モデルでdepthの状態を確かめたGPU画像です。
+SceneとUIの内蔵モデルshaderでMASKを処理します。抜いた画素はcolorだけでなくdepthも更新しないため、奥に描いた形状がその部分から見えます。`BLEND` では基本色画像のalphaに `baseColorFactor.a` を掛けた値をcoverageとして使い、基本色RGBはstraight alphaのままSceneのHDR描画先へ合成します。その後Scene全体にポストエフェクトを適用し、UIを重ねます。OPAQUEでは画像と係数のalphaを無視し、MASKでは従来どおりcutoffによる破棄を行います。
+
+Sceneの標準モデル描画では、同じcameraを使う連続した標準Model draw群ごとに、OPAQUE/MASKを先に深度テスト・深度書き込み付きで描き、BLENDのtriangleを重心のview depthで奥から手前へ並べます。BLENDは深度テストを行いますが、深度を書き込みません。Sceneの非モデル描画、custom shader描画、camera変更はsort範囲を区切り、呼び出し順を保ちます。UIモデルは深度を使わず、予約した命令順でalpha合成します。独自pixel shaderには材質のalpha modeを渡すABIがないため、MASK/BLEND材質との組み合わせはPresent時に診断付きで拒否します。
+
+重心によるtriangle sortは、互いに交差する透過面や循環した重なりを完全には解決できません。Sceneの透過入力triangleはframe全体で最大349,525件です。画面外へclipされるtriangleもこの上限を消費します。clip後に出力する全頂点には別に1,048,576件の上限があり、他のScene描画が使う頂点も含みます。入力triangle上限以内でも、clip後の頂点数や確保量によってPresentが失敗する場合があります。
+
+次の画像はopaque描画、MASKによる切り抜き、背面モデルでdepthの状態を確かめる検査例です。BLENDのGPU画像検査結果は[描画検証](render-validation.md)に追記します。
 
 ![OPAQUEでalpha値を無視したモデル](images/model-alpha-opaque.png)
 
@@ -334,7 +342,7 @@ SceneとUIの内蔵モデルshaderでMASKを処理します。抜いた画素は
 
 ![MASKで抜いた部分から背面が見えるdepth検査](images/model-alpha-depth.png)
 
-GPU検査ではScene 11画像、UI 4画像、depth検査1画像を確認しました。有限なcutoff `2` と、負または非有限なcutoffの読み込み拒否も確認しています。`BLEND` は `LoadModel` 時に診断付きで拒否します。MASKモデルを描くときに `gk::SetPixelShader` で独自pixel shaderを選んでいると、alpha情報を独自shaderへ渡すABIがないため `Present` が診断付きで拒否されます。内蔵shaderへ戻すには `gk::SetPixelShader({})` を呼んでください。ここで説明した検査は標準の `OPAQUE` と `MASK` を対象としており、glTF JSON全体のschema検証を保証するものではありません。alpha modeの仕様は[glTF 2.0仕様のAlpha Coverage](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#alpha-coverage)を参照してください。
+MASKの既存GPU検査ではScene 11画像、UI 4画像、depth検査1画像を確認しました。有限なcutoff `2` と、負または非有限なcutoffの読み込み拒否も確認しています。MASK/BLENDモデルを描くときに `gk::SetPixelShader` で独自pixel shaderを選ぶと、alpha mode情報を独自shaderへ渡すABIがないため `Present` が診断付きで拒否されます。内蔵shaderへ戻すには `gk::SetPixelShader({})` を呼んでください。ここで説明したMASK検査はglTF JSON全体のschema検証を保証するものではありません。alpha modeの仕様は[glTF 2.0仕様のAlpha Coverage](https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#alpha-coverage)を参照してください。
 
 ## ファイルの置き方
 
@@ -365,4 +373,4 @@ FBXのモデルは右手系のY-up、メートル単位へそろえ、階層変�
 
 モデルの材質では基本色係数とGLBのmetallic / roughness係数を使います。OBJとFBXはmetallic `0`、roughness `1` で描画します。方向光と一様な環境光による材質照明を設定できます。使い方は[モデル照明ガイド](lighting.md)を参照してください。
 
-影、環境マップ / IBL、透明材質の`BLEND`、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。
+GLB以外のOBJ/FBX透明材質合成、影、環境マップ / IBL、手続き的に生成する画像は未対応です。対応状況は[機能一覧](ROADMAP.md)、GPU画像を含む検証結果は[描画検証](render-validation.md)を参照してください。

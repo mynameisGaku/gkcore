@@ -2,7 +2,7 @@
 #ifndef GKCORE_RESOURCES_TEXTURESAMPLER_H
 #define GKCORE_RESOURCES_TEXTURESAMPLER_H
 
-#include "FTextureSampler.h"
+#include "resources/FTextureSampler.h"
 #include <stdint.h>
 
 /**

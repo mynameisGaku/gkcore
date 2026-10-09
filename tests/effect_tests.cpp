@@ -1,26 +1,31 @@
-#include "../include/gkcore.h"
-#include "../src/effects/Effects.h"
-#include "../src/effects/Shaders.h"
-#include "../src/foundation/Memory.h"
-#include "../src/foundation/String.h"
+﻿#include <gkcore.h>
+#include "effects/Effects.h"
+#include "effects/Shaders.h"
+#include "foundation/Memory.h"
+#include "foundation/String.h"
 
 #include <math.h>
 
-namespace gk::tests {
-namespace {
-bool Fail(String& failure, const char* message) { failure.Assign(message); return false; }
+namespace gk::tests
+{
+namespace
+{
+bool Fail(String& failure, const char* message)
+{
+    failure.Assign(message);
+    return false;
+}
 }
 
-bool EffectsContract(String& failure) {
+bool EffectsContract(String& failure)
+{
     gk::effects::Reset();
     gk::effects::Settings value = gk::effects::Current();
-    if (!value.bloomEnabled || value.bloomIntensity != 0.15f || value.exposure != 1.0f ||
-        !value.toneMappingEnabled || value.layer != DrawLayer::Scene)
+    if (!value.bloomEnabled || value.bloomIntensity != 0.15f || value.exposure != 1.0f || !value.toneMappingEnabled || value.layer != DrawLayer::Scene)
         return Fail(failure, "effect defaults are incorrect");
     if (value.saturation != 1.0f || value.contrast != 1.0f || !value.fxaaEnabled)
         return Fail(failure, "color and antialiasing effect defaults are incorrect");
-    if (!gk::effects::SetBloomEnabled(false) || !gk::effects::SetBloomIntensity(0.8f) ||
-        !gk::effects::SetExposure(1.25f) || !gk::effects::SetToneMappingEnabled(false))
+    if (!gk::effects::SetBloomEnabled(false) || !gk::effects::SetBloomIntensity(0.8f) || !gk::effects::SetExposure(1.25f) || !gk::effects::SetToneMappingEnabled(false))
         return Fail(failure, "valid effect settings were rejected");
     value = gk::effects::Current();
     if (value.bloomEnabled || value.bloomIntensity != 0.8f || value.exposure != 1.25f || value.toneMappingEnabled)
@@ -29,95 +34,66 @@ bool EffectsContract(String& failure) {
         return Fail(failure, "invalid bloom intensity was accepted");
     if (gk::effects::SetExposure(0.0f) || gk::effects::SetExposure(16.01f) || gk::effects::SetExposure(INFINITY))
         return Fail(failure, "invalid exposure was accepted");
-    if (!gk::effects::SetSaturation(0.5f) || !gk::effects::SetContrast(1.5f) ||
-        !gk::effects::SetFxaaEnabled(false))
+    if (!gk::effects::SetSaturation(0.5f) || !gk::effects::SetContrast(1.5f) || !gk::effects::SetFxaaEnabled(false))
         return Fail(failure, "valid color or antialiasing settings were rejected");
-    if (gk::effects::SetSaturation(-0.01f) || gk::effects::SetSaturation(2.01f) ||
-        gk::effects::SetSaturation(NAN) || gk::effects::SetSaturation(INFINITY) ||
-        gk::effects::SetContrast(-0.01f) || gk::effects::SetContrast(2.01f) ||
-        gk::effects::SetContrast(NAN) || gk::effects::SetContrast(INFINITY))
+    if (gk::effects::SetSaturation(-0.01f) || gk::effects::SetSaturation(2.01f) || gk::effects::SetSaturation(NAN) || gk::effects::SetSaturation(INFINITY) || gk::effects::SetContrast(-0.01f) || gk::effects::SetContrast(2.01f) || gk::effects::SetContrast(NAN) || gk::effects::SetContrast(INFINITY))
         return Fail(failure, "invalid saturation or contrast was accepted");
     value = gk::effects::Current();
-    if (value.bloomIntensity != 0.8f || value.exposure != 1.25f ||
-        value.saturation != 0.5f || value.contrast != 1.5f || value.fxaaEnabled)
+    if (value.bloomIntensity != 0.8f || value.exposure != 1.25f || value.saturation != 0.5f || value.contrast != 1.5f || value.fxaaEnabled)
         return Fail(failure, "rejected effect settings changed active values");
-    if (!gk::effects::SetLayer(DrawLayer::UI) || gk::effects::Current().layer != DrawLayer::UI ||
-        !gk::effects::SetLayer(DrawLayer::Scene))
+    if (!gk::effects::SetLayer(DrawLayer::UI) || gk::effects::Current().layer != DrawLayer::UI || !gk::effects::SetLayer(DrawLayer::Scene))
         return Fail(failure, "scene/UI layer switching failed");
 
     ShaderBindings shaders;
     ShaderSnapshot snapshot;
     ShaderHandle first(9);
-    if (shaders.ActiveHandle().IsValid() || shaders.RegisterShader(ShaderHandle()) ||
-        shaders.SetActiveShader(first))
+    if (shaders.ActiveHandle().IsValid() || shaders.RegisterShader(ShaderHandle()) || shaders.SetActiveShader(first))
         return Fail(failure, "invalid shader handle was accepted");
-    if (!shaders.RegisterShader(first) || !shaders.SetActiveShader(first) ||
-        !shaders.SetConstant(first, 2, Float4{0.5f, 1.0f, 0.0f, 1.0f}))
+    if (!shaders.RegisterShader(first) || !shaders.SetActiveShader(first) || !shaders.SetConstant(first, 2, Float4{ 0.5f, 1.0f, 0.0f, 1.0f }))
         return Fail(failure, "loaded shader or finite constant was rejected");
-    if (!shaders.Snapshot(snapshot) || snapshot.shaderHandle != first || snapshot.constants.Count() != 1 ||
-        snapshot.constants.At(0).registerIndex != 2)
+    if (!shaders.Snapshot(snapshot) || snapshot.shaderHandle != first || snapshot.constants.Count() != 1 || snapshot.constants.At(0).registerIndex != 2)
         return Fail(failure, "shader binding snapshot failed");
-    if (!shaders.SetConstant(first, 2, Float4{0.25f, 0.5f, 0.75f, 1.0f}) ||
-        snapshot.constants.At(0).value.x != 0.5f)
+    if (!shaders.SetConstant(first, 2, Float4{ 0.25f, 0.5f, 0.75f, 1.0f }) || snapshot.constants.At(0).value.x != 0.5f)
         return Fail(failure, "queued constants changed after later updates");
-    if (shaders.SetConstant(first, 64, Float4{0,0,0,0}) ||
-        shaders.SetConstant(first, 3, Float4{0,0,INFINITY,0}) ||
-        shaders.SetConstant(ShaderHandle(10), 0, Float4{1,1,1,1}))
+    if (shaders.SetConstant(first, 64, Float4{ 0, 0, 0, 0 }) || shaders.SetConstant(first, 3, Float4{ 0, 0, INFINITY, 0 }) || shaders.SetConstant(ShaderHandle(10), 0, Float4{ 1, 1, 1, 1 }))
         return Fail(failure, "invalid shader constant was accepted");
     if (!shaders.DeleteShader(first) || shaders.ActiveHandle().IsValid() || shaders.HasShader(first))
         return Fail(failure, "shader deletion did not reset its active binding");
     if (!shaders.Snapshot(snapshot) || snapshot.shaderHandle.IsValid() || snapshot.constants.Count() != 0)
         return Fail(failure, "reused snapshots retained a deleted shader or its constants");
-    if (shaders.DeleteShader(first) || shaders.SetConstant(first, 0, Float4{1,1,1,1}))
+    if (shaders.DeleteShader(first) || shaders.SetConstant(first, 0, Float4{ 1, 1, 1, 1 }))
         return Fail(failure, "deleted shader handle remained valid");
 
     ShaderBindings independent;
     ShaderHandle a(1), b(2);
-    if (!independent.RegisterShader(a) || !independent.RegisterShader(b) ||
-        !independent.SetConstant(b, 0, Float4{2,2,2,2}) || !independent.SetActiveShader(a) ||
-        !independent.SetActiveShader(ShaderHandle()) || !independent.SetActiveShader(b) ||
-        !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1 ||
-        snapshot.constants.At(0).value.x != 2.0f)
+    if (!independent.RegisterShader(a) || !independent.RegisterShader(b) || !independent.SetConstant(b, 0, Float4{ 2, 2, 2, 2 }) || !independent.SetActiveShader(a) || !independent.SetActiveShader(ShaderHandle()) || !independent.SetActiveShader(b) || !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1 || snapshot.constants.At(0).value.x != 2.0f)
         return Fail(failure, "switching through built-in shader lost another shader constants");
-    if (!independent.SetActiveShader(a) || !independent.DeleteShader(a) ||
-        !independent.SetActiveShader(b) || !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1)
+    if (!independent.SetActiveShader(a) || !independent.DeleteShader(a) || !independent.SetActiveShader(b) || !independent.Snapshot(snapshot) || snapshot.constants.Count() != 1)
         return Fail(failure, "deleting one shader cleared another shader constants");
 
     ShaderBindings snapshots;
     const ShaderHandle snapshotA(31), snapshotB(32);
-    if (!snapshots.RegisterShader(snapshotA) || !snapshots.RegisterShader(snapshotB) ||
-        !snapshots.SetConstant(snapshotB, 7, Float4{7, 0, 0, 0}) ||
-        !snapshots.SetConstant(snapshotB, 1, Float4{1, 0, 0, 0}) ||
-        !snapshots.SetActiveShader(snapshotA))
+    if (!snapshots.RegisterShader(snapshotA) || !snapshots.RegisterShader(snapshotB) || !snapshots.SetConstant(snapshotB, 7, Float4{ 7, 0, 0, 0 }) || !snapshots.SetConstant(snapshotB, 1, Float4{ 1, 0, 0, 0 }) || !snapshots.SetActiveShader(snapshotA))
         return Fail(failure, "could not prepare independent shader snapshots");
     ShaderSnapshot selected;
-    if (!snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB ||
-        selected.constants.Count() != 2 || selected.constants.At(0).registerIndex != 1 ||
-        selected.constants.At(1).registerIndex != 7 || snapshots.ActiveHandle() != snapshotA)
+    if (!snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB || selected.constants.Count() != 2 || selected.constants.At(0).registerIndex != 1 || selected.constants.At(1).registerIndex != 7 || snapshots.ActiveHandle() != snapshotA)
         return Fail(failure, "snapshot by handle did not sort constants or changed active shader");
-    if (!snapshots.SnapshotFor(ShaderHandle(), selected) || selected.shaderHandle.IsValid() ||
-        selected.constants.Count() != 0 || snapshots.ActiveHandle() != snapshotA)
+    if (!snapshots.SnapshotFor(ShaderHandle(), selected) || selected.shaderHandle.IsValid() || selected.constants.Count() != 0 || snapshots.ActiveHandle() != snapshotA)
         return Fail(failure, "invalid snapshot handle did not select an empty built-in snapshot");
-    if (!snapshots.SnapshotFor(snapshotB, selected) ||
-        !snapshots.DeleteShader(snapshotB))
+    if (!snapshots.SnapshotFor(snapshotB, selected) || !snapshots.DeleteShader(snapshotB))
         return Fail(failure, "could not prepare stale-handle snapshot check");
     const ShaderConstant* preservedConstants = selected.constants.Data();
     uint32_t preservedCount = selected.constants.Count();
-    if (snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB ||
-        selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount ||
-        snapshots.ActiveHandle() != snapshotA)
+    if (snapshots.SnapshotFor(snapshotB, selected) || selected.shaderHandle != snapshotB || selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount || snapshots.ActiveHandle() != snapshotA)
         return Fail(failure, "stale snapshot handle changed output or active selection");
-    if (!snapshots.SetConstant(snapshotA, 3, Float4{3, 0, 0, 0}) ||
-        !snapshots.SnapshotFor(snapshotA, selected))
+    if (!snapshots.SetConstant(snapshotA, 3, Float4{ 3, 0, 0, 0 }) || !snapshots.SnapshotFor(snapshotA, selected))
         return Fail(failure, "could not prepare snapshot allocation failure check");
     preservedConstants = selected.constants.Data();
     preservedCount = selected.constants.Count();
     SetAllocationFailureAfterForTesting(0);
     const bool snapshotAllocated = snapshots.SnapshotFor(snapshotA, selected);
     ResetAllocationFailureForTesting();
-    if (snapshotAllocated || selected.shaderHandle != snapshotA ||
-        selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount ||
-        snapshots.ActiveHandle() != snapshotA)
+    if (snapshotAllocated || selected.shaderHandle != snapshotA || selected.constants.Data() != preservedConstants || selected.constants.Count() != preservedCount || snapshots.ActiveHandle() != snapshotA)
         return Fail(failure, "snapshot allocation failure changed output or active selection");
     gk::effects::Reset();
     value = gk::effects::Current();

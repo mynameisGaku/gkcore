@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ModelAnimationBinding.h"
-#include "ModelPose.h"
+#include "model/animation/ModelAnimationBinding.h"
+#include "model/animation/ModelPose.h"
 #include <gkcore.h>
 #include <math.h>
 #include <stdlib.h>
@@ -135,6 +135,49 @@ bool WorldRotations(const animation::FModelSkeleton& skeleton, const Array<anima
     }
     return true;
 }
+
+/**
+ * quaternion列を4成分のflat配列へ追加する。
+ */
+bool AppendWorldRotations(Array<float>& output, const Array<Float4>& rotations)
+{
+    if (rotations.Count() > UINT32_MAX / 4u || !output.Reserve(rotations.Count() * 4u))
+        return false;
+    for (uint32_t index = 0; index < rotations.Count(); ++index)
+    {
+        const Float4& value = rotations.At(index);
+        const float components[4] = { value.x, value.y, value.z, value.w };
+        if (!output.AppendRange(components, 4))
+            return false;
+    }
+    return true;
+}
+
+/**
+ * flat配列に保持したquaternionを読み出す。
+ */
+Float4 ReadWorldRotation(const Array<float>& rotations, uint32_t index)
+{
+    const float* value = rotations.Data() + index * 4u;
+    return { value[0], value[1], value[2], value[3] };
+}
+
+/**
+ * sourceとtargetの不変rest pose行列・親階層回転を候補へ構築する。
+ */
+bool BuildRestPoseCache(const animation::FModelSkeleton& sourceSkeleton, const animation::FModelSkeleton& targetSkeleton, Array<float>& sourceMatrices, Array<float>& targetMatrices, Array<float>& sourceRotations, Array<float>& targetRotations, String& error)
+{
+    animation::FModelPose sourceRestPose, targetRestPose;
+    Array<Float4> sourceWorldRotations, targetWorldRotations;
+    if (!animation::InitializeModelPose(sourceSkeleton, sourceRestPose, error) || !animation::InitializeModelPose(targetSkeleton, targetRestPose, error) || !animation::EvaluateModelPose(sourceSkeleton, sourceRestPose, sourceMatrices, error) || !animation::EvaluateModelPose(targetSkeleton, targetRestPose, targetMatrices, error) || !WorldRotations(sourceSkeleton, sourceSkeleton.restLocalTransforms, sourceWorldRotations) || !WorldRotations(targetSkeleton, targetSkeleton.restLocalTransforms, targetWorldRotations) || !AppendWorldRotations(sourceRotations, sourceWorldRotations) || !AppendWorldRotations(targetRotations, targetWorldRotations))
+    {
+        if (error.Empty())
+            error.Assign("animation rest pose precomputation failed");
+        return false;
+    }
+    error.Clear();
+    return true;
+}
 }
 
 bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelAnimationAsset* target, const Array<uint16_t>& targetRoles, FModelClipState& candidate, String& error)
@@ -242,6 +285,8 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
             error.Assign("animation has no matching bone or morph names or roles");
             return false;
         }
+        if (&source != target && !BuildRestPoseCache(source.source->Skeleton(), destination.Skeleton(), staged.sourceRestModelMatrices, staged.targetRestModelMatrices, staged.sourceRestWorldRotations, staged.targetRestWorldRotations, error))
+            return false;
     }
     if (!Retain(&source.reference))
     {
@@ -253,6 +298,10 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
     candidate.bones.MoveFrom(staged.bones);
     candidate.mappedRoles.MoveFrom(staged.mappedRoles);
     candidate.morphs.MoveFrom(staged.morphs);
+    candidate.sourceRestModelMatrices.MoveFrom(staged.sourceRestModelMatrices);
+    candidate.targetRestModelMatrices.MoveFrom(staged.targetRestModelMatrices);
+    candidate.sourceRestWorldRotations.MoveFrom(staged.sourceRestWorldRotations);
+    candidate.targetRestWorldRotations.MoveFrom(staged.targetRestWorldRotations);
     candidate.asset = &source;
     candidate.clip = clip;
     error.Clear();
@@ -273,17 +322,34 @@ bool SampleBoundClip(const FModelClipState& state, const FModelAnimationAsset& t
     const auto& targetSkeleton = target.source->Skeleton();
     if (!state.asset->source->Sample(state.clip, state.seconds, sampled, error) || !animation::InitializeModelPose(targetSkeleton, candidate, error))
         return false;
-    if (state.bones.Count() != candidate.localTransforms.Count() || state.mappedRoles.Count() != candidate.localTransforms.Count() || state.morphs.Count() != candidate.morphWeights.Count())
+    const uint64_t sourceMatrixCount = static_cast<uint64_t>(sourceSkeleton.parents.Count()) * 16u;
+    const uint64_t targetMatrixCount = static_cast<uint64_t>(targetSkeleton.parents.Count()) * 16u;
+    const uint64_t sourceRotationCount = static_cast<uint64_t>(sourceSkeleton.parents.Count()) * 4u;
+    const uint64_t targetRotationCount = static_cast<uint64_t>(targetSkeleton.parents.Count()) * 4u;
+    if (state.bones.Count() != candidate.localTransforms.Count() || state.mappedRoles.Count() != candidate.localTransforms.Count() || state.morphs.Count() != candidate.morphWeights.Count() || sourceMatrixCount > UINT32_MAX || targetMatrixCount > UINT32_MAX || sourceRotationCount > UINT32_MAX || targetRotationCount > UINT32_MAX)
     {
         error.Assign("animation mapping count mismatch");
         return false;
     }
-    Array<Float4> sourceRest, sourceAnimated, targetRest, targetAnimated;
-    Array<float> sourceMatrices, sourceRestMatrices, targetRestMatrices, targetMatrices;
-    animation::FModelPose sourceRestPose;
-    if (!animation::InitializeModelPose(sourceSkeleton, sourceRestPose, error) || !animation::EvaluateModelPose(sourceSkeleton, sampled, sourceMatrices, error) || !animation::EvaluateModelPose(sourceSkeleton, sourceRestPose, sourceRestMatrices, error) || !animation::EvaluateModelPose(targetSkeleton, candidate, targetRestMatrices, error))
+    const bool hasCachedRestData = state.sourceRestModelMatrices.Count() || state.targetRestModelMatrices.Count() || state.sourceRestWorldRotations.Count() || state.targetRestWorldRotations.Count();
+    const bool cacheCountsMatch = state.sourceRestModelMatrices.Count() == sourceMatrixCount && state.targetRestModelMatrices.Count() == targetMatrixCount && state.sourceRestWorldRotations.Count() == sourceRotationCount && state.targetRestWorldRotations.Count() == targetRotationCount;
+    if (hasCachedRestData && !cacheCountsMatch)
+    {
+        error.Assign("animation rest pose cache count mismatch");
         return false;
-    if (!WorldRotations(sourceSkeleton, sourceSkeleton.restLocalTransforms, sourceRest) || !WorldRotations(sourceSkeleton, sampled.localTransforms, sourceAnimated) || !WorldRotations(targetSkeleton, targetSkeleton.restLocalTransforms, targetRest))
+    }
+    Array<float> fallbackSourceMatrices, fallbackTargetMatrices, fallbackSourceRotations, fallbackTargetRotations;
+    if (!hasCachedRestData && !BuildRestPoseCache(sourceSkeleton, targetSkeleton, fallbackSourceMatrices, fallbackTargetMatrices, fallbackSourceRotations, fallbackTargetRotations, error))
+        return false;
+    const Array<float>& sourceRestMatrices = hasCachedRestData ? state.sourceRestModelMatrices : fallbackSourceMatrices;
+    const Array<float>& targetRestMatrices = hasCachedRestData ? state.targetRestModelMatrices : fallbackTargetMatrices;
+    const Array<float>& sourceRestRotations = hasCachedRestData ? state.sourceRestWorldRotations : fallbackSourceRotations;
+    const Array<float>& targetRestRotations = hasCachedRestData ? state.targetRestWorldRotations : fallbackTargetRotations;
+    Array<Float4> sourceAnimated, targetAnimated;
+    Array<float> sourceMatrices, targetMatrices;
+    if (!animation::EvaluateModelPose(sourceSkeleton, sampled, sourceMatrices, error))
+        return false;
+    if (!WorldRotations(sourceSkeleton, sampled.localTransforms, sourceAnimated))
     {
         error.Assign("animation rotation evaluation failed");
         return false;
@@ -303,7 +369,7 @@ bool SampleBoundClip(const FModelClipState& state, const FModelAnimationAsset& t
                 error.Assign("animation bone mapping exceeds source");
                 return false;
             }
-            world = Multiply(Multiply(sourceAnimated.At(sourceBone), Inverse(sourceRest.At(sourceBone))), targetRest.At(i));
+            world = Multiply(Multiply(sourceAnimated.At(sourceBone), Inverse(ReadWorldRotation(sourceRestRotations, sourceBone))), ReadWorldRotation(targetRestRotations, i));
             local = parent < 0 ? world : Multiply(Inverse(targetAnimated.At(static_cast<uint32_t>(parent))), world);
             const auto& rest = sourceSkeleton.restLocalTransforms.At(sourceBone);
             const auto& animated = sampled.localTransforms.At(sourceBone);

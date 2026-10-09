@@ -2,8 +2,8 @@
 #ifndef GKCORE_RENDER_FTEXTUREMIPCHAIN_H
 #define GKCORE_RENDER_FTEXTUREMIPCHAIN_H
 
-#include "FTextureMipLevel.h"
-#include "../foundation/Array.h"
+#include "render/FTextureMipLevel.h"
+#include "foundation/Array.h"
 #include <stdint.h>
 
 /**

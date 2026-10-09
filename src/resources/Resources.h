@@ -2,11 +2,11 @@
 #ifndef GKCORE_RESOURCES_RESOURCES_H
 #define GKCORE_RESOURCES_RESOURCES_H
 
-#include "../../include/gkcore/Handle.h"
-#include "../foundation/Array.h"
-#include "../foundation/RefCount.h"
-#include "../foundation/String.h"
-#include "FTextureSampler.h"
+#include <gkcore/Handle.h>
+#include "foundation/Array.h"
+#include "foundation/RefCount.h"
+#include "foundation/String.h"
+#include "resources/FTextureSampler.h"
 #include <stdint.h>
 
 /**
@@ -106,6 +106,8 @@ struct ModelMaterial
     int32_t occlusionTextureIndex = -1;
     // 環境遮蔽画像の座標処理と補間方法。
     FTextureSampler occlusionSampler{};
+    // 基本色alphaを混合描画に使う場合はtrue。
+    bool alphaBlend = false;
 };
 
 /**
@@ -140,6 +142,10 @@ struct ModelResource
     Array<ImageResource*> textures;
     // 共有する元の骨格・clip・変形属性。静的モデルはnull。
     model::FModelAnimationAsset* animation = nullptr;
+    // 毎描画で評価した姿勢。長期の静的geometry cacheへ入れない。
+    bool isPoseSnapshot = false;
+    // 位置・法線以外を共有できる姿勢の元geometry。参照を保持する。
+    ModelResource* geometrySource = nullptr;
 };
 
 /**
@@ -170,6 +176,10 @@ bool DeleteModel(ModelHandle handle, String& error);
  * 登録中handleのmodel payloadを借用参照で返す。無効handleならnullを返す。
  */
 ModelResource* FindModel(ModelHandle handle);
+/**
+ * 登録中モデルの参照先を差し替え、以前のpayloadを返す。
+ */
+bool ReplaceModelResource(ModelHandle handle, ModelResource* replacement, ModelResource*& previous, String& error);
 /**
  * 読み込み済みresourceすべてのregistry所有権を解放する。
  */

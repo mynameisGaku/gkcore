@@ -1,5 +1,5 @@
-﻿#include "../src/resources/Resources.h"
-#include "../src/render/ModelDrawPlan.h"
+﻿#include "resources/Resources.h"
+#include "render/ModelDrawPlan.h"
 
 #include <filesystem>
 #include <fstream>

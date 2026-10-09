@@ -1,9 +1,10 @@
-#pragma once
+﻿#pragma once
 
-#include "Model.h"
-#include "../foundation/String.h"
+#include "model/Model.h"
+#include "foundation/String.h"
 
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Loads bounded static OBJ, GLB 2.0, or FBX geometry and material payloads.

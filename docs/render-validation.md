@@ -174,6 +174,8 @@ PRE_SETUP.bat --configuration Debug --gpu-check
 
 ビルド済みの環境で画像テストだけを実行する場合は、次を使います。
 
+画像取得用のRuntimeはウィンドウを非表示にして描画し、フォーカスを移さず検査します。通常のRuntime DLLにはこの非表示設定を含めません。画面を開く`gkcore.backend_smoke`とSDK consumerのGPU実行は、CMakeの`GKCORE_RUN_INTERACTIVE_TESTS`を明示的にONにしたときだけCTestから実行します。既定値はOFFです。SDK consumerのビルド・リンクと配布内容の検査はOFFでも実行します。
+
 ```bat
 ctest --test-dir build/runtime-windows -C Release -R gkcore.render_capture --output-on-failure
 ```
@@ -183,6 +185,12 @@ PPM画像と判定値のJSONはReleaseでは`build/runtime-windows/render-captur
 この検査は代表画素と領域の条件を使います。全面画像の画質、連続フレームすべてのちらつき、PBRの物理的な正確さを判定するテストではありません。公開サンプルは起動して表示を確認し、mixed_sceneでは最大化後の表示も確認しました。輪郭サンプルではSpaceによるBloomのON→OFF→ONと短いEscape入力による終了を確認しました。全キーを実画面から操作する検査、モデル照明サンプルのキー操作、GPU-based validation、他のGPU、全モデル形式の描画は未確認です。Runtime DebugのInfoQueueと画像検査は確認済みです。
 
 実装上の原因と修正前後の記録は[TDD検証ログ](TDD_LOG.md)、対応機能と残作業は[機能とサポート状況](ROADMAP.md)を参照してください。
+
+## モデル変換と透明部分の回帰検査
+
+`gkcore.model_blend_capture`はOPAQUE・MASK・BLEND、同じモデル内の透明三角形、モデル間の奥行き、Scene/UI、camera変更、2D描画との境界を画像で検査します。GPUでのモデル変換には3軸回転、負の非一様scale、off-axis camera、方向光を使い、位置・法線を独立に事前変換したGLBへ比較します。透明モデルの登録順を逆にしても画像が変わらないことも確認します。
+
+2026-10-09のRelease検査は19.26秒で成功しました。変換後のOpaque画像は参照と最大channel差1、BLEND参照・逆提出順は全画素一致しました。変換を外した反例では37,477画素に差12超を検出しています。追加した変換検査も最終統合検査でDebug/Releaseとも成功しました。
 
 ## 2026-10-08〜09 モデルアニメーション
 
@@ -198,4 +206,10 @@ OBJ連番・GLB・FBXのアニメーション、2clipブレンド、初期morph�
 
 PNGはPPMのRGBを変更せず保存し、decode後も全画素一致しました。基本形状を使う機能検査であり、人型モデルの外観品質・全面画質・FPS・他GPUの確認ではありません。操作と入力条件は[モデルアニメーション](model-animation.md)を参照してください。
 
-RuntimeはRelease/Debug各68/68のCTestが成功し、SDKだけのconsumerも実行できました。DebugではD3D12 InfoQueueの取得を確認し、GPU-based validationは有効にしていません。最後のGLB入力検証修正後にはCPU各48件とnative animation/packageを再検査しています。実行ログはbuild/native-validation/model-animation-*、画像と結果JSONは各Runtime buildのmodel-animation-capturesにあります。
+最新のRuntimeはRelease/Debug各78/78のCTestが成功し、SDKだけのconsumerも実行できました。DebugではD3D12 InfoQueueの取得を確認し、GPU-based validationは有効にしていません。CPU各53件とnativeの描画・animation・packageを両構成で再検査しています。実行ログはbuild/native-validation/model-animation-*、画像と結果JSONは各Runtime buildのmodel-animation-capturesにあります。
+
+## 2026-10-09 実モデルのGPU変形
+
+YUMEKAとSilly Dancing・Capoeiraのブレンドを6姿勢で取得しました。Debug/Releaseとも、各姿勢の45,233位置・55,747法線をCPU参照へ比較し、位置の最大差0、法線の最大差約0.000000179で成功しています。許容値0.0005は変更していません。複数model、退化した法線、float overflowと大きい有限値の対照検査も成功しました。
+
+native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、CPUは各53/53件成功しました。実行ログは`build/native-validation/final-native-debug-tests.log`と`final-native-release-confirm-tests.log`、実モデルは`final-yumeka-{debug,release}-capture.log`です。画像は`build/real-model-captures/{Debug,Release}/final-yumeka-blend*.ppm`へ保存しています。通常Runtimeでの表示速度は[モデルviewerの処理時間](model-performance.md)を参照してください。

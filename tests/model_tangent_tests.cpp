@@ -1,4 +1,4 @@
-﻿#include "../src/resources/Resources.h"
+﻿#include "resources/Resources.h"
 
 #include <filesystem>
 #include <math.h>

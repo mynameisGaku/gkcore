@@ -1,4 +1,20 @@
-﻿#pragma once
+﻿// SPDX-License-Identifier: NOASSERTION
+#ifndef GKCORE_PLATFORM_WINDOWSWINDOW_H
+#define GKCORE_PLATFORM_WINDOWSWINDOW_H
+
+/**
+ * Win32 window表示の判定を初期化処理とCPU契約テストで共有する。
+ */
+namespace gk::platform
+{
+/**
+ * capture用buildだけwindowを隠し、通常buildでは表示するかを返す。
+ */
+constexpr bool ShouldShowWindowForBuild(bool frameCaptureBuild)
+{
+    return !frameCaptureBuild;
+}
+}
 
 #if defined(_WIN32)
 
@@ -11,7 +27,7 @@
 #include <windows.h>
 #include <stdint.h>
 
-#include "FKeyboardState.h"
+#include "platform/FKeyboardState.h"
 
 /**
  * Native window, module path, and SDK configuration utilities.
@@ -97,5 +113,7 @@ bool GetModuleDirectory(HMODULE module, wchar_t* directory, uint32_t capacity, u
 bool ConfigureAgilitySdk(const wchar_t* runtimeDirectory, uint32_t sdkVersion, HMODULE& runtimeModule, uint32_t& errorCode);
 
 }
+
+#endif
 
 #endif

@@ -1,8 +1,8 @@
-#pragma once
+﻿#pragma once
 
-#include "Model.h"
-#include "../foundation/String.h"
-#include "../foundation/Array.h"
+#include "model/Model.h"
+#include "foundation/String.h"
+#include "foundation/Array.h"
 #include <stdint.h>
 
 struct ufbx_material;
@@ -12,16 +12,19 @@ struct ufbx_texture;
 /**
  * Converts one FBX material and its supported base-color image into model data.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Import-local source maps prevent repeated nodes from duplicating decoded assets.
  */
-struct FbxMaterialContext {
+struct FbxMaterialContext
+{
     /**
      * Maps one ufbx texture or shared source image file to a model-local image slot.
      */
-    struct TextureEntry {
+    struct TextureEntry
+    {
         const ufbx_texture* source;
         int32_t modelIndex;
         uint32_t sourceFileIndex;
@@ -29,7 +32,8 @@ struct FbxMaterialContext {
     /**
      * Maps a parsed source material to its model-local slot.
      */
-    struct MaterialEntry {
+    struct MaterialEntry
+    {
         const ufbx_material* source;
         int32_t modelIndex;
     };
@@ -42,7 +46,9 @@ struct FbxMaterialContext {
     /**
      * Starts with the default material seeded by CreateModelResource().
      */
-    FbxMaterialContext() : defaultMaterialIndex(0), defaultMaterialUsed(false) {}
+    FbxMaterialContext() : defaultMaterialIndex(0), defaultMaterialUsed(false)
+    {
+    }
 };
 
 /**
@@ -52,14 +58,11 @@ struct FbxMaterialContext {
  * existing opaque-white default material. External images are resolved relative to
  * the model path; unsupported image graphs fail explicitly.
  */
-bool LoadFbxMaterial(const ufbx_material* source, const char* utf8ModelPath,
-                     ModelResource& model, FbxMaterialContext& context,
-                     int32_t& outputIndex, String& error);
+bool LoadFbxMaterial(const ufbx_material* source, const char* utf8ModelPath, ModelResource& model, FbxMaterialContext& context, int32_t& outputIndex, String& error);
 
 /**
  * Rejects a base-color UV set the geometry importer cannot select for this mesh.
  */
-bool ValidateFbxMaterialUvSet(const ufbx_material* material, const ufbx_mesh* mesh,
-                              String& error);
+bool ValidateFbxMaterialUvSet(const ufbx_material* material, const ufbx_mesh* mesh, String& error);
 
 } // namespace gk::detail

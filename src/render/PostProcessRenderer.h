@@ -1,20 +1,22 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "../foundation/String.h"
-#include "PostProcess.h"
-#include "PostProcessPlan.h"
+#include "foundation/String.h"
+#include "render/PostProcess.h"
+#include "render/PostProcessPlan.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 
-namespace gk::render {
+namespace gk::render
+{
 
 /**
  * Owns HDR scene, bloom, grading, FXAA, and fullscreen presentation resources.
  */
-class PostProcessRenderer {
-public:
+class PostProcessRenderer
+{
+  public:
     /**
      * Starts empty; initialization requires an active Forge renderer root signature.
      */
@@ -29,8 +31,7 @@ public:
     /**
      * Creates HDR/LDR targets, shader programs, pipelines, descriptor sets, and constants.
      */
-    bool Initialize(Renderer* renderer, uint32_t width, uint32_t height,
-                    TinyImageFormat outputFormat, String& error);
+    bool Initialize(Renderer* renderer, uint32_t width, uint32_t height, TinyImageFormat outputFormat, String& error);
     /**
      * Recreates size-dependent targets after the renderer idles its queue.
      */
@@ -40,9 +41,7 @@ public:
      * An override must be a distinct full-size RGBA16F source already in shader-resource state.
      * The destination must be in render-target state; shader output stays linear for an sRGB RTV.
      */
-    bool Apply(Cmd* command, RenderTarget* destination, uint32_t frameIndex,
-               const PostProcessSettings& settings, String& error,
-               RenderTarget* sceneOverride = nullptr);
+    bool Apply(Cmd* command, RenderTarget* destination, uint32_t frameIndex, const PostProcessSettings& settings, String& error, RenderTarget* sceneOverride = nullptr);
     /**
      * Commits recorded target states after the owning graphics queue accepts the command.
      */
@@ -56,7 +55,7 @@ public:
      */
     RenderTarget* SceneTarget() const;
 
-private:
+  private:
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kPassCount = 5;
 
@@ -75,13 +74,11 @@ private:
     /**
      * Binds source, bloom, sampler, and settings for one frame slot.
      */
-    bool UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings,
-                            RenderTarget* sceneSource, String& error);
+    bool UpdatePassBindings(uint32_t frameIndex, const PostProcessSettings& settings, RenderTarget* sceneSource, String& error);
     /**
      * Draws one fullscreen pass using its frame-specific resource bindings.
      */
-    void DrawFullscreen(Cmd* command, RenderTarget* target, Pipeline* pipeline,
-                        DescriptorSet* descriptorSet, uint32_t frameIndex);
+    void DrawFullscreen(Cmd* command, RenderTarget* target, Pipeline* pipeline, DescriptorSet* descriptorSet, uint32_t frameIndex);
     /**
      * Records a target state transition before its next read or write.
      */

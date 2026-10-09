@@ -2,6 +2,8 @@
 
 GLBとFBXはファイル内のclip、OBJは同じ頂点・面順序の連番ファイルを再生します。位置・回転・大きさの設定と`DrawModel`は静的モデルと共通です。
 
+確認済みのアニメーション経路は、GLB/FBX内clip、対応する連番OBJ、外部GLB/FBX motion、clip blend、2ボーンおよびchain IKです。入力条件と未対応形式は後述の制約を確認してください。実モデルでの対応結果は下記のYUMEKA/Mixamo例に限られ、全モデルの見た目や画質を保証しません。
+
 ## 再生と時刻
 
 `LoadModel`で読み込み、`GetModelAnimationCount`・`GetModelAnimationName`でclipを選びます。`PlayModelAnimation`は時刻0から再生します。経過秒はアプリから`UpdateModelAnimation`へ渡します。`BeginFrame`は再生時刻を進めません。
@@ -18,6 +20,8 @@ gk::DrawModel(character);
 `CreateModelInstance`は形状・材質を共有し、新しい位置設定と独立した再生状態を持つモデルを作ります。読み込み直後はclipを再生せず、初期姿勢と既定morph係数を表示します。
 
 `DrawModel`は呼び出した時点の変形結果を保持します。同じframe中で時刻、ブレンド、IKを変えても先に予約した描画は変わりません。モデルや外部アニメーションのhandleを削除しても、予約済みの描画と適用済みのclipは必要なデータを保持します。
+
+対応するWindows GPUではFBXの線形skinと法線生成をGPUで計算します。高精度の計算に非対応のGPU、morphなどGPU経路の対象外の姿勢、独自shaderではCPU経路を使います。GPU計算で位置が不正になったり、使われる面の法線が失われたりした場合は`Present()`が失敗し、`GetLastErrorMessage()`に理由を返します。`DrawModel()`と`Present()`の両方の戻り値を確認してください。
 
 ## 連番OBJ
 
@@ -41,6 +45,8 @@ gk::DeleteModelAnimation(motion);
 
 ボーンは一意な名前で対応付けます。異なる名前の人型モデルは、適用前に`SetModelBoneRole`と`SetAnimationBoneRole`で腰・背骨・手足・指などの役割を設定します。ボーンの番号や名前は`GetModelBoneCount`・`GetModelBoneName`・`FindModelBone`、外部データ側は`GetAnimationBoneCount`・`GetAnimationBoneName`で調べられます。
 
+一般的な英語・日本語の骨名は`AutoMapModelHumanoidBones`と`AutoMapAnimationHumanoidBones`で役割を推定できます。成功は0、認識できる骨がない場合や名前が曖昧な場合は-1です。手動で割り当てた役割は優先され、推定は未設定の骨を補います。`GetModelBoneRole`と`GetAnimationBoneRole`で結果を確認し、適用後は`GetModelAnimationSourceBone`で適用先の各骨に対応したsource番号を調べられます。自動対応は未知の骨名や曖昧な構造を必ず解決するものではありません。対応しない骨や役割は初期姿勢のままなので、必要に応じて手動設定してください。
+
 ```cpp
 gk::SetModelBoneRole(character, targetHips, gk::EHumanoidBone::Hips);
 gk::SetAnimationBoneRole(motion, sourceHips, gk::EHumanoidBone::Hips);
@@ -50,6 +56,10 @@ gk::ApplyModelAnimation(character, motion);
 役割はモデルごとに一意に割り当てます。回転は初期姿勢に対するモデル空間の差分を適用先へ移し、親の向きとscaleを含めて位置差分を変換します。役割で対応した手足の位置は適用先の骨長を保ち、腰の移動は初期の高さ比に合わせます。名前で対応したボーンは位置のアニメーションも転送します。morphは一意な名前で対応付け、未対応のボーン・morphは適用先の初期値を保ちます。対応するものがないデータや曖昧な名前は診断付きで拒否します。
 
 対応表はclipの適用時に確定します。役割を変更した後は再度`ApplyModelAnimation`を呼んでください。異なる体型でも、初期姿勢と役割の設定が適切であることが前提です。
+
+実モデルでは、317骨のYUMEKA FBXへMixamoの`Silly Dancing.fbx`と`Capoeira.fbx`を外部clipとして適用する確認を行いました。両motionは66骨で、名前から役割が推定された骨はYUMEKA側53、motion側48、共通して対応した骨は47です。未対応の役割は初期姿勢のまま残るため、必要なら手動で補います。この結果は該当モデル・motionでの確認であり、任意の人型骨格への完全自動retargetや画質改善を保証しません。調達したCesium Man GLBはローカル検証専用です。元モデルとライセンス情報は[Khronos glTF Sample AssetsのCesiumMan](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)にあり、CC-BY-4.0とCesiumのLegalMark条件が付くため、SDKや配布物には含めません。ユーザー提供のモデルやmotionも、権利確認なしに再配布しないでください。
+
+`SetModelMaterial`と`FModelMaterialSettings`ではモデル材質の基本色、基本色画像、alpha mode、cutoffを変更できます。材質は複製して更新されるため、同じ形状を使う別instanceや、すでに`DrawModel`で予約した描画の材質は変わりません。`generateMipmaps`は既定でtrueとなり、基本色画像の縮小表示にmip chainを使います。既定alpha modeはOPAQUEで、基本色画像のalphaは無視します。これは任意の元シェーダーやtoon材質を再現する機能ではありません。
 
 ## ブレンド
 
@@ -102,6 +112,6 @@ GLBはnodeのTRS、skin、morph、STEP・LINEAR・CUBICSPLINEのclipに対応し
 
 FBXは固定ufbxのclip評価、skin、blend shapeを使います。右手系のY-up、メートルへ揃え、変換・単位・scale継承の補助情報を保持します。geometry cacheと、同じskin meshを複数nodeが使う入力は未対応です。固定された暗黙rootはIKで回転できません。
 
-材質・UV・画像の読み込み条件は[モデルガイド](models.md)と共通です。アニメーションのブレンドと、透明材質の`alphaMode=BLEND`は別の機能です。
+材質・UV・画像の読み込み条件は[モデルガイド](models.md)と共通です。アニメーションのブレンドと、透明材質の`alphaMode=BLEND`は別の機能です。GLBのalpha合成とsort範囲は[GLBの透明部分](models.md#glb-の透明部分)を参照してください。
 
 法線・接線を生成するmorphは、初期形状と各targetの形状から別々に計算し、差分へ係数を掛けます。最終位置だけから法線を計算する方式とは中間の係数で結果が異なります。[glTF 2.0のmorph処理](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#applying-morph-data)に合わせて検査しています。

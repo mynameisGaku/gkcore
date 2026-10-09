@@ -2,8 +2,8 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODELANIMATIONBINDING_H
 #define GKCORE_MODEL_ANIMATION_MODELANIMATIONBINDING_H
 
-#include "FModelClipState.h"
-#include "AModelAnimationSource.h"
+#include "model/animation/FModelClipState.h"
+#include "model/animation/AModelAnimationSource.h"
 
 /**
  * 外部clipを対象modelへ対応付ける内部機能。

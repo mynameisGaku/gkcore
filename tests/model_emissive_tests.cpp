@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/resources/Resources.h"
-#include "../src/resources/TextureSampler.h"
-#include "../src/render/ModelDrawPlan.h"
+#include "resources/Resources.h"
+#include "resources/TextureSampler.h"
+#include "render/ModelDrawPlan.h"
 
 #include <filesystem>
 #include <fstream>

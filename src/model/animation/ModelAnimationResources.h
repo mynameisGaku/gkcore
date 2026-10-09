@@ -2,7 +2,7 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODELANIMATIONRESOURCES_H
 #define GKCORE_MODEL_ANIMATION_MODELANIMATIONRESOURCES_H
 
-#include "FModelAnimationAsset.h"
+#include "model/animation/FModelAnimationAsset.h"
 #include <gkcore/Handle.h>
 
 /**

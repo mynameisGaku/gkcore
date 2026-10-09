@@ -1,12 +1,12 @@
 ﻿#include <gkcore.h>
-#include "../src/core/Context.h"
-#include "../src/internal/Backend.hpp"
-#include "../src/foundation/Memory.h"
-#include "../src/image/Image.h"
-#include "../src/model/ModelLoader.h"
-#include "../src/text/TextCache.h"
-#include "../src/effects/Effects.h"
-#include "../src/render/ModelDrawPlan.h"
+#include "core/Context.h"
+#include "internal/Backend.hpp"
+#include "foundation/Memory.h"
+#include "image/Image.h"
+#include "model/ModelLoader.h"
+#include "text/TextCache.h"
+#include "effects/Effects.h"
+#include "render/ModelDrawPlan.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1202,6 +1202,39 @@ bool TestLightingBeginFrameSnapshot()
     gk::Shutdown();
     return true;
 }
+/**
+ * 画面更新への同期はframe開始時に固定し、次frameと終了後の初期値を区別する。
+ */
+bool TestVSyncFrameSnapshots()
+{
+    CaptureState capture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(capture));
+    CHECK(gk::Init() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::SetVSyncEnabled(false) == 0);
+    CHECK(gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::Present() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(!gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::SetVSyncEnabled(true) == 0);
+    CHECK(!gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::Present() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::Present() == 0);
+    CHECK(gk::SetVSyncEnabled(false) == 0);
+    gk::Shutdown();
+    CaptureState nextCapture;
+    gk::detail::SetBackendForTesting(new CaptureBackend(nextCapture));
+    CHECK(gk::Init() == 0);
+    CHECK(gk::BeginFrame() == 0);
+    CHECK(gk::detail::GetContext().frame.vSyncEnabled);
+    CHECK(gk::Present() == 0);
+    gk::Shutdown();
+    return true;
+}
+
 }
 
 int main()
@@ -1236,6 +1269,8 @@ int main()
         fprintf(stderr, "post-process math contract failed: %s\n", postProcessFailure.CStr());
         ++failures;
     }
+    if (!TestVSyncFrameSnapshots())
+        ++failures;
     if (!TestDefaultWindowDimensions())
         ++failures;
     if (!TestColorAndDimensions())

@@ -1,5 +1,5 @@
-﻿#include "Input.h"
-#include "Context.h"
+﻿#include "core/Input.h"
+#include "core/Context.h"
 
 namespace gk
 {

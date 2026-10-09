@@ -1,4 +1,4 @@
-﻿#include "WindowsWindow.h"
+﻿#include "platform/WindowsWindow.h"
 
 #if defined(_WIN32)
 
@@ -7,6 +7,9 @@
 #include <d3d12.h>
 
 #include <stdint.h>
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+#include <stdio.h>
+#endif
 
 namespace gk::platform
 {
@@ -110,14 +113,40 @@ bool WindowsWindow::Initialize(int width, int height, uint32_t& errorCode)
         errorCode = GetLastError();
         return false;
     }
-    window_ = CreateWindowExW(0, kWindowClassName, L"gkcore", style, CW_USEDEFAULT, CW_USEDEFAULT, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top, nullptr, nullptr, instance_, this);
+    // 自動captureは表示もactivationも行わない。
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    const DWORD extendedStyle = WS_EX_NOACTIVATE;
+#else
+    const DWORD extendedStyle = 0;
+#endif
+    window_ = CreateWindowExW(extendedStyle, kWindowClassName, L"gkcore", style, CW_USEDEFAULT, CW_USEDEFAULT, rectangle.right - rectangle.left, rectangle.bottom - rectangle.top, nullptr, nullptr, instance_, this);
     if (!window_)
     {
         errorCode = GetLastError();
         return false;
     }
-    ShowWindow(window_, SW_SHOW);
-    UpdateWindow(window_);
+// capture専用buildではwindowを表示しない。
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    constexpr bool showWindow = ShouldShowWindowForBuild(true);
+#else
+    constexpr bool showWindow = ShouldShowWindowForBuild(false);
+#endif
+    if (showWindow)
+    {
+        ShowWindow(window_, SW_SHOW);
+        UpdateWindow(window_);
+    }
+
+#if defined(GKCORE_TEST_FRAME_CAPTURE)
+    // 実際のWin32状態を検査し、表示やfocus取得があればcaptureを開始しない。
+    if (IsWindowVisible(window_) || GetForegroundWindow() == window_)
+    {
+        Shutdown();
+        errorCode = ERROR_INVALID_STATE;
+        return false;
+    }
+    fprintf(stderr, "GKCORE_TEST_WINDOW_VISIBLE=0\n");
+#endif
     closing_ = false;
     return true;
 }

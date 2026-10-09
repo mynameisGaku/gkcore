@@ -4,18 +4,26 @@
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "../internal/Backend.hpp"
-#include "../platform/WindowsWindow.h"
-#include "Geometry.h"
-#include "ModelGeometry.h"
-#include "ModelLightingRenderer.h"
-#include "CustomShaders.h"
-#include "PostProcessRenderer.h"
-#include "PostEffectRenderer.h"
-#include "TextureCache.h"
+#include "internal/Backend.hpp"
+#include "platform/WindowsWindow.h"
+#include "render/Geometry.h"
+#include "render/ModelGeometry.h"
+#include "render/ModelLightingRenderer.h"
+#include "render/FModelGeometryCache.h"
+#include "render/FModelSkinningRenderer.h"
+#include "render/FModelSkinningGeometryCache.h"
+#include "render/FModelSkinningDispatch.h"
+#include "render/ModelDrawConstants.h"
+#include "render/ModelPoseGeometry.h"
+#include "render/FModelSparseMapCache.h"
+#include "render/CustomShaders.h"
+#include "render/PostProcessRenderer.h"
+#include "render/PostEffectRenderer.h"
+#include "render/TextureCache.h"
 
 #if defined(GKCORE_TEST_FRAME_CAPTURE)
-#include "../../tests/support/FrameCapture.h"
+#include "tests/support/FrameCapture.h"
+#include "tests/support/FModelSkinningReadback.h"
 #endif
 
 #include <Graphics/Interfaces/IGraphics.h>
@@ -81,6 +89,12 @@ struct RenderRun
     detail::ImageResource* occlusionImage = nullptr;
     // 遮蔽画像の繰り返しと補間方法。
     detail::FTextureSampler occlusionSampler{};
+    // 不変のmodel頂点を再利用するGPU buffer。nullならframe用bufferを使う。
+    Buffer* cachedModelBuffer = nullptr;
+    // GPU model変換定数のslot。0はCPUで投影した頂点。
+    uint32_t modelDrawConstantIndex = 0;
+    // 透明triangleの並びをindex bufferで指定するか。
+    bool indexedModel = false;
 };
 
 /**
@@ -107,6 +121,10 @@ class ForgeRenderer
      * renderer、swapchain、depth target、shader、pipeline、bufferを作成する。
      */
     bool Initialize(HWND window, uint32_t width, uint32_t height, String& error);
+    /**
+     * GPUによる倍精度model skinningを使えるか返す。
+     */
+    bool SupportsGpuModelSkinning() const;
     /**
      * GPU処理の完了を待ち、描画資源をすべて解放する。
      */
@@ -174,6 +192,8 @@ class ForgeRenderer
     Pipeline* spriteAlphaUiPipeline_ = nullptr;
     // frameごとの頂点buffer。
     Buffer* vertexBuffers_[kFramesInFlight]{};
+    // GPU modelの透明triangle順をframeごとに転送するindex buffer。
+    Buffer* modelIndexBuffers_[kFramesInFlight]{};
     // swapchain image取得を同期するsemaphore。
     Semaphore* imageAcquiredSemaphore_ = nullptr;
     // command bufferとsemaphoreの再利用を管理するring。
@@ -184,6 +204,14 @@ class ForgeRenderer
     TextureCache textureCache_;
     // 内蔵modelの照明pipelineを管理するowner。
     ModelLightingRenderer modelLighting_;
+    // 不変の静止model頂点をGPU上で保持する所有者。
+    FModelGeometryCache modelGeometryCache_;
+    // skinning computeとframe別出力を管理する。
+    FModelSkinningRenderer modelSkinning_;
+    // skinning入力geometryをGPU_ONLY bufferで再利用する。
+    FModelSkinningGeometryCache modelSkinningGeometryCache_;
+    // sparse姿勢の元vertex対応mapをGPUで保持する。
+    FModelSparseMapCache modelSparseMapCache_;
     // custom shader資源を管理するowner。
     CustomShaders customShaders_;
     // frame内のscene後処理を管理するowner。
@@ -193,6 +221,12 @@ class ForgeRenderer
 #if defined(GKCORE_TEST_FRAME_CAPTURE)
     // GPU画像検査用の読み戻し資源を所有する。
     test_support::FFrameCapture testFrameCapture_;
+    // skin検証を明示したcapture runtimeだけ有効にする。
+    bool verifyGpuSkinning_ = false;
+    // GPU skin出力をframe fence後に読むframe別buffer。
+    Buffer* skinningReadbackBuffers_[kFramesInFlight]{};
+    // 容量を保持してframe間にreadback bufferを再利用する。
+    uint64_t skinningReadbackCapacities_[kFramesInFlight]{};
 #endif
     // 画像未指定時に使う白texture。
     detail::ImageResource* whiteImage_ = nullptr;
@@ -200,6 +234,20 @@ class ForgeRenderer
     Array<Vertex> vertices_;
     // 内蔵model描画へ送る頂点。
     Array<ModelRenderVertex> modelVertices_;
+    // 透明modelのGPU頂点buffer内のindex列。
+    Array<uint32_t> modelIndices_;
+    // frameで使うGPU model変換。slot0以外の値を保持する。
+    Array<FModelDrawConstants> modelDrawConstants_;
+    // frame内の独立した姿勢をGPUへ渡す位置・法線・接線。
+    Array<FModelPoseVertex> modelPoseVertices_;
+    // frame内GPU skinning dispatchへ渡すrecord列。
+    Array<FModelSkinningRecord> modelSkinningRecords_;
+    // frame内でskinするmodelのrecord・出力範囲。
+    Array<FModelSkinningDispatch> modelSkinningDispatches_;
+    // dispatch順に対応する不変geometry buffer。
+    Array<Buffer*> modelSkinningGeometryBuffers_;
+    // 各GPU model変換slotが参照するsparse対応map。
+    Array<const Buffer*> modelSparseMaps_;
     // 同じ描画状態を共有する頂点範囲。
     Array<RenderRun> runs_;
     // frame内のcustom shader描画内容。
@@ -212,6 +260,14 @@ class ForgeRenderer
     bool resourceLoaderInitialized_ = false;
     // 内蔵shaderのroot signatureを初期化済みか。
     bool rootSignatureInitialized_ = false;
+#if defined(_DEBUG)
+    // GPU診断時だけ登録するD3D12 message callback owner。
+    void* gpuInfoQueue_ = nullptr;
+    // callback登録時に割り当てられる識別値。
+    unsigned long gpuInfoCallbackCookie_ = 0;
+    // device生成時に診断を有効化したか。
+    bool gpuDiagnosticsEnabled_ = false;
+#endif
 };
 
 }

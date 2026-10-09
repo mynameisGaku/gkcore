@@ -1,9 +1,9 @@
-#include "PostEffectRenderer.h"
+﻿#include "render/PostEffectRenderer.h"
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
 #include <Graphics/FSL/defaults.h>
-#include "../../shaders/gkcore_sprite.srt.h"
+#include "shaders/gkcore_sprite.srt.h"
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>
 
 #include <string.h>
@@ -11,16 +11,19 @@
 /**
  * Direct3D 12 resource setup and command recording for the custom post-effect pass.
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
  * Local failure helper used by resource creation and command validation.
  */
-namespace {
+namespace
+{
 /**
  * Assigns a post-effect failure reason and returns false to simplify cleanup branches.
  */
-bool Fail(String& error, const char* message) {
+bool Fail(String& error, const char* message)
+{
     error.Assign(message);
     return false;
 }
@@ -28,10 +31,13 @@ bool Fail(String& error, const char* message) {
 
 PostEffectRenderer::PostEffectRenderer() = default;
 
-PostEffectRenderer::~PostEffectRenderer() { Shutdown(); }
+PostEffectRenderer::~PostEffectRenderer()
+{
+    Shutdown();
+}
 
-bool PostEffectRenderer::CreateTarget(uint32_t width, uint32_t height, RenderTarget** output,
-                                      String& error) {
+bool PostEffectRenderer::CreateTarget(uint32_t width, uint32_t height, RenderTarget** output, String& error)
+{
     if (!renderer_ || !output || !width || !height)
         return Fail(error, "The post-effect target dimensions or renderer are invalid");
     RenderTargetDesc desc{};
@@ -51,18 +57,20 @@ bool PostEffectRenderer::CreateTarget(uint32_t width, uint32_t height, RenderTar
     desc.mClearValue.a = 0.0f;
     desc.pName = "gkcore Custom Post Effect Output";
     addRenderTarget(renderer_, &desc, output);
-    if (!*output) return Fail(error, "The Forge could not create the custom post-effect target");
+    if (!*output)
+        return Fail(error, "The Forge could not create the custom post-effect target");
     error.Clear();
     return true;
 }
 
-bool PostEffectRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_t height,
-                                    String& error) {
+bool PostEffectRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_t height, String& error)
+{
     if (renderer_ || !renderer || !width || !height)
         return Fail(error, "The custom post-effect initialization parameters are invalid");
     renderer_ = renderer;
 
-    if (!CreateTarget(width, height, &outputTarget_, error)) {
+    if (!CreateTarget(width, height, &outputTarget_, error))
+    {
         Shutdown();
         return false;
     }
@@ -75,15 +83,16 @@ bool PostEffectRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_t
     samplerDesc.mAddressV = ADDRESS_MODE_CLAMP_TO_EDGE;
     samplerDesc.mAddressW = ADDRESS_MODE_CLAMP_TO_EDGE;
     addSampler(renderer_, &samplerDesc, &sampler_);
-    if (!sampler_) {
+    if (!sampler_)
+    {
         Shutdown();
         return Fail(error, "The Forge could not create the custom post-effect sampler");
     }
 
-    const DescriptorSetDesc descriptorDesc =
-        SRT_SET_DESC(SpriteResources, Persistent, kCustomShaderFrameCount, 0);
+    const DescriptorSetDesc descriptorDesc = SRT_SET_DESC(SpriteResources, Persistent, kCustomShaderFrameCount, 0);
     addDescriptorSet(renderer_, &descriptorDesc, &descriptorSet_);
-    if (!descriptorSet_) {
+    if (!descriptorSet_)
+    {
         Shutdown();
         return Fail(error, "The Forge could not create custom post-effect descriptors");
     }
@@ -101,12 +110,15 @@ bool PostEffectRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_t
     bufferDesc.ppBuffer = &vertexBuffer_;
     SyncToken vertexBufferToken = 0;
     addResource(&bufferDesc, &vertexBufferToken);
-    if (vertexBufferToken) waitForToken(&vertexBufferToken);
-    if (!vertexBuffer_) {
+    if (vertexBufferToken)
+        waitForToken(&vertexBufferToken);
+    if (!vertexBuffer_)
+    {
         Shutdown();
         return Fail(error, "The Forge could not create the custom post-effect vertex buffer");
     }
-    if (!vertexBuffer_->pCpuMappedAddress) {
+    if (!vertexBuffer_->pCpuMappedAddress)
+    {
         Shutdown();
         return Fail(error, "The Forge did not map the custom post-effect vertex buffer");
     }
@@ -119,16 +131,20 @@ bool PostEffectRenderer::Initialize(Renderer* renderer, uint32_t width, uint32_t
     return true;
 }
 
-bool PostEffectRenderer::Resize(uint32_t width, uint32_t height, String& error) {
+bool PostEffectRenderer::Resize(uint32_t width, uint32_t height, String& error)
+{
     if (!renderer_ || !width || !height)
         return Fail(error, "The custom post-effect resize dimensions are invalid");
-    if (width == width_ && height == height_) {
+    if (width == width_ && height == height_)
+    {
         error.Clear();
         return true;
     }
     RenderTarget* replacement = nullptr;
-    if (!CreateTarget(width, height, &replacement, error)) return false;
-    if (outputTarget_) removeRenderTarget(renderer_, outputTarget_);
+    if (!CreateTarget(width, height, &replacement, error))
+        return false;
+    if (outputTarget_)
+        removeRenderTarget(renderer_, outputTarget_);
     outputTarget_ = replacement;
     width_ = width;
     height_ = height;
@@ -137,15 +153,9 @@ bool PostEffectRenderer::Resize(uint32_t width, uint32_t height, String& error) 
     return true;
 }
 
-bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders& shaders,
-                               uint32_t frameIndex, const PostEffectPlan& plan, String& error) {
-    if (!renderer_ || !command || !scene || !scene->pTexture || !outputTarget_ ||
-        !outputTarget_->pTexture || !vertexBuffer_ || !sampler_ || frameIndex >= kCustomShaderFrameCount ||
-        scene == outputTarget_ || scene->mWidth != width_ || scene->mHeight != height_ ||
-        scene->mFormat != TinyImageFormat_R16G16B16A16_SFLOAT ||
-        outputTarget_->mWidth != width_ || outputTarget_->mHeight != height_ ||
-        outputTarget_->mFormat != TinyImageFormat_R16G16B16A16_SFLOAT ||
-        !plan.enabled || !plan.shader.IsValid() || plan.customDrawIndex >= plan.preparedDrawCount)
+bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders& shaders, uint32_t frameIndex, const PostEffectPlan& plan, String& error)
+{
+    if (!renderer_ || !command || !scene || !scene->pTexture || !outputTarget_ || !outputTarget_->pTexture || !vertexBuffer_ || !sampler_ || frameIndex >= kCustomShaderFrameCount || scene == outputTarget_ || scene->mWidth != width_ || scene->mHeight != height_ || scene->mFormat != TinyImageFormat_R16G16B16A16_SFLOAT || outputTarget_->mWidth != width_ || outputTarget_->mHeight != height_ || outputTarget_->mFormat != TinyImageFormat_R16G16B16A16_SFLOAT || !plan.enabled || !plan.shader.IsValid() || plan.customDrawIndex >= plan.preparedDrawCount)
         return Fail(error, "The custom post-effect pass received invalid resources or a disabled plan");
     if (!descriptorSet_)
         return Fail(error, "The custom post-effect frame descriptor set is unavailable");
@@ -162,14 +172,13 @@ bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders&
     descriptors[1].ppSamplers = &sampler_;
     updateDescriptorSet(renderer_, frameIndex, descriptorSet_, 2, descriptors);
 
-    const ResourceState outputBefore = outputState_.ShaderReadable()
-        ? RESOURCE_STATE_PIXEL_SHADER_RESOURCE : RESOURCE_STATE_RENDER_TARGET;
-    if (outputBefore != RESOURCE_STATE_RENDER_TARGET) {
-        RenderTargetBarrier toTarget{outputTarget_, outputBefore, RESOURCE_STATE_RENDER_TARGET};
+    const ResourceState outputBefore = outputState_.ShaderReadable() ? RESOURCE_STATE_PIXEL_SHADER_RESOURCE : RESOURCE_STATE_RENDER_TARGET;
+    if (outputBefore != RESOURCE_STATE_RENDER_TARGET)
+    {
+        RenderTargetBarrier toTarget{ outputTarget_, outputBefore, RESOURCE_STATE_RENDER_TARGET };
         cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &toTarget);
     }
-    RenderTargetBarrier sceneToRead{scene, RESOURCE_STATE_RENDER_TARGET,
-                                    RESOURCE_STATE_PIXEL_SHADER_RESOURCE};
+    RenderTargetBarrier sceneToRead{ scene, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE };
     cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &sceneToRead);
 
     BindRenderTargetsDesc bindTargets{};
@@ -178,11 +187,11 @@ bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders&
     bindTargets.mRenderTargets[0].mLoadAction = LOAD_ACTION_DONTCARE;
     bindTargets.mRenderTargets[0].mStoreAction = STORE_ACTION_STORE;
     cmdBindRenderTargets(command, &bindTargets);
-    cmdSetViewport(command, 0.0f, 0.0f, static_cast<float>(width_),
-                   static_cast<float>(height_), 0.0f, 1.0f);
+    cmdSetViewport(command, 0.0f, 0.0f, static_cast<float>(width_), static_cast<float>(height_), 0.0f, 1.0f);
     cmdSetScissor(command, 0, 0, width_, height_);
 
-    if (!shaders.BindPostEffect(command, plan.shader, frameIndex, plan.customDrawIndex, error)) {
+    if (!shaders.BindPostEffect(command, plan.shader, frameIndex, plan.customDrawIndex, error))
+    {
         cmdBindRenderTargets(command, nullptr);
         return false;
     }
@@ -193,10 +202,8 @@ bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders&
     cmdDraw(command, 3, 0);
     cmdBindRenderTargets(command, nullptr);
 
-    RenderTargetBarrier outputToRead{outputTarget_, RESOURCE_STATE_RENDER_TARGET,
-                                     RESOURCE_STATE_PIXEL_SHADER_RESOURCE};
-    RenderTargetBarrier sceneToTarget{scene, RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                                      RESOURCE_STATE_RENDER_TARGET};
+    RenderTargetBarrier outputToRead{ outputTarget_, RESOURCE_STATE_RENDER_TARGET, RESOURCE_STATE_PIXEL_SHADER_RESOURCE };
+    RenderTargetBarrier sceneToTarget{ scene, RESOURCE_STATE_PIXEL_SHADER_RESOURCE, RESOURCE_STATE_RENDER_TARGET };
     cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &outputToRead);
     cmdResourceBarrier(command, 0, nullptr, 0, nullptr, 1, &sceneToTarget);
     if (!outputState_.Stage(true))
@@ -205,19 +212,31 @@ bool PostEffectRenderer::Apply(Cmd* command, RenderTarget* scene, CustomShaders&
     return true;
 }
 
-void PostEffectRenderer::DiscardPendingFrame() { outputState_.DiscardPending(); }
+void PostEffectRenderer::DiscardPendingFrame()
+{
+    outputState_.DiscardPending();
+}
 
-void PostEffectRenderer::CommitFrame() { outputState_.Commit(); }
+void PostEffectRenderer::CommitFrame()
+{
+    outputState_.Commit();
+}
 
-void PostEffectRenderer::Shutdown() {
-    if (renderer_) {
-        if (descriptorSet_) removeDescriptorSet(renderer_, descriptorSet_);
+void PostEffectRenderer::Shutdown()
+{
+    if (renderer_)
+    {
+        if (descriptorSet_)
+            removeDescriptorSet(renderer_, descriptorSet_);
         descriptorSet_ = nullptr;
-        if (sampler_) removeSampler(renderer_, sampler_);
+        if (sampler_)
+            removeSampler(renderer_, sampler_);
         sampler_ = nullptr;
-        if (vertexBuffer_) removeResource(vertexBuffer_);
+        if (vertexBuffer_)
+            removeResource(vertexBuffer_);
         vertexBuffer_ = nullptr;
-        if (outputTarget_) removeRenderTarget(renderer_, outputTarget_);
+        if (outputTarget_)
+            removeRenderTarget(renderer_, outputTarget_);
         outputTarget_ = nullptr;
     }
     width_ = 0;
@@ -226,7 +245,10 @@ void PostEffectRenderer::Shutdown() {
     outputState_.Reset();
 }
 
-RenderTarget* PostEffectRenderer::OutputTarget() const { return outputTarget_; }
+RenderTarget* PostEffectRenderer::OutputTarget() const
+{
+    return outputTarget_;
+}
 
 }
 

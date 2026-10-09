@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "FModelAnimationAsset.h"
-#include "AModelAnimationSource.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "model/animation/AModelAnimationSource.h"
 
 /**
  * animation sourceの共有所有権を管理する処理。

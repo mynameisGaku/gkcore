@@ -2,9 +2,9 @@
 #ifndef GKCORE_RENDER_TEXTUREMIPCHAIN_H
 #define GKCORE_RENDER_TEXTUREMIPCHAIN_H
 
-#include "ETextureColorSpace.h"
-#include "FTextureMipChain.h"
-#include "../resources/Resources.h"
+#include "render/ETextureColorSpace.h"
+#include "render/FTextureMipChain.h"
+#include "resources/Resources.h"
 
 /**
  * 画像の縮小段を計画・生成する描画補助処理。

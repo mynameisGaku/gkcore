@@ -1,10 +1,10 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/model/ModelLoader.h"
-#include "../src/model/animation/GlbAnimation.h"
-#include "../src/model/animation/AModelAnimationSource.h"
-#include "../src/model/animation/FModelAnimationAsset.h"
-#include "../src/model/animation/ModelPose.h"
-#include "../src/resources/Resources.h"
+#include "model/ModelLoader.h"
+#include "model/animation/GlbAnimation.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "model/animation/ModelPose.h"
+#include "resources/Resources.h"
 
 #include <filesystem>
 #include <math.h>

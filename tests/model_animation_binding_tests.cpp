@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/model/animation/ModelAnimationBinding.h"
-#include "../src/model/animation/ModelPose.h"
-#include "../include/gkcore/EHumanoidBone.h"
+#include "model/animation/ModelAnimationBinding.h"
+#include "model/animation/ModelPose.h"
+#include <gkcore/EHumanoidBone.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -262,6 +262,11 @@ bool TestRoleBindingAndMorphNameOrder()
     if (!BuildClipBinding(sourceAsset, 0, &targetAsset, targetRoles, state, error))
     {
         fprintf(stderr, "role binding failed: %s\n", error.CStr());
+        return false;
+    }
+    if (state.sourceRestModelMatrices.Count() != 32 || state.targetRestModelMatrices.Count() != 32 || state.sourceRestWorldRotations.Count() != 8 || state.targetRestWorldRotations.Count() != 8)
+    {
+        fprintf(stderr, "role binding did not retain precomputed rest transforms\n");
         return false;
     }
     const bool sampled = SampleBoundClip(state, targetAsset, output, error);

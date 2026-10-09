@@ -1,7 +1,7 @@
-﻿#include "ModelDrawPlan.h"
+﻿#include "render/ModelDrawPlan.h"
 
 #include <float.h>
-#include "../resources/TextureSampler.h"
+#include "resources/TextureSampler.h"
 
 /**
  * 静的modelのprimitiveを検証し、材質を描画用記録へ変換する。
@@ -72,7 +72,7 @@ bool IsMaterialValid(const detail::ModelMaterial& material)
         if (!IsUnitFactor(material.emissiveFactor[i]))
             return false;
     }
-    return IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && IsEmissiveStrength(material.emissiveStrength) && IsUnitFactor(material.occlusionStrength) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler) && detail::IsTextureSamplerValid(material.emissiveSampler) && detail::IsTextureSamplerValid(material.occlusionSampler);
+    return !(material.alphaMask && material.alphaBlend) && IsUnitFactor(material.metallicFactor) && IsUnitFactor(material.roughnessFactor) && IsAlphaCutoff(material.alphaCutoff) && IsFiniteNormalScale(material.normalScale) && IsEmissiveStrength(material.emissiveStrength) && IsUnitFactor(material.occlusionStrength) && detail::IsTextureSamplerValid(material.baseColorSampler) && detail::IsTextureSamplerValid(material.metallicRoughnessSampler) && detail::IsTextureSamplerValid(material.normalSampler) && detail::IsTextureSamplerValid(material.emissiveSampler) && detail::IsTextureSamplerValid(material.occlusionSampler);
 }
 
 // namespace
@@ -141,6 +141,7 @@ bool BuildModelDrawPlan(const detail::ModelResource& model, ModelDrawPlan& outpu
             part.metallicFactor = material.metallicFactor;
             part.roughnessFactor = material.roughnessFactor;
             part.alphaMask = material.alphaMask;
+            part.alphaBlend = material.alphaBlend;
             part.alphaCutoff = material.alphaCutoff;
             part.normalScale = material.normalScale;
             part.baseColorSampler = material.baseColorSampler;

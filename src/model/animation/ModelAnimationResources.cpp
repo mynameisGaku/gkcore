@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ModelAnimationResources.h"
-#include "../../foundation/HandleTable.h"
-#include "../../foundation/Array.h"
+#include "model/animation/ModelAnimationResources.h"
+#include "foundation/HandleTable.h"
+#include "foundation/Array.h"
 
 /**
  * animation handleとasset所有権を管理するregistry。

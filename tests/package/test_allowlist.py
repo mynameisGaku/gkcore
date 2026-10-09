@@ -5,7 +5,7 @@ import unittest
 from package_allowlist import PackageError, RUNTIME_DLLS, _FIXED, validate
 
 
-PUBLIC_HEADERS = {"include/gkcore.h", "include/gkcore/Handle.h", "include/gkcore/Shader.hlsl", "include/gkcore/ModelAnimation.h", "include/gkcore/EHumanoidBone.h"}
+PUBLIC_HEADERS = {"include/gkcore.h", "include/gkcore/Handle.h", "include/gkcore/Shader.hlsl", "include/gkcore/ModelAnimation.h", "include/gkcore/EHumanoidBone.h", "include/gkcore/ModelMaterial.h", "include/gkcore/FModelMaterialSettings.h", "include/gkcore/EModelAlphaMode.h"}
 SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_color.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_color.frag",
@@ -15,6 +15,7 @@ SHADERS = {
     "bin/CompiledShaders/DIRECT3D12/gkcore_sprite.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_model.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_model.frag",
+    "bin/CompiledShaders/DIRECT3D12/gkcore_model_skinning.comp",
     "bin/CompiledShaders/DIRECT3D12/gkcore_post.vert",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag",
     "bin/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag",
@@ -70,6 +71,8 @@ class RuntimeAllowlistTests(unittest.TestCase):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.vert"})
         with self.assertRaisesRegex(PackageError, "gkcore_model.frag"):
             validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model.frag"})
+        with self.assertRaisesRegex(PackageError, "gkcore_model_skinning.comp"):
+            validate(BASE - {"bin/CompiledShaders/DIRECT3D12/gkcore_model_skinning.comp"})
 
     def test_rejects_missing_gpu_configuration_data(self):
         for path in GPU_CONFIGURATION:

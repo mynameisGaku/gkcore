@@ -1,4 +1,4 @@
-﻿#include "FrameCapture.h"
+﻿#include "tests/support/FrameCapture.h"
 
 #include <Windows.h>
 

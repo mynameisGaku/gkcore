@@ -1,16 +1,18 @@
-#pragma once
+﻿#pragma once
 
-#include "gkcore.h"
+#include <gkcore.h>
 
 /**
  * Persistent scene effects and draw-layer settings.
  */
-namespace gk::effects {
+namespace gk::effects
+{
 
 /**
  * Values copied by BeginFrame so settings apply consistently to one frame.
  */
-struct Settings {
+struct Settings
+{
     bool bloomEnabled;
     float bloomIntensity;
     float exposure;

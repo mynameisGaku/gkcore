@@ -1,17 +1,18 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include <gkcore.h>
-#include "AModelAnimationSource.h"
-#include "FModelPlayback.h"
-#include "ModelAnimationBinding.h"
-#include "ModelAnimationResources.h"
-#include "ModelSnapshot.h"
-#include "ModelIk.h"
-#include "ObjSequence.h"
-#include "GlbAnimation.h"
-#include "FbxAnimation.h"
-#include "../../core/Context.h"
-#include "../../resources/ResourceIO.h"
-#include "../../foundation/Memory.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/FModelPlayback.h"
+#include "model/animation/ModelAnimationBinding.h"
+#include "model/animation/HumanoidMapping.h"
+#include "model/animation/ModelAnimationResources.h"
+#include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelIk.h"
+#include "model/animation/ObjSequence.h"
+#include "model/animation/GlbAnimation.h"
+#include "model/animation/FbxAnimation.h"
+#include "core/Context.h"
+#include "resources/ResourceIO.h"
+#include "foundation/Memory.h"
 #include <math.h>
 #include <string.h>
 
@@ -179,6 +180,10 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     destination.bones.MoveFrom(candidate.bones);
     destination.mappedRoles.MoveFrom(candidate.mappedRoles);
     destination.morphs.MoveFrom(candidate.morphs);
+    destination.sourceRestModelMatrices.MoveFrom(candidate.sourceRestModelMatrices);
+    destination.targetRestModelMatrices.MoveFrom(candidate.targetRestModelMatrices);
+    destination.sourceRestWorldRotations.MoveFrom(candidate.sourceRestWorldRotations);
+    destination.targetRestWorldRotations.MoveFrom(candidate.targetRestWorldRotations);
     if (slot == 0)
     {
         if (playback->clips[1].asset)
@@ -187,6 +192,10 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
         playback->clips[1].bones.Clear();
         playback->clips[1].mappedRoles.Clear();
         playback->clips[1].morphs.Clear();
+        playback->clips[1].sourceRestModelMatrices.Clear();
+        playback->clips[1].targetRestModelMatrices.Clear();
+        playback->clips[1].sourceRestWorldRotations.Clear();
+        playback->clips[1].targetRestWorldRotations.Clear();
         playback->blendWeight = 0.0f;
     }
     else
@@ -435,6 +444,10 @@ int StopModelAnimation(ModelHandle handle)
             state.bones.Clear();
             state.mappedRoles.Clear();
             state.morphs.Clear();
+            state.sourceRestModelMatrices.Clear();
+            state.targetRestModelMatrices.Clear();
+            state.sourceRestWorldRotations.Clear();
+            state.targetRestWorldRotations.Clear();
         }
         transform->playback->blendWeight = 0.0f;
     }
@@ -584,6 +597,63 @@ int SetModelTwoBoneIk(ModelHandle handle, uint32_t root, uint32_t middle, uint32
 {
     const uint32_t bones[3] = { root, middle, end };
     return StoreIk(handle, bones, 3, target, pole, weight, true);
+}
+
+/**
+ * 推定結果の空振りを検査し、成功後だけ役割配列を置き換える。
+ */
+static int InferRoles(const model::AModelAnimationSource& source, Array<uint16_t>& roles)
+{
+    String error;
+    Array<uint16_t> candidate;
+    if (!model::InferHumanoidBoneRoles(source, roles, candidate, error))
+        return Failure(error);
+    uint32_t recognized = 0;
+    for (uint32_t i = 0; i < candidate.Count(); ++i)
+        if (candidate.At(i) != 0)
+            ++recognized;
+    if (recognized == 0)
+        return detail::SetError("no recognized humanoid bone names; set bone roles manually");
+    roles.MoveFrom(candidate);
+    detail::ClearError();
+    return 0;
+}
+
+int AutoMapModelHumanoidBones(ModelHandle handle)
+{
+    auto* asset = Embedded(handle);
+    if (!asset || !asset->source)
+        return detail::SetError("model has no skeleton");
+    auto* playback = Playback(handle, true);
+    if (!playback)
+        return -1;
+    return InferRoles(*asset->source, playback->roles);
+}
+
+int AutoMapAnimationHumanoidBones(ModelAnimationHandle handle)
+{
+    auto* asset = model::FindAnimation(handle);
+    if (!asset || !asset->source)
+        return detail::SetError("invalid animation handle");
+    return InferRoles(*asset->source, asset->roles);
+}
+
+EHumanoidBone GetModelBoneRole(ModelHandle handle, uint32_t bone)
+{
+    auto* playback = Playback(handle, false);
+    return playback && bone < playback->roles.Count() ? static_cast<EHumanoidBone>(playback->roles.At(bone)) : EHumanoidBone::None;
+}
+
+EHumanoidBone GetAnimationBoneRole(ModelAnimationHandle handle, uint32_t bone)
+{
+    auto* asset = model::FindAnimation(handle);
+    return asset && bone < asset->roles.Count() ? static_cast<EHumanoidBone>(asset->roles.At(bone)) : EHumanoidBone::None;
+}
+
+int32_t GetModelAnimationSourceBone(ModelHandle handle, uint32_t targetBone, uint32_t slot)
+{
+    auto* state = Clip(handle, slot);
+    return state && targetBone < state->bones.Count() ? state->bones.At(targetBone) : -1;
 }
 
 int SetModelIkChain(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 target, float weight)

@@ -2,7 +2,7 @@
 #ifndef GKCORE_MODEL_ANIMATION_GLBMORPHGEOMETRY_H
 #define GKCORE_MODEL_ANIMATION_GLBMORPHGEOMETRY_H
 
-#include "../../resources/Resources.h"
+#include "resources/Resources.h"
 
 namespace gk::model::animation
 {

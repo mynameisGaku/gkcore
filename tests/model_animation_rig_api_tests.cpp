@@ -2,13 +2,13 @@
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
 
-#include "../src/core/Context.h"
-#include "../src/internal/Backend.hpp"
-#include "../src/model/Model.h"
-#include "../src/model/animation/AModelAnimationSource.h"
-#include "../src/model/animation/FModelAnimationAsset.h"
-#include "../src/model/animation/FModelPlayback.h"
-#include "../src/model/animation/ModelPose.h"
+#include "core/Context.h"
+#include "internal/Backend.hpp"
+#include "model/Model.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "model/animation/FModelPlayback.h"
+#include "model/animation/ModelPose.h"
 
 #include <math.h>
 #include <stdio.h>

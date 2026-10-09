@@ -1,8 +1,8 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "GlbMorphGeometry.h"
-#include "../ModelNormals.h"
-#include "../ModelTangents.h"
-#include "../../foundation/Array.h"
+#include "model/animation/GlbMorphGeometry.h"
+#include "model/ModelNormals.h"
+#include "model/ModelTangents.h"
+#include "foundation/Array.h"
 #include <stdint.h>
 
 namespace gk::model::animation

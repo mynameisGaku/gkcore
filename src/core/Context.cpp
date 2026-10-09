@@ -1,5 +1,6 @@
-﻿#include "Context.h"
-#include "../model/animation/FModelPlayback.h"
+﻿#include "core/Context.h"
+#include "model/animation/FModelDeferredPose.h"
+#include "model/animation/FModelPlayback.h"
 #include <math.h>
 
 /**
@@ -81,6 +82,9 @@ void ClearFrameDraws()
             Release(&packet.image->reference);
         if (packet.model)
             Release(&packet.model->reference);
+        if (packet.deferredPose)
+            Release(&packet.deferredPose->reference);
+        packet.deferredPose = nullptr;
         packet.image = nullptr;
         packet.model = nullptr;
     }

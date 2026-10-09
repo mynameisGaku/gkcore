@@ -185,6 +185,12 @@ GKCORE_API void Shutdown();
 GKCORE_API int SetWindowSize(uint32_t width, uint32_t height);
 
 /**
+ * 画面の更新に同期して表示を待つか設定する。初期値true、次のBeginFrameから適用する。
+ * Init前にも設定でき、Shutdownで初期値へ戻る。成功時は0。
+ */
+GKCORE_API int SetVSyncEnabled(bool enabled);
+
+/**
  * OSイベントを処理し、アプリを続ける間はtrueを返す。
  */
 GKCORE_API bool ProcessEvents();
@@ -257,6 +263,7 @@ GKCORE_API ModelHandle LoadModel(const char* utf8Path);
 
 /**
  * 呼び出し時点の変換値でモデル描画を予約する。
+ * GPUによる姿勢計算で結果が不正になった場合は、Presentが診断付きで失敗する。
  */
 GKCORE_API int DrawModel(ModelHandle model);
 
@@ -394,5 +401,6 @@ GKCORE_API int SetShaderFloat4(ShaderHandle shader, uint32_t slot, Float4 value)
 }
 
 #include <gkcore/ModelAnimation.h>
+#include <gkcore/ModelMaterial.h>
 
 #endif

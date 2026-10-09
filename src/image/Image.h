@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
-#include "../resources/Resources.h"
+#include "resources/Resources.h"
 
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Creates an empty refcounted image payload.

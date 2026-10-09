@@ -1,11 +1,11 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "GlbAnimation.h"
-#include "GlbMorphGeometry.h"
-#include "ModelPose.h"
-#include "../../foundation/Memory.h"
-#include "../../foundation/Array.h"
-#include "../Model.h"
-#include "../../../third_party/cgltf/cgltf.h"
+#include "model/animation/GlbAnimation.h"
+#include "model/animation/GlbMorphGeometry.h"
+#include "model/animation/ModelPose.h"
+#include "foundation/Memory.h"
+#include "foundation/Array.h"
+#include "model/Model.h"
+#include <cgltf/cgltf.h>
 #include <float.h>
 #include <math.h>
 #include <string.h>

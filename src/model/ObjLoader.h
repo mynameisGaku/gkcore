@@ -1,10 +1,11 @@
-#pragma once
-#include "../resources/Resources.h"
-#include "../foundation/String.h"
+﻿#pragma once
+#include "resources/Resources.h"
+#include "foundation/String.h"
 /**
  * Bounded text geometry import into retained model resources.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 /**
  * Parses static OBJ geometry with checked signed position, normal, and UV indices.
  */

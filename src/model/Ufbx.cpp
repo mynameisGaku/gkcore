@@ -6,4 +6,4 @@
 #define UFBX_ENABLE_SCENE_EVALUATION
 #define UFBX_ENABLE_SKINNING_EVALUATION
 #define UFBX_NO_STDIO
-#include "../../third_party/ufbx/ufbx.c"
+#include <ufbx/ufbx.c>

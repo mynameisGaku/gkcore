@@ -2,8 +2,8 @@
 #ifndef GKCORE_MODEL_ANIMATION_OBJSEQUENCE_H
 #define GKCORE_MODEL_ANIMATION_OBJSEQUENCE_H
 
-#include "FModelAnimationAsset.h"
-#include "../../resources/Resources.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "resources/Resources.h"
 
 /**
  * OBJ連番animationを読み込む内部機能。

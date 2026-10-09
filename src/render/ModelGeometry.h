@@ -2,7 +2,7 @@
 #ifndef GKCORE_RENDER_MODELGEOMETRY_H
 #define GKCORE_RENDER_MODELGEOMETRY_H
 
-#include "WorldGeometry.h"
+#include "render/WorldGeometry.h"
 
 /**
  * 内蔵PBR pipelineへ渡す静的model頂点の展開。
@@ -46,6 +46,10 @@ static_assert(sizeof(ModelRenderVertex) == 160, "lit model vertex ABI must remai
  * 検証済み材質範囲を照明用頂点へ展開する。失敗時は出力配列を保つ。
  */
 bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error);
+/**
+ * part内の指定順triangle群をまとめて照明頂点へ展開する。失敗時は出力配列を保つ。
+ */
+bool AppendLitModelTriangles(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, const uint32_t* firstIndices, uint32_t triangleCount, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error);
 
 // namespace gk::render
 }

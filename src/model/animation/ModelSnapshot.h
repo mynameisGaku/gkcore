@@ -2,8 +2,9 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODELSNAPSHOT_H
 #define GKCORE_MODEL_ANIMATION_MODELSNAPSHOT_H
 
-#include "FModelPlayback.h"
-#include "../../resources/Resources.h"
+#include "model/animation/FModelPlayback.h"
+#include "model/animation/ModelPose.h"
+#include "resources/Resources.h"
 
 /**
  * 描画時のモデル姿勢snapshotを作る内部機能。
@@ -19,6 +20,10 @@ detail::ModelResource* CloneModelSnapshot(const detail::ModelResource& source, S
  * 静的モデルでも独立した参照を返す。失敗はnull。
  */
 detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source, const FModelPlayback* playback, String& error);
+/**
+ * OBJ連番以外のclip・ブレンド・IKを共有姿勢へ評価する。失敗時はposeを変更しない。
+ */
+bool EvaluateModelPlaybackPose(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& pose, String& error);
 }
 
 #endif

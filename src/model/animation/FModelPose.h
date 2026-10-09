@@ -2,8 +2,8 @@
 #ifndef GKCORE_MODEL_ANIMATION_FMODEL_POSE_H
 #define GKCORE_MODEL_ANIMATION_FMODEL_POSE_H
 
-#include "../../foundation/Array.h"
-#include "FModelBoneTransform.h"
+#include "foundation/Array.h"
+#include "model/animation/FModelBoneTransform.h"
 
 namespace gk::model::animation
 {

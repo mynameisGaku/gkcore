@@ -1,17 +1,19 @@
-#pragma once
+﻿#pragma once
 
-#include "../foundation/Array.h"
-#include "gkcore.h"
+#include "foundation/Array.h"
+#include <gkcore.h>
 
 /**
  * Custom shader handles, constants, and per-draw snapshots.
  */
-namespace gk {
+namespace gk
+{
 
 /**
  * One float4 constant value addressed by shader register slot.
  */
-struct ShaderConstant {
+struct ShaderConstant
+{
     uint32_t registerIndex;
     Float4 value;
 };
@@ -19,7 +21,8 @@ struct ShaderConstant {
 /**
  * Shader selection and constants copied into a queued draw command.
  */
-struct ShaderSnapshot {
+struct ShaderSnapshot
+{
     ShaderHandle shaderHandle;
     Array<ShaderConstant> constants;
 
@@ -36,8 +39,9 @@ struct ShaderSnapshot {
 /**
  * Tracks loaded shader IDs and constant values without owning backend objects.
  */
-class ShaderBindings {
-public:
+class ShaderBindings
+{
+  public:
     /**
      * Releases all tracked IDs and resets selection to the built-in shader.
      */
@@ -76,9 +80,17 @@ public:
      */
     bool SnapshotFor(ShaderHandle handle, ShaderSnapshot& output) const;
 
-private:
-    struct ShaderRecord { uint32_t handle; };
-    struct ConstantRecord { uint32_t handle; uint32_t slot; Float4 value; };
+  private:
+    struct ShaderRecord
+    {
+        uint32_t handle;
+    };
+    struct ConstantRecord
+    {
+        uint32_t handle;
+        uint32_t slot;
+        Float4 value;
+    };
     Array<ShaderRecord> shaders_;
     Array<ConstantRecord> constants_;
     ShaderHandle active_;

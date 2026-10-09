@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
-#include "../resources/Resources.h"
+#include "resources/Resources.h"
 
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Creates a model payload with its default material ready for primitive loads.

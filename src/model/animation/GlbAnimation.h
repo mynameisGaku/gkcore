@@ -2,9 +2,9 @@
 #ifndef GKCORE_MODEL_ANIMATION_GLBANIMATION_H
 #define GKCORE_MODEL_ANIMATION_GLBANIMATION_H
 
-#include "AModelAnimationSource.h"
-#include "FModelAnimationAsset.h"
-#include "../../resources/Resources.h"
+#include "model/animation/AModelAnimationSource.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "resources/Resources.h"
 
 struct cgltf_data;
 

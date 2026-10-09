@@ -1,30 +1,30 @@
-#pragma once
+﻿#pragma once
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "../effects/Shaders.h"
-#include "../foundation/Array.h"
-#include "../foundation/String.h"
-#include "Geometry.h"
-#include "ShaderAbi.h"
-#include "CustomShaderPolicy.h"
+#include "effects/Shaders.h"
+#include "foundation/Array.h"
+#include "foundation/String.h"
+#include "render/Geometry.h"
+#include "render/ShaderAbi.h"
+#include "render/CustomShaderPolicy.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 
 /**
  * Per-draw custom shader bindings captured from one frame packet.
  */
-namespace gk::render {
+namespace gk::render
+{
 
-static_assert(kCustomShaderFrameCount == kShaderConstantFrameCount,
-              "custom shader frame slots must match the constant arena");
-static_assert(kCustomShaderMaximumDraws == kShaderConstantDrawCapacity,
-              "custom shader draw capacity must match the constant descriptor arena");
+static_assert(kCustomShaderFrameCount == kShaderConstantFrameCount, "custom shader frame slots must match the constant arena");
+static_assert(kCustomShaderMaximumDraws == kShaderConstantDrawCapacity, "custom shader draw capacity must match the constant descriptor arena");
 
 /**
  * POD snapshot for one draw that selects a custom pixel shader.
  */
-struct CustomShaderDraw {
+struct CustomShaderDraw
+{
     ShaderHandle shader;
     uint32_t constantCount;
     ShaderConstant constants[kShaderConstantSlotCount];
@@ -33,14 +33,13 @@ struct CustomShaderDraw {
 /**
  * Owns loaded custom shader programs, pipeline variants, and per-frame constant arenas.
  */
-class CustomShaders {
-public:
+class CustomShaders
+{
+  public:
     /**
      * Creates the shared constant descriptor set and loads the stock universal vertex shader.
      */
-    bool Initialize(Renderer* renderer, Queue* queue, TinyImageFormat sceneFormat,
-                    TinyImageFormat displayFormat, TinyImageFormat depthFormat,
-                    SampleCount sampleCount, uint32_t sampleQuality, String& error);
+    bool Initialize(Renderer* renderer, Queue* queue, TinyImageFormat sceneFormat, TinyImageFormat displayFormat, TinyImageFormat depthFormat, SampleCount sampleCount, uint32_t sampleQuality, String& error);
     /**
      * Waits for queued GPU work before releasing all custom shaders and arena resources.
      */
@@ -56,19 +55,15 @@ public:
     /**
      * Validates all snapshots, writes one frame's constant blocks, and updates their CBV slices.
      */
-    bool PrepareFrame(uint32_t frameIndex, const CustomShaderDraw* draws,
-                      uint32_t drawCount, String& error);
+    bool PrepareFrame(uint32_t frameIndex, const CustomShaderDraw* draws, uint32_t drawCount, String& error);
     /**
      * Binds the selected target/blend/depth pipeline and that draw's constant slice.
      */
-    bool Bind(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
-              uint32_t customDrawIndex, uint32_t layer, bool depthTest,
-              bool alphaBlend, String& error) const;
+    bool Bind(Cmd* command, ShaderHandle shader, uint32_t frameIndex, uint32_t customDrawIndex, uint32_t layer, bool depthTest, bool alphaBlend, String& error) const;
     /**
      * Binds the dedicated single-sample HDR pipeline and this draw's constant slice.
      */
-    bool BindPostEffect(Cmd* command, ShaderHandle shader, uint32_t frameIndex,
-                        uint32_t customDrawIndex, String& error) const;
+    bool BindPostEffect(Cmd* command, ShaderHandle shader, uint32_t frameIndex, uint32_t customDrawIndex, String& error) const;
     /**
      * Reports whether the shader expects the optional t0 texture binding.
      */
@@ -78,11 +73,12 @@ public:
      */
     bool RequiresSampler(ShaderHandle shader) const;
 
-private:
+  private:
     /**
      * Owns all target/depth/blend pipelines and reflected texture usage for one shader.
      */
-    struct ShaderRecord {
+    struct ShaderRecord
+    {
         ShaderHandle handle;
         Shader* program;
         Pipeline* sceneOpaqueDepth;
@@ -111,12 +107,9 @@ private:
     /**
      * Creates one pipeline variant using the shared vertex ABI and configured target formats.
      */
-    bool CreatePipeline(Shader* shader, const char* name, TinyImageFormat colorFormat,
-                        TinyImageFormat depthFormat, bool depthTest, bool alphaBlend,
-                        Pipeline** output, String& error, bool singleSample = false);
+    bool CreatePipeline(Shader* shader, const char* name, TinyImageFormat colorFormat, TinyImageFormat depthFormat, bool depthTest, bool alphaBlend, Pipeline** output, String& error, bool singleSample = false);
 
-    static constexpr uint64_t kArenaBytes =
-        static_cast<uint64_t>(kCustomShaderMaximumDraws) * kShaderConstantBlockBytes;
+    static constexpr uint64_t kArenaBytes = static_cast<uint64_t>(kCustomShaderMaximumDraws) * kShaderConstantBlockBytes;
     Renderer* renderer_ = nullptr;
     Queue* queue_ = nullptr;
     Array<uint8_t> vertexBytecode_;

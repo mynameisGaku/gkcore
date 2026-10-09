@@ -2,8 +2,8 @@
 #ifndef GKCORE_MODEL_ANIMATION_FMODELCLIPSTATE_H
 #define GKCORE_MODEL_ANIMATION_FMODELCLIPSTATE_H
 
-#include "FModelAnimationAsset.h"
-#include "../../foundation/Array.h"
+#include "model/animation/FModelAnimationAsset.h"
+#include "foundation/Array.h"
 
 /**
  * 個別clipの再生情報を持つ内部型。
@@ -31,6 +31,14 @@ struct FModelClipState
     Array<uint16_t> mappedRoles;
     // 対象morphごとのsource番号。未対応は-1。
     Array<int32_t> morphs;
+    // 外部clipを結ぶ時に固定されるsource rest poseのmodel行列。
+    Array<float> sourceRestModelMatrices;
+    // 外部clipを結ぶ時に固定されるtarget rest poseのmodel行列。
+    Array<float> targetRestModelMatrices;
+    // source rest poseの親階層回転を4成分ずつ保持する。
+    Array<float> sourceRestWorldRotations;
+    // target rest poseの親階層回転を4成分ずつ保持する。
+    Array<float> targetRestWorldRotations;
 };
 }
 

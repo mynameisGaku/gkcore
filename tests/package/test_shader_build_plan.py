@@ -24,7 +24,7 @@ class ShaderBuildPlanTests(unittest.TestCase):
         self.assertIn("--compile", normalized)
         self.assertEqual({path.name for path in runtime_artifacts(out)},
                          {"gkcore_color.vert", "gkcore_color.frag", "gkcore_sprite.vert", "gkcore_sprite.frag",
-                          "gkcore_model.vert", "gkcore_model.frag",
+                          "gkcore_model.vert", "gkcore_model.frag", "gkcore_model_skinning.comp",
                           "gkcore_post.vert", "gkcore_bloom_extract.frag", "gkcore_bloom_blur.frag",
                           "gkcore_post_composite.frag", "gkcore_fxaa.frag", "default.rootsig", "compute.rootsig"})
 

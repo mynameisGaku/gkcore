@@ -1,12 +1,13 @@
-#pragma once
+﻿#pragma once
 
-#include "../foundation/String.h"
+#include "foundation/String.h"
 #include <stdint.h>
 
 /**
  * Bounded text normalization shared by platform font adapters.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Expands each tab to four spaces in at most 4096 bytes and commits output

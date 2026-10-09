@@ -2,9 +2,9 @@
 #ifndef GKCORE_MODEL_ANIMATION_FMODELANIMATIONASSET_H
 #define GKCORE_MODEL_ANIMATION_FMODELANIMATIONASSET_H
 
-#include "../../foundation/RefCount.h"
-#include "../../foundation/String.h"
-#include "../../foundation/Array.h"
+#include "foundation/RefCount.h"
+#include "foundation/String.h"
+#include "foundation/Array.h"
 
 /**
  * animation sourceの共有所有権を扱う内部型。

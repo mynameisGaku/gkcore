@@ -1,4 +1,4 @@
-#include "LightingAbi.h"
+﻿#include "render/LightingAbi.h"
 
 #include <float.h>
 #include <math.h>
@@ -6,27 +6,27 @@
 /**
  * Validates lighting values and packs the GPU constant-buffer layout.
  */
-namespace gk::render {
-namespace {
+namespace gk::render
+{
+namespace
+{
 /**
  * Checks whether a scalar can safely be stored in the shader constants.
  */
-bool IsFinite(float value) {
+bool IsFinite(float value)
+{
     return value == value && value <= FLT_MAX && value >= -FLT_MAX;
 }
 }
 
-bool PackLightingConstants(const effects::LightingSettings& settings,
-                           LightingConstants& output, String& error) {
+bool PackLightingConstants(const effects::LightingSettings& settings, LightingConstants& output, String& error)
+{
     const double x = settings.direction.x;
     const double y = settings.direction.y;
     const double z = settings.direction.z;
     const double length = sqrt(x * x + y * y + z * z);
-    if (!IsFinite(settings.ambientIntensity) || settings.ambientIntensity < 0.0f ||
-        settings.ambientIntensity > 4.0f || !IsFinite(settings.directionalIntensity) ||
-        settings.directionalIntensity < 0.0f || settings.directionalIntensity > 16.0f ||
-        !IsFinite(settings.direction.x) || !IsFinite(settings.direction.y) ||
-        !IsFinite(settings.direction.z) || !(length > 0.0) || !isfinite(length)) {
+    if (!IsFinite(settings.ambientIntensity) || settings.ambientIntensity < 0.0f || settings.ambientIntensity > 4.0f || !IsFinite(settings.directionalIntensity) || settings.directionalIntensity < 0.0f || settings.directionalIntensity > 16.0f || !IsFinite(settings.direction.x) || !IsFinite(settings.direction.y) || !IsFinite(settings.direction.z) || !(length > 0.0) || !isfinite(length))
+    {
         error.Assign("lighting settings are outside the supported range");
         return false;
     }

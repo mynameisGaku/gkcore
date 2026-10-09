@@ -1,4 +1,4 @@
-﻿#include "ModelGeometry.h"
+﻿#include "render/ModelGeometry.h"
 
 #include <math.h>
 
@@ -21,14 +21,16 @@ bool IsFactor(float value)
 // namespace
 }
 
+namespace
+{
 /**
- * model primitiveを照明用頂点へ投影し、全件生成できた場合だけ出力へ追加する。
+ * 指定triangle群を一度に組み立て、完成後にだけ出力へ追加する。
  */
-bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error)
+bool AppendLitModelTrianglesInternal(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, uint32_t firstIndex, const uint32_t* firstIndices, uint32_t triangleCount, bool contiguous, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error)
 {
     error.Clear();
     const bool normalMapping = part.normalTextureIndex >= 0;
-    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f || part.normalTextureIndex < -1 || part.emissiveTextureIndex < -1 || !isfinite(part.emissiveFactorStrength[3]) || part.emissiveFactorStrength[3] < 0.0f || !IsFactor(part.occlusionStrength) || part.occlusionTextureIndex < -1)
+    if (draw.kind != detail::DrawKind::Model || !draw.model || frame.width == 0 || frame.height == 0 || part.indexCount == 0 || part.indexCount % 3 != 0 || triangleCount == 0 || triangleCount > part.indexCount / 3 || (!contiguous && !firstIndices) || part.firstIndex > draw.model->indices.Count() || part.indexCount > draw.model->indices.Count() - part.firstIndex || vertices.Count() > vertexLimit || !IsFactor(part.metallicFactor) || !IsFactor(part.roughnessFactor) || !isfinite(part.alphaCutoff) || part.alphaCutoff < 0.0f || (part.alphaMask && part.alphaBlend) || part.normalTextureIndex < -1 || part.emissiveTextureIndex < -1 || !isfinite(part.emissiveFactorStrength[3]) || part.emissiveFactorStrength[3] < 0.0f || !IsFactor(part.occlusionStrength) || part.occlusionTextureIndex < -1)
     {
         error.Assign("The model part, material factors, or frame bounds are invalid");
         return false;
@@ -66,18 +68,30 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
         return false;
     }
 
+    // 各triangleで再利用するcamera・model変換。
+    FWorldGeometryContext geometryContext{};
+    if (!BuildWorldGeometryContext(draw, true, geometryContext, error))
+        return false;
+
     // 出力を変更せず三角形ごとに組み立てる一時頂点配列。
     Array<ModelRenderVertex> candidate;
-    // primitive indexを三角形単位で処理するloop。
-    for (uint32_t offset = 0; offset < part.indexCount; offset += 3)
+    // 指定順にtriangleを組み立てるloop。
+    for (uint32_t triangle = 0; triangle < triangleCount; ++triangle)
     {
+        // part内の三頂点indexの先頭。
+        const uint32_t triangleFirstIndex = contiguous ? firstIndex + triangle * 3 : firstIndices[triangle];
+        if (triangleFirstIndex < part.firstIndex || triangleFirstIndex - part.firstIndex > part.indexCount - 3 || (triangleFirstIndex - part.firstIndex) % 3 != 0)
+        {
+            error.Assign("The model triangle index is outside its aligned part range");
+            return false;
+        }
         // 投影前の三角形頂点と属性。
         WorldVertex source[3]{};
         // 3頂点のsource属性を読み取るloop。
         for (uint32_t corner = 0; corner < 3; ++corner)
         {
             // model頂点配列内の参照先。
-            const uint32_t modelIndex = draw.model->indices.At(part.firstIndex + offset + corner);
+            const uint32_t modelIndex = draw.model->indices.At(triangleFirstIndex + corner);
             if (modelIndex >= draw.model->vertices.Count())
             {
                 error.Assign("The model part contains an invalid vertex index");
@@ -105,19 +119,14 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             }
         }
         // camera clipping後の頂点を受け取る固定配列。
-        ProjectedWorldVertex projected[18]{};
+        ProjectedWorldVertex projected[18];
         // clipping後に使うprojected要素数。
         uint32_t projectedCount = 0;
-        if (!ProjectWorldTriangle(frame, draw, source, true, true, part.baseColorFactor, projected, projectedCount, error, normalMapping))
+        if (!ProjectWorldTriangle(frame, draw, geometryContext, source, true, part.baseColorFactor, projected, projectedCount, error, normalMapping))
             return false;
         if (vertices.Count() > vertexLimit || candidate.Count() > vertexLimit - vertices.Count() || projectedCount > vertexLimit - vertices.Count() - candidate.Count())
         {
             error.Assign("The frame exceeds the dynamic vertex capacity");
-            return false;
-        }
-        if (projectedCount > UINT32_MAX - candidate.Count() || !candidate.Reserve(candidate.Count() + projectedCount))
-        {
-            error.Assign("The model vertex allocation failed");
             return false;
         }
         // 投影属性と材質値を描画頂点へまとめるloop。
@@ -134,7 +143,7 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
             }
             vertex.metallicRoughness[0] = part.metallicFactor;
             vertex.metallicRoughness[1] = part.roughnessFactor;
-            vertex.alphaMaskCutoff[0] = part.alphaMask ? 1.0f : 0.0f;
+            vertex.alphaMaskCutoff[0] = part.alphaBlend ? 2.0f : (part.alphaMask ? 1.0f : 0.0f);
             vertex.alphaMaskCutoff[1] = part.alphaCutoff;
             vertex.metallicRoughnessUv[0] = projected[i].metallicRoughnessUv[0];
             vertex.metallicRoughnessUv[1] = projected[i].metallicRoughnessUv[1];
@@ -164,22 +173,30 @@ bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPack
         }
     }
 
-    if (candidate.Count() > UINT32_MAX - vertices.Count() || !vertices.Reserve(vertices.Count() + candidate.Count()))
+    if (candidate.Count() > UINT32_MAX - vertices.Count() || !vertices.AppendRange(candidate.Data(), candidate.Count()))
     {
         error.Assign("The frame vertex allocation failed");
         return false;
     }
-    // 完成した一時頂点を呼び出し側の配列へ移すloop。
-    for (uint32_t i = 0; i < candidate.Count(); ++i)
-    {
-        if (!vertices.Append(candidate.At(i)))
-        {
-            error.Assign("The frame vertex allocation failed");
-            return false;
-        }
-    }
     error.Clear();
     return true;
+}
+}
+
+/**
+ * model primitive全体を照明用頂点へ投影し、完成後に出力へ追加する。
+ */
+bool AppendLitModelPart(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error)
+{
+    return AppendLitModelTrianglesInternal(frame, draw, part, part.firstIndex, nullptr, part.indexCount / 3, true, vertices, vertexLimit, error);
+}
+
+/**
+ * part内の指定順triangle群を照明用頂点へ投影し、完成後に出力へ追加する。
+ */
+bool AppendLitModelTriangles(const detail::FramePacket& frame, const detail::DrawPacket& draw, const ModelPartPlan& part, const uint32_t* firstIndices, uint32_t triangleCount, Array<ModelRenderVertex>& vertices, uint32_t vertexLimit, String& error)
+{
+    return AppendLitModelTrianglesInternal(frame, draw, part, 0, firstIndices, triangleCount, false, vertices, vertexLimit, error);
 }
 
 // namespace gk::render

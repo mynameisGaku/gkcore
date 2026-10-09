@@ -1,9 +1,10 @@
-﻿#include "Draw3D.h"
+﻿#include "draw/Draw3D.h"
 
-#include "../core/Context.h"
-#include "../core/Frame.h"
-#include "../resources/Resources.h"
-#include "../model/animation/ModelSnapshot.h"
+#include "core/Context.h"
+#include "core/Frame.h"
+#include "resources/Resources.h"
+#include "model/animation/ModelSnapshot.h"
+#include "model/animation/FModelDeferredPose.h"
 
 #include <float.h>
 #include <math.h>
@@ -71,7 +72,27 @@ int DrawModel(ModelHandle model)
     packet.kind = detail::DrawKind::Model;
     packet.resource = model.value;
     String error;
-    packet.model = model::EvaluateModelSnapshot(*detail::FindModel(model), transform->playback, error);
+    detail::ModelResource* source = detail::FindModel(model);
+    const auto& context = detail::GetContext();
+    // 独自shaderとCPU rendererは、従来どおり変形済み頂点を受け取る。
+    if (context.backend && context.backend->SupportsSparseModelPoses() && !context.shaders.ActiveHandle().IsValid())
+    {
+        if (context.backend->SupportsGpuModelSkinning())
+            packet.deferredPose = model::EvaluateGpuDeferredModelPose(*source, transform->playback, error);
+        if (!packet.deferredPose && error.Empty())
+            packet.deferredPose = model::EvaluateDeferredModelPose(*source, transform->playback, error);
+    }
+    if (packet.deferredPose)
+    {
+        packet.model = source;
+        if (!Retain(&source->reference))
+        {
+            Release(&packet.deferredPose->reference);
+            return detail::SetError("model geometry reference limit exceeded");
+        }
+    }
+    else
+        packet.model = model::EvaluateModelSnapshot(*source, transform->playback, error);
     if (!packet.model)
         return detail::SetError(error.CStr());
     packet.color = 0x00ffffffu;
@@ -80,6 +101,8 @@ int DrawModel(ModelHandle model)
     packet.modelScale = transform->scale;
     const int result = detail::QueueDraw(packet);
     Release(&packet.model->reference);
+    if (packet.deferredPose)
+        Release(&packet.deferredPose->reference);
     return result;
 }
 

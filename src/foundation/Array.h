@@ -1,20 +1,22 @@
-#pragma once
+﻿#pragma once
 
-#include "Memory.h"
+#include "foundation/Memory.h"
 #include <stddef.h>
 #include <stdint.h>
 
 /**
  * Dynamic storage helpers for POD runtime records.
  */
-namespace gk {
+namespace gk
+{
 
 /**
  * Owns a growable sequence of trivially copyable records. Elements must not
  * own resources or require construction and destruction.
  */
-class RawArray {
-public:
+class RawArray
+{
+  public:
     /**
      * Creates an empty array for records of the specified byte size.
      */
@@ -71,7 +73,7 @@ public:
      */
     bool RemoveAt(uint32_t index);
 
-private:
+  private:
     void* data_;
     uint32_t elementSize_;
     uint32_t count_;
@@ -81,15 +83,18 @@ private:
 /**
  * Typed view over RawArray for trivially copyable values only.
  */
-template<class T>
-class Array {
+template <class T> class Array
+{
     static_assert(__is_trivially_copyable(T), "gk::Array only stores trivially copyable values");
     static_assert(alignof(T) <= kAllocationAlignment, "gk::Array does not support over-aligned values");
-public:
+
+  public:
     /**
      * Creates an empty array.
      */
-    Array() : storage_(static_cast<uint32_t>(sizeof(T))) {}
+    Array() : storage_(static_cast<uint32_t>(sizeof(T)))
+    {
+    }
     /**
      * Releases the backing allocation.
      */
@@ -100,57 +105,96 @@ public:
     /**
      * Ensures capacity for at least the requested number of records.
      */
-    bool Reserve(uint32_t capacity) { return storage_.Reserve(capacity); }
+    bool Reserve(uint32_t capacity)
+    {
+        return storage_.Reserve(capacity);
+    }
     /**
      * Appends a record, including when value aliases an existing element.
      */
-    bool Append(const T& value) { return storage_.Append(&value); }
+    bool Append(const T& value)
+    {
+        return storage_.Append(&value);
+    }
     /**
      * Appends a typed range; a zero count succeeds without requiring a pointer.
      */
-    bool AppendRange(const T* values, uint32_t count) { return storage_.AppendRange(values, count); }
+    bool AppendRange(const T* values, uint32_t count)
+    {
+        return storage_.AppendRange(values, count);
+    }
     /**
      * Removes all records while retaining capacity.
      */
-    void Clear() { storage_.Clear(); }
+    void Clear()
+    {
+        storage_.Clear();
+    }
     /**
      * Removes all records and releases capacity.
      */
-    void Reset() { storage_.Reset(); }
+    void Reset()
+    {
+        storage_.Reset();
+    }
     /**
      * Transfers storage from another array.
      */
-    void MoveFrom(Array& source) { storage_.MoveFrom(source.storage_); }
+    void MoveFrom(Array& source)
+    {
+        storage_.MoveFrom(source.storage_);
+    }
     /**
      * Returns contiguous mutable record storage, or null when empty.
      */
-    T* Data() { return static_cast<T*>(storage_.Data()); }
+    T* Data()
+    {
+        return static_cast<T*>(storage_.Data());
+    }
     /**
      * Returns contiguous read-only record storage, or null when empty.
      */
-    const T* Data() const { return static_cast<const T*>(storage_.Data()); }
+    const T* Data() const
+    {
+        return static_cast<const T*>(storage_.Data());
+    }
     /**
      * Returns a record by index; the caller must check Count().
      */
-    T& At(uint32_t index) { return Data()[index]; }
+    T& At(uint32_t index)
+    {
+        return Data()[index];
+    }
     /**
      * Returns a record by index; the caller must check Count().
      */
-    const T& At(uint32_t index) const { return Data()[index]; }
+    const T& At(uint32_t index) const
+    {
+        return Data()[index];
+    }
     /**
      * Returns the current number of records.
      */
-    uint32_t Count() const { return storage_.Count(); }
+    uint32_t Count() const
+    {
+        return storage_.Count();
+    }
     /**
      * Returns allocated record capacity.
      */
-    uint32_t Capacity() const { return storage_.Capacity(); }
+    uint32_t Capacity() const
+    {
+        return storage_.Capacity();
+    }
     /**
      * Removes the indexed record, preserving the order of later values.
      */
-    bool RemoveAt(uint32_t index) { return storage_.RemoveAt(index); }
+    bool RemoveAt(uint32_t index)
+    {
+        return storage_.RemoveAt(index);
+    }
 
-private:
+  private:
     RawArray storage_;
 };
 

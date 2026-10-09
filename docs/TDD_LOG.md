@@ -1081,3 +1081,61 @@ RuntimeOFFの最終CPUテストはDebug/Release各48/48成功（最終review後3
 実GPUのアニメーション検査は12組の静的参照と132frame連続描画のframe130/131を比較し、すべて最大RGB差0でした。静止との画素差は1319〜4422画素、連続frame間は1655画素です。失敗時も結果JSONを残し、Debug/Releaseの判定JSONと代表PPMが一致することを確認しました。DebugはD3D12 InfoQueue取得が必須のcapture runtimeで実行しています。
 
 検証PCはWindows 11 Pro x64 build26200、RTX 4070 SUPER / driver610.74、VS2026 / v14214.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。CPU構成はMSVC19.51/SDK10.0.28000.0です。SDK consumerもInit・描画・Present・Shutdownまで成功しました。固定vendorソースは変更せず、自作sourceのBOM/CRLF、clang-format12、差分・文書リンクを確認しています。
+
+## 2026-10-09 実モデルviewer・材質・処理時間の改善
+
+実モデルの入口として`START.bat`と`OPEN_PROJECT.bat`を用意しました。編集対象は`examples/model_viewer.cpp`、通常のsolutionは`build/runtime-windows/gkcore.slnx`です。`START.bat -CheckOnly`では必要ファイルと起動引数を確認し、viewer自体を開きません。YUMEKAの基本色画像19枚と7材質の設定はローカル検証専用で、モデル・motion・変換物をSDKやGitへ追加しません。指定されたPMXモデルは変換条件を満たせないため変換していません。
+
+GLBのBLENDを標準材質へ接続し、同じcameraで連続するSceneモデル群の透明三角形を奥から並べます。Rect/Image/Triangle、独自shader、camera変更は並び替えの境界で、UIは登録順です。深度検査は維持し、透明部分は深度を書きません。CPUの順序・境界・深度とGPUの合成を検査します。独自shaderのMASK診断を変更して既存alpha検査が失敗したため、従来の診断を戻し、alpha/BLENDのGPU検査を再実行して2/2成功しました。
+
+`SetModelMaterial`は画像とalpha設定を持つ新しいsnapshotへ差し替えます。共有画像を他の材質役割が使う間は保持し、旧instanceや描画予約を変更しません。旧画像slotが残る契約を先に失敗させ、不要slotの解放と他用途の保持を修正しました。公開3headerをRuntime package許可リストへ追加し、許可リスト13テストが成功しています。公開API・材質寿命・VSync・packageの独立read-onlyレビューでは重大な問題を検出しませんでした。
+
+quote includeはmodule rootまたは公開include rootに統一しました。初回の変換は477 include /192 files、shader参照も続けて統一しました。`tools/normalize_project_includes.py`の最終dry-run時点では264ファイル中変更候補0、未解決0、非include token hash不一致0です。固定依存物のsourceは形式変換していません。Runtime標準ライブラリ禁止の検査4件は成功しています。
+
+画像取得用Runtimeはウィンドウを非表示で使います。通常DLLは表示を維持し、表示を伴うbackend smokeとSDK consumerのGPU実行だけ`GKCORE_RUN_INTERACTIVE_TESTS`で明示的に選びます。既定はOFFです。非表示と通常表示の同一静止画像も比較しました。ユーザーが表示試験を許可した後は通常DLLのvisible benchmarkでFPSを測定しています。
+
+viewerはVSyncを無効にし、Windowsの性能counterで実経過時間を計り、アニメーションへ渡します。`SetVSyncEnabled`の未実装stubでframe snapshotの契約を失敗させてから実装し、次のBeginFrameへの適用とShutdown後の既定trueを確認しました。実モデルbenchmarkはwarmupを除外し、測定完了・平均FPS・p95・DrawModel/Present時間をJSONへ残します。
+
+YUMEKAの透明三角形追加で、1三角形ごとに必要数ちょうどへReserveしていたため、巨大な頂点配列を繰り返しコピーしていました。foundationのまとめて追加するAPIと連続三角形のbatchで、静止表示が0.189FPS / Present5290.017msから24.120FPS /41.447msへ改善しました。形状をGPUへ保持し、cameraとmodel変換をshaderで適用することで静止340.016FPS、毎frame回転340.021FPSになりました。ログは`yumeka-static-performance-{initial,batched,cached,gpu-projected}.log`と`yumeka-rotate-performance-gpu-pose.log`です。
+
+GPU cache・buffer offset・descriptor・終了とeviction時の寿命を独立read-onlyレビューし、重大な問題を検出しませんでした。続けて3軸回転・負の非一様scale・off-axis cameraを組み合わせたactualと、Pythonの独立軸回転・法線変換で事前に焼き込んだGLBを比較しました。ReleaseのBLEND画像検査は追加6 captureを含め1/1成功（19.26秒）。Opaque参照は最大channel差1、差2超0画素、全channel平均差約0.0000011、BLEND参照と逆提出順は全画素差0でした。変換を外したidentity反例は37,477画素で差12超になり、試験の感度も確認しています。ログは`model-projection-release-{build,tests}.log`、結果は`build/runtime-windows/model-blend-captures/Release/results.json`です。新しいGPU skin計算やcache予算超過の回帰を確認した結果ではありません。
+
+FBXは動かない形状情報とskin入力を保持し、線形skinと法線生成を軽く評価する経路を加えました。対応できない入力は従来ufbx評価へ戻します。YUMEKAは175,075cornerから45,233position /55,747normalにまとめ、全cornerの位置・法線を従来評価へ照合しています。描画時点の姿勢は参照保持し、後から再生時刻やhandleを変えても予約済み描画に影響しません。source削除後のmaterialize、同一frameの異なる姿勢、未知sourceの不正出力と割当失敗時の保持をCPUで確認しました。focused deferred-pose API/透明順序の2/2は成功しています。
+
+通常DLLでの外部Mixamo2motionのブレンドは、GPU投影・姿勢buffer・重複検査の整理後に156.214FPS、p95 6.765ms、DrawModel3.672ms、Present2.723msでした。300 frame /30 warmup、1280×720、基本色画像、既定の効果で測定しています。300FPSには未達で、変形計算のGPU化と統合検査を継続しています。数値は確認した時点の結果であり、以降の未検査変更の成功を表しません。
+
+この測定のPCはWindows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 /v14214.29.30133（MSVC19.29.30159）、SDK10.0.22621.0、CMake4.3.1です。過去のdriver610.74の記録とは区別します。通常SDKの計測コードを無効にした最終build、CPU Debug/Release全体、新しいGPU変形経路を含むnative Debug/Releaseとpackageの統合検査はまだ完了していません。
+
+GPU skinの入力はmodel/animationの既存sourceが所有し、rendererがwire形式へ変換する境界にしました。poseごとのcluster行列、ゼロweight頂点用のmesh/geometry変換、face順・重複を保ったnormal CSRをCPUで確認します。試作のGPU起動では、未stageのcompute artifact、face/corner offsetと出力strideの不整合、buffer再利用時のstate管理を修正しました。ReleaseとDebugでdevice removalを検出したため、起動の反復を止め、即時InfoQueue診断を追加して小fixtureへ絞りました。
+
+診断は`CREATE_CONSTANT_BUFFER_VIEW_INVALID_SIZE`（id650）で、2MiBの定数arena全体へCBVを作ってD3D12の64KiB上限を超えていました。既存のdraw constant arenaと同じ`NO_DESCRIPTOR_VIEW_CREATION`を付け、slotごとの96byte range CBVだけを作る修正後、小fixtureはDebugで完走し、id650とdevice removalが出なくなりました。ログは`gpu-skinning-fixture-{diagnostics,nodescriptor}.log`です。異なるshader ABIへ置き換えて回避する変更は採用していません。
+
+capture専用`GKCORE_VERIFY_GPU_SKINNING=1`はGPU出力を読み戻し、保持済みCPU pose arenaへ全position/normalのXYZ/W、有限値、件数と範囲を比較します。通常SDKにはこの読み戻しと同期を含めません。Release tiny FBXの3frameは各4position/4normalで最大差0でした。一方、実YUMEKA external-blendは45,233position/55,747normalの位置最大差約0.000000238に対し、法線最大差約0.00864で許容0.0005を超えたため、Present失敗・`completed=false`になりました。GPU計算の正しさはこの時点で未達です。許容値を広げず、CPU計算を外す前に原因を修正します。ログは`gpu-skinning-readback-{tiny,yumeka,yumeka-detail}.log`です。
+
+ufbxはdoubleの変形位置から面法線を計算していました。GPUへ渡す元位置・weight・bind変換・pose行列と、skin中間位置・面法線・group加算をdoubleに揃え、描画出力だけfloatへ変換しました。FP64非対応deviceはCPU経路を使います。Release readbackで、変換付きtiny fixtureの6frameは位置差0・法線最大差約0.000000060、実YUMEKA+両Mixamo motionと材質設定の6frameは毎回45,233position/55,747normalを検査し、位置差0・法線最大差約0.000000179で成功しました。許容0.0005は変更していません。ログは`gpu-skinning-fp64-{tiny,yumeka}.log`です。
+
+immutable skin入力を64MiB/64entryのGPU_ONLY cacheへ保持し、source ModelResourceの参照と現在frameのpinを管理します。poseごとの行列は別の小さなupload bufferへ渡し、大きな入力の毎frame再構築を外しました。YUMEKA readbackの6frameは同じ精度で成功、通常表示の300frame/30warmupは144.148FPS、p95 7.282ms、DrawModel3.617ms、Present3.313msでした。ログは`gpu-skinning-cache-yumeka.log`と`yumeka-cached-fp64-profile.log`です。BLEND・複合変換の画像検査も1/1成功（19.10秒）。この時点ではCPUでも完全な変形を計算しているため、300FPSには未達です。
+
+GPU対応の描画予約では共通poseとFP64行列を保持し、CPUはBLENDが参照する位置だけ評価します。GPU非対応backendや姿勢は旧評価へ戻り、CPU materializeが必要になった場合は保持したposeから完全な形状を作ります。GPU mockのfreeze・materialize・capability false・BLEND subset・zero influence fallbackはcore/model_animation_apiのDebug/Release各2/2で成功しました。reference検証用captureは完全なCPU評価を残します。
+
+GPU評価結果の異常は4byteのGPU flagへ記録し、同frameのfenceと読み戻しでPresentが診断付き失敗にします。使われないnormal groupの零値は拒否しません。退化fixtureの初回はskin deformerの接続不足でtriangleが動かず、`unexpected_success`のREDでした。SkinとGeometry接続を直した後、正常rest描画→clip時刻0.5のDrawModel成功→Present失敗「degenerate referenced normal」をRelease native CTestで確認（1/1、1.32秒）。CPU reference評価を無効にしてproductionのerror flagを使います。ログは`model-gpu-skinning-error-release-{tests,green}.log`です。
+
+placeholderのまとめ追加、GPU poseだけのframeでは不要なCPU uploadを外す処理、frame内のDrawPlan共有で、通常表示は261.180FPS、p95 4.223ms、DrawModel0.980ms、Present2.841msになりました。GPU/CPU readback精度は維持し、transparent planのdirect/cached一致も確認しています。ログは`yumeka-{staging,drawplan}-profile.log`です。300FPSと最終Debug/Release統合検査はまだ未完了です。
+
+retargetのrest情報をbinding作成時に保持し、renderer内のGPU placeholderもまとめて追加することで、計測用コードを含めない通常SDKで300FPSを超えました。最終read-onlyレビューで、モデル間の共有face-normal buffer再利用にUAV barrierを追加し、double位置からfloatへ変換した結果の有限値も検査するよう修正しました。複数modelの8frame読み戻し、退化pose、float overflowと大きい合法poseの4 GPU回帰は成功しています。
+
+大きい合法poseの対照検査では、HLSLの`isfinite(double)`がDXILで暗黙にfloatへ変換され、有限doubleのraw face normalを拒否する問題も発見しました。doubleの指数bitで有限値を検査し、描画用float位置には別のfloat有限値検査を適用します。FBX単位換算後の約5e37の位置は成功、約5e39の位置はPresentが診断付きで失敗しました。許容誤差は変更していません。
+
+最終shader修正後の通常Release Runtime（metrics OFF、RTX 4070 SUPER / driver617.42、1280×720、300 warmup /3,000測定frame、YUMEKA+両Mixamo motion、基本色画像と既定の効果）は326.374FPS、p95 3.388ms、DrawModel0.726ms、Present2.330msで完走しました。ログは`yumeka-double-finite-normal-off-3000.log`です。6frameの全45,233position /55,747normalは位置最大差0、法線最大差約0.000000179で成功（`yumeka-double-finite-readback.log`）。静止・回転の同じ長さの測定は各340.020FPSでした。これは平均300FPSの確認で、すべてのframeが3.333ms以下だったことや他GPUでの性能保証ではありません。
+
+compute shaderを含む配布物の必須契約も追加しました。欠落を拒否せず、追加したartifactを余剰として拒否するREDを記録してから、許可リスト13件とshader plan7件をGREENにしました。Runtime artifactは14個です。ログは`model-skinning-{package,shader-plan}-{red,green}.log`です。
+
+旧生成directory17個を`build/archive`へ移し、既知のprobeを検証用build領域へ集めました。検査済みの範囲を削除する操作は自動承認レビューに拒否されたため、実削除は未完了です。`CLEAN.bat -WhatIf`で対象だけを確認する手段を用意し、現在のbuild・素材・capture・最新logは削除対象に含めません。
+
+最終統合では、GPU cacheだけで構成されたSceneを描画しない条件漏れを既存render_captureが検出しました。cached vertex数をScene判定に加えて修正しています。続いて古い頂点shader artifactが残った状態では金属材質の照明変更検査が失敗したため、最新shaderを再生成してstageし、既存の画素差条件を変更せず確認しました。
+
+最終CPUはDebug53/53件（3.25秒）、Release53/53件（3.58秒）成功。nativeはDebug78/78件（571.96秒）、Release78/78件（509.18秒）成功し、SDK consumerも含みます。ログは`final-cpu-{debug,release}-{build,tests}.log`、`final-native-debug-{config,build,tests}.log`、`final-native-release-confirm-{build,tests}.log`です。
+
+最新shaderを使う通常Release Runtime、metrics OFF、1280×720、300 warmup /3,000測定frameの最終計測は、YUMEKAと両Mixamo motionのブレンド338.147FPS、p95 3.289ms、DrawModel0.679ms、Present2.272msでした。静止340.020FPS /p95 2.976ms、毎frame回転340.020FPS /p95 2.974msです。ログは`final-real-model-benchmark.log`、`final-real-model-static-benchmark.log`、`final-real-model-rotate-benchmark.log`。約9秒間の測定結果であり、全frameや他GPUの性能保証ではありません。
+
+実YUMEKAの最終6姿勢はDebug/ReleaseともGPU readbackに成功し、各姿勢45,233位置・55,747法線で位置差0・法線最大差約0.000000179を確認しました。ログは`final-yumeka-{debug,release}-capture.log`です。

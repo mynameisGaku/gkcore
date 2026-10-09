@@ -2,7 +2,7 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODEL_IK_H
 #define GKCORE_MODEL_ANIMATION_MODEL_IK_H
 
-#include "ModelPose.h"
+#include "model/animation/ModelPose.h"
 #include <stdint.h>
 
 namespace gk::model::animation

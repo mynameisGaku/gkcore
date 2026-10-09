@@ -1,12 +1,13 @@
-#pragma once
+﻿#pragma once
 
 #include <gkcore.h>
-#include "../internal/Backend.hpp"
+#include "internal/Backend.hpp"
 
 /**
  * Application lifetime and frame submission entry points.
  */
-namespace gk {
+namespace gk
+{
 
 int Init();
 void Shutdown();
@@ -21,7 +22,8 @@ const char* GetLastErrorMessage();
 /**
  * Internal ordered packet submission boundary for draw modules.
  */
-namespace gk::detail {
+namespace gk::detail
+{
 
 /**
  * Captures current camera, layer, resource, and shader state in the open frame.

@@ -1,18 +1,20 @@
-#pragma once
+﻿#pragma once
 
-#include "PostProcess.h"
+#include "render/PostProcess.h"
 
 #include <stdint.h>
 
 /**
  * Immutable full-screen pass ordering used by the native post-process renderer.
  */
-namespace gk::render {
+namespace gk::render
+{
 
 /**
  * One render pass in the frame's post-process chain.
  */
-enum class PostProcessStepKind : uint8_t {
+enum class PostProcessStepKind : uint8_t
+{
     BloomExtract,
     BloomBlurHorizontal,
     BloomBlurVertical,
@@ -23,12 +25,19 @@ enum class PostProcessStepKind : uint8_t {
 /**
  * Destination class for one post-process step.
  */
-enum class PostProcessTarget : uint8_t { BloomA, BloomB, LinearLdr, Output };
+enum class PostProcessTarget : uint8_t
+{
+    BloomA,
+    BloomB,
+    LinearLdr,
+    Output
+};
 
 /**
  * One ordered operation and its destination class.
  */
-struct PostProcessStep {
+struct PostProcessStep
+{
     PostProcessStepKind kind;
     PostProcessTarget target;
 };
@@ -36,7 +45,8 @@ struct PostProcessStep {
 /**
  * Bounded ordered pass sequence for one frame.
  */
-struct PostProcessPlan {
+struct PostProcessPlan
+{
     PostProcessStep steps[5];
     uint32_t count;
 };
@@ -44,7 +54,8 @@ struct PostProcessPlan {
 /**
  * Shader-readable states of the reusable bloom and graded-color targets.
  */
-struct PostProcessTargetStates {
+struct PostProcessTargetStates
+{
     bool bloomShaderReadable[2];
     bool linearLdrShaderReadable;
 };
@@ -52,8 +63,9 @@ struct PostProcessTargetStates {
 /**
  * Separates recorded target barriers from target states accepted by queue submission.
  */
-class PostProcessTargetStateTracker {
-public:
+class PostProcessTargetStateTracker
+{
+  public:
     /**
      * Starts with resources in their render-target initial state.
      */
@@ -79,7 +91,7 @@ public:
      */
     void Reset();
 
-private:
+  private:
     PostProcessTargetStates committed_;
     PostProcessTargetStates pending_;
     bool hasPending_;

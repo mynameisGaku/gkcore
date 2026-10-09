@@ -1,7 +1,8 @@
-#include "../src/foundation/Array.h"
+﻿#include "foundation/Array.h"
 
 // Arrayが拒否すべき境界を超える値型。
-struct alignas(64) FFoundationOverAlignedRecord {
+struct alignas(64) FFoundationOverAlignedRecord
+{
     // 拒否対象の型を実体化するための値。
     unsigned char value[64];
 };
@@ -9,6 +10,7 @@ struct alignas(64) FFoundationOverAlignedRecord {
 /**
  * 型の配置だけを参照し、拒否用static_assert以外のcompile failureを避ける。
  */
-int main() {
+int main()
+{
     return sizeof(gk::Array<FFoundationOverAlignedRecord>) == 0;
 }

@@ -3,7 +3,7 @@
 #define GKCORE_MODELANIMATION_H
 
 #include <gkcore.h>
-#include "EHumanoidBone.h"
+#include <gkcore/EHumanoidBone.h>
 
 /**
  * 公開model animation API。
@@ -129,6 +129,27 @@ GKCORE_API int SetModelBoneRole(ModelHandle model, uint32_t bone, EHumanoidBone 
  * 外部データのボーンへ人型の役割を割り当てる。適用済みの対応表は変更しない。
  */
 GKCORE_API int SetAnimationBoneRole(ModelAnimationHandle animation, uint32_t bone, EHumanoidBone role);
+/**
+ * 一般的な人型ボーン名から役割を推定する。手動設定は保ち、曖昧な候補は拒否する。
+ * 認識できるボーンがない場合は-1、成功は0。適用前に呼ぶ。
+ */
+GKCORE_API int AutoMapModelHumanoidBones(ModelHandle model);
+/**
+ * 外部motionの人型ボーン名から役割を推定する。適用済みの対応表は変えない。
+ */
+GKCORE_API int AutoMapAnimationHumanoidBones(ModelAnimationHandle animation);
+/**
+ * 設定したモデルのボーン役割を返す。無効指定・未設定はNone。
+ */
+GKCORE_API EHumanoidBone GetModelBoneRole(ModelHandle model, uint32_t bone);
+/**
+ * 設定した外部motionのボーン役割を返す。無効指定・未設定はNone。
+ */
+GKCORE_API EHumanoidBone GetAnimationBoneRole(ModelAnimationHandle animation, uint32_t bone);
+/**
+ * 適用先ボーンに対応するsource番号を返す。未対応・未再生・無効指定は-1。
+ */
+GKCORE_API int32_t GetModelAnimationSourceBone(ModelHandle model, uint32_t targetBone, uint32_t slot = 0);
 /**
  * 連続した3ボーンのIKを設定する。targetとpoleはモデル空間、weightは0から1。
  * 同じrootへの指定は上書きする。ブレンド後の姿勢へ適用する。

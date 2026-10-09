@@ -6,6 +6,8 @@ include(CMakePackageConfigHelpers)
 
 option(GKCORE_BUILD_TESTS "Build dependency-light development tests" ON)
 option(GKCORE_RUN_BACKEND_SMOKE "Run the Windows Direct3D 12 backend smoke test on the host GPU" OFF)
+option(GKCORE_RENDER_PERFORMANCE_METRICS "Compile development-only render timing instrumentation" OFF)
+option(GKCORE_RUN_INTERACTIVE_TESTS "Run tests that open visible application windows" OFF)
 if(WIN32)
     set(_gkcore_runtime_default ON)
 else()
@@ -43,6 +45,7 @@ set(GKCORE_CORE_SOURCES
     src/image/Image.cpp
     src/image/ImageLoader.cpp
     src/model/Model.cpp
+    src/model/ModelMaterial.cpp
     src/model/ModelLoader.cpp
     src/model/ObjLoader.cpp
     src/model/GlbLoader.cpp
@@ -60,7 +63,9 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/FModelPlayback.cpp
     src/model/animation/ModelAnimationBinding.cpp
     src/model/animation/ModelSnapshot.cpp
+    src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
+    src/model/animation/HumanoidMapping.cpp
     src/text/Text.cpp
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
@@ -68,6 +73,8 @@ set(GKCORE_CORE_SOURCES
     src/effects/Lighting.cpp
     src/effects/Shaders.cpp
     src/render/Geometry.cpp
+    src/render/FModelSkinningRenderer.cpp
+    src/render/FModelSkinningGeometryCache.cpp
     src/render/RectangleGeometry.cpp
     src/render/Shaders.cpp
     src/render/ShaderAbi.cpp
@@ -75,14 +82,19 @@ set(GKCORE_CORE_SOURCES
     src/render/PostProcessPlan.cpp
     src/render/PostEffectPlan.cpp
     src/render/ModelDrawPlan.cpp
+    src/render/ModelTransparency.cpp
     src/render/LightingAbi.cpp
     src/render/WorldGeometry.cpp
     src/render/ModelGeometry.cpp
+    src/render/ModelDrawConstants.cpp
+    src/render/ModelPoseGeometry.cpp
     src/render/CustomShaderPolicy.cpp
     src/render/TextureCachePolicy.cpp
     src/render/TextureMipChain.cpp)
 
 function(gkcore_enable_warnings target)
+    # 自作ソースはmodule-rootから参照し、開発用includeは公開SDKへ伝播させない。
+    target_include_directories(${target} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/third_party" "${CMAKE_CURRENT_SOURCE_DIR}")
     if(MSVC)
         target_compile_options(${target} PRIVATE /W4 /utf-8)
     else()
@@ -111,6 +123,13 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_animation_binding_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_animation_binding_tests)
     add_test(NAME gkcore.model_animation_binding COMMAND gkcore_model_animation_binding_tests)
+    add_executable(gkcore_model_humanoid_mapping_tests tests/model_humanoid_mapping_tests.cpp
+        src/model/animation/HumanoidMapping.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_humanoid_mapping_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_humanoid_mapping_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_humanoid_mapping_tests)
+    add_test(NAME gkcore.model_humanoid_mapping COMMAND gkcore_model_humanoid_mapping_tests)
 
     # Arrayが通常境界を超える型を拒否し、意図した診断で止まることを確認する。
     set(_gkcore_foundation_alignment_compile_options)
@@ -123,6 +142,7 @@ if(GKCORE_BUILD_TESTS)
         COMPILE_DEFINITIONS ${_gkcore_foundation_alignment_compile_options}
         CMAKE_FLAGS
             "-DCMAKE_CXX_STANDARD=17"
+            "-DINCLUDE_DIRECTORIES:STRING=${CMAKE_CURRENT_SOURCE_DIR}/src"
             "-DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY"
         OUTPUT_VARIABLE GKCORE_FOUNDATION_OVERALIGNED_COMPILE_OUTPUT)
     if(GKCORE_FOUNDATION_OVERALIGNED_COMPILE_SUCCEEDED)
@@ -202,6 +222,14 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_draw_plan_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_draw_plan_tests)
     add_test(NAME gkcore.model_draw_plan COMMAND gkcore_model_draw_plan_tests)
+    add_executable(gkcore_model_transparency_tests tests/model_transparency_tests.cpp
+        src/render/ModelTransparency.cpp src/render/WorldGeometry.cpp src/render/PostProcess.cpp
+        src/render/ModelDrawPlan.cpp src/resources/TextureSampler.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_transparency_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_transparency_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_transparency_tests)
+    add_test(NAME gkcore.model_transparency COMMAND gkcore_model_transparency_tests)
     add_executable(gkcore_lighting_tests
         tests/lighting_tests.cpp
         src/effects/Lighting.cpp
@@ -226,6 +254,29 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_geometry_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_geometry_tests)
     add_test(NAME gkcore.model_geometry COMMAND gkcore_model_geometry_tests)
+    add_executable(gkcore_model_draw_constants_tests
+        tests/model_draw_constants_tests.cpp
+        src/render/ModelDrawConstants.cpp
+        src/render/WorldGeometry.cpp
+        src/render/PostProcess.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_model_draw_constants_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_draw_constants_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_draw_constants_tests)
+    add_test(NAME gkcore.model_draw_constants COMMAND gkcore_model_draw_constants_tests)
+    add_executable(gkcore_model_pose_geometry_tests
+        tests/model_pose_geometry_tests.cpp
+        src/render/ModelPoseGeometry.cpp
+        src/foundation/Memory.cpp
+        src/foundation/Array.cpp
+        src/foundation/String.cpp)
+    target_compile_features(gkcore_model_pose_geometry_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_pose_geometry_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_pose_geometry_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_pose_geometry_tests)
+    add_test(NAME gkcore.model_pose_geometry COMMAND gkcore_model_pose_geometry_tests)
     add_test(NAME gkcore.setup_plan
         COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_setup_plan.py)
     add_test(NAME gkcore.dxc_lock
@@ -272,6 +323,12 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_animation_rig_api_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_animation_rig_api_tests)
     add_test(NAME gkcore.model_animation_rig_api COMMAND gkcore_model_animation_rig_api_tests)
+    add_executable(gkcore_model_material_api_tests tests/model_material_api_tests.cpp ${GKCORE_CORE_SOURCES})
+    target_compile_features(gkcore_model_material_api_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_material_api_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_material_api_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_material_api_tests)
+    add_test(NAME gkcore.model_material_api COMMAND gkcore_model_material_api_tests "${CMAKE_CURRENT_BINARY_DIR}/model-material-api-fixtures")
     add_executable(gkcore_keyboard_state_tests tests/keyboard_state_tests.cpp src/platform/FKeyboardState.cpp)
     target_compile_features(gkcore_keyboard_state_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_keyboard_state_tests PRIVATE src)
@@ -309,6 +366,11 @@ if(GKCORE_BUILD_TESTS)
     add_test(NAME gkcore.fbx COMMAND gkcore_fbx_tests)
     get_target_property(_gkcore_animation_loader_sources gkcore_fbx_tests SOURCES)
     list(REMOVE_ITEM _gkcore_animation_loader_sources tests/fbx_tests.cpp)
+    add_executable(gkcore_local_model_inspect tests/local_model_inspect.cpp ${_gkcore_animation_loader_sources})
+    target_compile_features(gkcore_local_model_inspect PRIVATE cxx_std_17)
+    target_compile_definitions(gkcore_local_model_inspect PRIVATE GKCORE_TESTING=1)
+    target_include_directories(gkcore_local_model_inspect PRIVATE include src third_party/ufbx)
+    gkcore_enable_warnings(gkcore_local_model_inspect)
     foreach(_format glb fbx)
         set(_animation_fixture_dir "${CMAKE_CURRENT_BINARY_DIR}/model-${_format}-animation-fixtures")
         if(_format STREQUAL "glb")
@@ -325,6 +387,9 @@ if(GKCORE_BUILD_TESTS)
             DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_animation_script}" ${_animation_fixture_dependencies})
         add_executable(gkcore_model_${_format}_animation_tests tests/model_${_format}_animation_tests.cpp ${_gkcore_animation_loader_sources})
         target_compile_features(gkcore_model_${_format}_animation_tests PRIVATE cxx_std_17)
+        if(_format STREQUAL "fbx")
+            target_compile_definitions(gkcore_model_${_format}_animation_tests PRIVATE GKCORE_TESTING=1)
+        endif()
         target_include_directories(gkcore_model_${_format}_animation_tests PRIVATE include src third_party/ufbx)
         gkcore_enable_warnings(gkcore_model_${_format}_animation_tests)
         add_dependencies(gkcore_model_${_format}_animation_tests gkcore_model_${_format}_animation_fixtures)
@@ -659,6 +724,7 @@ if(GKCORE_BUILD_RUNTIME)
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_sprite.frag"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_model.vert"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_model.frag"
+        "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_model_skinning.comp"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_post.vert"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_bloom_extract.frag"
         "${GKCORE_SHADER_BUILD_DIR}/CompiledShaders/DIRECT3D12/gkcore_bloom_blur.frag"
@@ -745,6 +811,9 @@ if(GKCORE_BUILD_RUNTIME)
         src/render/PostEffectRenderer.cpp
         src/render/CustomShaders.cpp
         src/render/ModelLightingRenderer.cpp
+        src/render/FModelGeometryCache.cpp
+        src/render/FModelSparseMapCache.cpp
+        src/render/ModelLocalGeometry.cpp
         src/render/ShaderReflection.cpp
         src/render/ShaderInterface.cpp
         src/backends/ForgeBackend.cpp)
@@ -764,6 +833,9 @@ if(GKCORE_BUILD_RUNTIME)
         PRIVATE GKCORE_BUILDING_LIBRARY=1 _WINDOWS DIRECT3D12 D3D12_AGILITY_SDK=1 D3D12_AGILITY_SDK_VERSION=715 _HAS_EXCEPTIONS=0)
     target_compile_options(gkcore INTERFACE "$<$<CXX_COMPILER_ID:MSVC>:/utf-8>")
     gkcore_enable_warnings(gkcore)
+    if(GKCORE_RENDER_PERFORMANCE_METRICS)
+        target_compile_definitions(gkcore PRIVATE GKCORE_RENDER_PERFORMANCE_METRICS=1)
+    endif()
     target_link_libraries(gkcore PRIVATE
         Forge::Renderer
         Forge::OS
@@ -778,7 +850,7 @@ if(GKCORE_BUILD_RUNTIME)
     if(GKCORE_BUILD_TESTS AND GKCORE_RUN_BACKEND_SMOKE)
         # 配布DLLには画像取得コードを含めず、同じソースから検査用DLLを別に作る。
         get_target_property(_gkcore_capture_sources gkcore SOURCES)
-        add_library(gkcore_capture_runtime SHARED ${_gkcore_capture_sources} tests/support/FrameCapture.cpp)
+        add_library(gkcore_capture_runtime SHARED ${_gkcore_capture_sources} tests/support/FrameCapture.cpp tests/support/FModelSkinningReadback.cpp)
         foreach(_capture_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES)
             get_target_property(_capture_value gkcore ${_capture_property})
             set_property(TARGET gkcore_capture_runtime PROPERTY ${_capture_property} "${_capture_value}")
@@ -811,6 +883,26 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_model_lighting examples/model_lighting.cpp)
     target_compile_features(gkcore_model_lighting PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_lighting PRIVATE gkcore::gkcore)
+    add_executable(gkcore_model_viewer examples/model_viewer.cpp)
+    target_compile_features(gkcore_model_viewer PRIVATE cxx_std_17)
+    target_link_libraries(gkcore_model_viewer PRIVATE gkcore::gkcore)
+    gkcore_enable_warnings(gkcore_model_viewer)
+
+    add_executable(gkcore_model_benchmark examples/model_viewer.cpp)
+    target_compile_features(gkcore_model_benchmark PRIVATE cxx_std_17)
+    target_compile_definitions(gkcore_model_benchmark PRIVATE GKCORE_MODEL_BENCHMARK=1)
+    if(TARGET gkcore_capture_runtime)
+        target_link_libraries(gkcore_model_benchmark PRIVATE gkcore_capture_runtime)
+    else()
+        target_link_libraries(gkcore_model_benchmark PRIVATE gkcore::gkcore)
+    endif()
+    gkcore_enable_warnings(gkcore_model_benchmark)
+
+    add_executable(gkcore_model_benchmark_visible examples/model_viewer.cpp)
+    target_compile_features(gkcore_model_benchmark_visible PRIVATE cxx_std_17)
+    target_compile_definitions(gkcore_model_benchmark_visible PRIVATE GKCORE_MODEL_BENCHMARK=1)
+    target_link_libraries(gkcore_model_benchmark_visible PRIVATE gkcore::gkcore)
+    gkcore_enable_warnings(gkcore_model_benchmark_visible)
     gkcore_enable_warnings(gkcore_model_lighting)
     add_custom_command(TARGET gkcore_model_lighting POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -915,6 +1007,42 @@ if(GKCORE_BUILD_RUNTIME)
                     --fbx-fixture-dir "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures"
                     --output-dir "${CMAKE_CURRENT_BINARY_DIR}/model-animation-captures/$<CONFIG>")
             set_tests_properties(gkcore.model_animation_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
+            add_executable(gkcore_model_gpu_skinning_error_tests tests/model_gpu_skinning_error_tests.cpp)
+            target_compile_features(gkcore_model_gpu_skinning_error_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_gpu_skinning_error_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_gpu_skinning_error_tests)
+            add_dependencies(gkcore_model_gpu_skinning_error_tests gkcore_model_fbx_animation_fixtures)
+            add_test(NAME gkcore.model_gpu_skinning_error
+                COMMAND gkcore_model_gpu_skinning_error_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures/fbx-animation-gpu-degenerate-triangle.fbx")
+            set_tests_properties(gkcore.model_gpu_skinning_error PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=0")
+            add_test(NAME gkcore.model_gpu_skinning_overflow
+                COMMAND gkcore_model_gpu_skinning_error_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures/fbx-animation-gpu-overflow-triangle.fbx")
+            set_tests_properties(gkcore.model_gpu_skinning_overflow PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=0")
+            add_test(NAME gkcore.model_gpu_skinning_large_finite
+                COMMAND gkcore_model_gpu_skinning_error_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures/fbx-animation-gpu-large-finite-triangle.fbx" --expect-success)
+            set_tests_properties(gkcore.model_gpu_skinning_large_finite PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=0")
+            add_executable(gkcore_model_gpu_skinning_multi_tests tests/model_gpu_skinning_multi_tests.cpp)
+            target_compile_features(gkcore_model_gpu_skinning_multi_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_gpu_skinning_multi_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_gpu_skinning_multi_tests)
+            add_dependencies(gkcore_model_gpu_skinning_multi_tests gkcore_model_fbx_animation_fixtures)
+            add_test(NAME gkcore.model_gpu_skinning_multi
+                COMMAND gkcore_model_gpu_skinning_multi_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures")
+            set_tests_properties(gkcore.model_gpu_skinning_multi PROPERTIES LABELS "windows;gpu;fp64" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=1")
+            add_executable(gkcore_model_blend_capture_tests tests/model_blend_capture_tests.cpp)
+            add_executable(gkcore_real_model_capture_tests tests/real_model_capture_tests.cpp)
+            target_compile_features(gkcore_real_model_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_real_model_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_real_model_capture_tests)
+            target_compile_features(gkcore_model_blend_capture_tests PRIVATE cxx_std_17)
+            target_link_libraries(gkcore_model_blend_capture_tests PRIVATE gkcore_capture_runtime)
+            gkcore_enable_warnings(gkcore_model_blend_capture_tests)
+            add_test(NAME gkcore.model_blend_capture
+                COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/model_blend_capture_tests.py
+                    --executable $<TARGET_FILE:gkcore_model_blend_capture_tests>
+                    --fixture-dir "${CMAKE_CURRENT_BINARY_DIR}/model-blend-fixtures"
+                    --output-dir "${CMAKE_CURRENT_BINARY_DIR}/model-blend-captures/$<CONFIG>")
+            set_tests_properties(gkcore.model_blend_capture PROPERTIES LABELS "windows;gpu" TIMEOUT 240 RUN_SERIAL TRUE)
             add_executable(gkcore_model_material_capture_tests tests/model_material_capture_tests.cpp)
             target_compile_features(gkcore_model_material_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_model_material_capture_tests PRIVATE gkcore_capture_runtime)
@@ -955,8 +1083,11 @@ if(GKCORE_BUILD_RUNTIME)
             target_link_libraries(gkcore_model_generated_normal_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_model_generated_normal_capture_tests)
             add_dependencies(gkcore_model_generated_normal_capture_tests gkcore_model_generated_normal_fixtures)
-            add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
-            set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu" TIMEOUT 60 RUN_SERIAL TRUE)
+            # 表示を伴う検査は、非表示の自動captureと分けて明示的に選ぶ。
+            if(GKCORE_RUN_INTERACTIVE_TESTS)
+                add_test(NAME gkcore.backend_smoke COMMAND gkcore_backend_smoke)
+                set_tests_properties(gkcore.backend_smoke PROPERTIES LABELS "windows;gpu;interactive" TIMEOUT 60 RUN_SERIAL TRUE)
+            endif()
             add_test(NAME gkcore.render_capture
                 COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/render_capture_tests.py
                     --executable $<TARGET_FILE:gkcore_render_capture_tests>
@@ -1132,6 +1263,27 @@ if(GKCORE_BUILD_RUNTIME)
     if(TARGET gkcore_model_animation_capture_tests)
         add_dependencies(gkcore_model_animation_capture_tests gkcore_stage_runtime_payload)
     endif()
+    if(TARGET gkcore_model_blend_capture_tests)
+        add_dependencies(gkcore_model_blend_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_gpu_skinning_error_tests)
+        add_dependencies(gkcore_model_gpu_skinning_error_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_gpu_skinning_multi_tests)
+        add_dependencies(gkcore_model_gpu_skinning_multi_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_real_model_capture_tests)
+        add_dependencies(gkcore_real_model_capture_tests gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_viewer)
+        add_dependencies(gkcore_model_viewer gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_benchmark)
+        add_dependencies(gkcore_model_benchmark gkcore_stage_runtime_payload)
+    endif()
+    if(TARGET gkcore_model_benchmark_visible)
+        add_dependencies(gkcore_model_benchmark_visible gkcore_stage_runtime_payload)
+    endif()
 
     install(TARGETS gkcore EXPORT gkcoreTargets
         RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime
@@ -1141,6 +1293,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/EHumanoidBone.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelMaterial.h include/gkcore/FModelMaterialSettings.h include/gkcore/EModelAlphaMode.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES docs/THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/gkcore COMPONENT Runtime)
     install(FILES ${_gkcore_runtime_dlls} DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT Runtime)
@@ -1187,7 +1340,7 @@ if(GKCORE_BUILD_RUNTIME)
 
     if(GKCORE_BUILD_TESTS)
         set(_gkcore_package_gpu_args)
-        if(GKCORE_RUN_BACKEND_SMOKE)
+        if(GKCORE_RUN_BACKEND_SMOKE AND GKCORE_RUN_INTERACTIVE_TESTS)
             list(APPEND _gkcore_package_gpu_args --gpu-smoke)
         endif()
         add_test(NAME gkcore.package

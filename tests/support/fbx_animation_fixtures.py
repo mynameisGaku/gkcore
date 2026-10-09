@@ -108,8 +108,8 @@ def make_node_translation(source, destination):
     destination.write_text(text, encoding="utf-8")
 
 
-def make_skin_translation(source, destination):
-    """1つのbone clusterとbone移動clipを持つ簡単なskinを作る。"""
+def make_skin_translation(source, destination, empty_cluster=False, empty_only=False):
+    """bone移動clipへ有効または空のskin clusterを組み合わせる。"""
     text = source.read_text(encoding="utf-8-sig")
     text = text.replace('P: "Lcl Translation", "Lcl Translation", "", "A", 3, 4, 5',
                         'P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0')
@@ -136,6 +136,18 @@ def make_skin_translation(source, destination):
         TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
     }
 '''
+    if empty_only:
+        skin_objects = skin_objects.replace("        Indexes: *4 { a: 0, 1, 2, 3 }\n", "")
+        skin_objects = skin_objects.replace("        Weights: *4 { a: 1, 1, 1, 1 }\n", "")
+    elif empty_cluster:
+        skin_objects += '''
+    Deformer: 5003, "SubDeformer::UnusedBone", "Cluster" {
+        Version: 100
+        UserData: "", ""
+        Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+        TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+    }
+'''
     text = text[:objects_end] + skin_objects + text[objects_end:]
     connections_end = text.rfind("\n}")
     skin_connections = '''
@@ -144,8 +156,291 @@ def make_skin_translation(source, destination):
     C: "OO", 1004, 5002
     C: "OO", 1004, 1003
 '''
+    if empty_cluster:
+        skin_connections += '''
+    C: "OO", 5003, 5001
+    C: "OO", 1004, 5003
+'''
     text = text[:connections_end] + skin_connections + text[connections_end:]
     text = add_translation_clip(text, 1004, "SkinBoneMove", "SkinBoneTranslation", 9101, 0)
+    text = remove_external_material_images(text)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+
+
+def make_skin_transformed(source, destination):
+    """親とgeometry変換、複数clusterの線形skinを組み合わせる。"""
+    make_skin_translation(source, destination)
+    text = destination.read_text(encoding="utf-8")
+    parent_start = text.index('Model: 1003, "Model::Parent"')
+    parent_end = text.index("\n    }", parent_start)
+    parent = text[parent_start:parent_end]
+    parent = parent.replace(
+        'Properties70: { P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0 }',
+        '''Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0.5, -0.25, 1
+            P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 35
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 2, 0.75, 1.5
+        }''')
+    text = text[:parent_start] + parent + text[parent_end:]
+
+    quad_start = text.index('Model: 1002, "Model::Quad"')
+    quad_end = text.index("\n    }", quad_start)
+    quad = text[quad_start:quad_end]
+    quad = quad.replace(
+        'P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1',
+        '''P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+            P: "GeometricTranslation", "Vector3D", "Vector", "A", 0.25, -0.1, 0
+            P: "GeometricRotation", "Vector3D", "Vector", "A", 0, 0, 15
+            P: "GeometricScaling", "Vector3D", "Vector", "A", 1, 1, 1''')
+    text = text[:quad_start] + quad + text[quad_end:]
+
+    first_weights = 'Weights: *4 { a: 1, 1, 1, 1 }'
+    first_transform = 'Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }'
+    text = text.replace(first_weights, 'Weights: *4 { a: 0.25, 0.5, 0.75, 0.4 }', 1)
+    text = text.replace(first_transform,
+                        'Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0.2, -0.1, 0.05, 1 }', 1)
+
+    objects_end = text.index('\n    AnimationStack: 9101')
+    extra_objects = '''
+    Model: 1005, "Model::SkinBoneSecond", "LimbNode" {
+        Version: 232
+        Properties70: { P: "Lcl Translation", "Lcl Translation", "", "A", -0.5, 0.25, 0 }
+    }
+    Deformer: 5003, "SubDeformer::QuadBoneSecond", "Cluster" {
+        Version: 100
+        UserData: "", ""
+        Indexes: *4 { a: 0, 1, 2, 3 }
+        Weights: *4 { a: 0.75, 0.5, 0.25, 0.6 }
+        Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.15, 0.08, 0, 1 }
+        TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -0.5, 0.25, 1, 1 }
+    }
+'''
+    text = text[:objects_end] + extra_objects + text[objects_end:]
+    connections_end = text.rfind("\n}")
+    text = text[:connections_end] + '''
+    C: "OO", 5003, 5001
+    C: "OO", 1005, 5003
+    C: "OO", 1005, 1003
+''' + text[connections_end:]
+    destination.write_text(text, encoding="utf-8")
+
+
+def make_skin_zero_weight(source, destination):
+    """非identity変換とanimationを保ち、最後の頂点だけskinから外す。"""
+    make_skin_transformed(source, destination)
+    text = destination.read_text(encoding="utf-8")
+    text = text.replace("Indexes: *4 { a: 0, 1, 2, 3 }", "Indexes: *3 { a: 0, 1, 2 }")
+    text = text.replace("Weights: *4 { a: 0.25, 0.5, 0.75, 0.4 }", "Weights: *3 { a: 0.25, 0.5, 0.75 }")
+    text = text.replace("Weights: *4 { a: 0.75, 0.5, 0.25, 0.6 }", "Weights: *3 { a: 0.75, 0.5, 0.25 }")
+    destination.write_text(text, encoding="utf-8")
+
+
+def make_gpu_degenerate_triangle(source, destination):
+    """二本の正常な骨を使い、中点で三角形の二頂点を重ねる。"""
+    text = source.read_text(encoding="utf-8-sig")
+    def replace_once(original, replacement):
+        nonlocal text
+        if text.count(original) != 1:
+            raise ValueError(f"GPU skinning fixture source did not contain one expected value: {original}")
+        text = text.replace(original, replacement, 1)
+
+    def replace_curve_key(curve_id, original, replacement):
+        nonlocal text
+        marker = f"AnimationCurve: {curve_id},"
+        start = text.index(marker)
+        end = text.find("\n    AnimationCurve:", start + len(marker))
+        if end < 0:
+            end = text.index("\n}", start)
+        curve = text[start:end]
+        if curve.count(original) != 1:
+            raise ValueError(f"GPU skinning fixture curve {curve_id} did not contain one expected key")
+        text = text[:start] + curve.replace(original, replacement, 1) + text[end:]
+
+    replace_once(
+        "Vertices: *12 { a: 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 }",
+        "Vertices: *9 { a: 0, 0, 0, 1, 0, 0, 0, 1, 0 }")
+    replace_once(
+        "PolygonVertexIndex: *6 { a: 0, 1, -3, 0, 2, -4 }",
+        "PolygonVertexIndex: *3 { a: 0, 1, -3 }")
+    replace_once(
+        "Normals: *18 { a: 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1 }",
+        "Normals: *9 { a: 0, 0, 1, 0, 0, 1, 0, 0, 1 }")
+    replace_once(
+        "UV: *12 { a: 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1 }",
+        "UV: *6 { a: 0, 0, 1, 0, 0, 1 }")
+    replace_once("Materials: *2 { a: 0, 1 }", "Materials: *1 { a: 0 }")
+    replace_once('P: "Lcl Translation", "Lcl Translation", "", "A", 3, 4, 5',
+                 'P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0')
+    replace_once('P: "Lcl Scaling", "Lcl Scaling", "", "A", 2, 1, 1',
+                 'P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1')
+    replace_once('P: "Lcl Translation", "Lcl Translation", "", "A", 10, 0, 0',
+                 'P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0')
+    objects_end = text.index("\n}\nConnections: {")
+    objects = '''
+    Deformer: 5001, "Deformer::TriangleSkin", "Skin" {
+        Version: 101
+        Link_DeformAcuracy: 50
+    }
+    Model: 1004, "Model::CollapseBone", "LimbNode" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+        }
+    }
+    Model: 1005, "Model::FixedBone", "LimbNode" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+        }
+    }
+    Deformer: 5002, "SubDeformer::CollapseCluster", "Cluster" {
+        Version: 100
+        UserData: "", ""
+        Indexes: *1 { a: 1 }
+        Weights: *1 { a: 1 }
+        Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+        TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+    }
+    Deformer: 5003, "SubDeformer::FixedCluster", "Cluster" {
+        Version: 100
+        UserData: "", ""
+        Indexes: *2 { a: 0, 2 }
+        Weights: *2 { a: 1, 1 }
+        Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+        TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+    }
+'''
+    text = text[:objects_end] + objects + text[objects_end:]
+    connections_end = text.rfind("\n}")
+    text = text[:connections_end] + '''
+    C: "OO", 5001, 1001
+    C: "OO", 5002, 5001
+    C: "OO", 1004, 5002
+    C: "OO", 1004, 1003
+    C: "OO", 5003, 5001
+    C: "OO", 1005, 5003
+    C: "OO", 1005, 1003
+''' + text[connections_end:]
+    text = add_translation_clip(text, 1004, "CollapseAtHalf", "CollapseTranslation", 9301, 0)
+    # 1秒後に-2移動するため、clip時刻0.5秒で頂点1が頂点0へ重なる。
+    replace_curve_key(9304, "KeyValueFloat: *2 { a: 0, 0 }", "KeyValueFloat: *2 { a: 0, -2 }")
+    replace_curve_key(9305, "KeyValueFloat: *2 { a: 0, 4 }", "KeyValueFloat: *2 { a: 0, 0 }")
+    text = remove_external_material_images(text)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+
+
+def make_gpu_overflow_triangle(source, destination, coordinate="1e22"):
+    """有限な大座標とbone scaleの積でfloat範囲を超える三角形を作る。"""
+    text = source.read_text(encoding="utf-8-sig")
+
+    def replace_once(original, replacement):
+        nonlocal text
+        if text.count(original) != 1:
+            raise ValueError(f"GPU overflow fixture source did not contain one expected value: {original}")
+        text = text.replace(original, replacement, 1)
+
+    replace_once(
+        "Vertices: *12 { a: 0, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0 }",
+        f"Vertices: *9 {{ a: 0, 0, 0, {coordinate}, 0, 0, 0, {coordinate}, 0 }}")
+    replace_once(
+        "PolygonVertexIndex: *6 { a: 0, 1, -3, 0, 2, -4 }",
+        "PolygonVertexIndex: *3 { a: 0, 1, -3 }")
+    replace_once(
+        "Normals: *18 { a: 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1 }",
+        "Normals: *9 { a: 0, 0, 1, 0, 0, 1, 0, 0, 1 }")
+    replace_once(
+        "UV: *12 { a: 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1 }",
+        "UV: *6 { a: 0, 0, 1, 0, 0, 1 }")
+    replace_once("Materials: *2 { a: 0, 1 }", "Materials: *1 { a: 0 }")
+    replace_once('P: "Lcl Translation", "Lcl Translation", "", "A", 3, 4, 5',
+                 'P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0')
+    replace_once('P: "Lcl Scaling", "Lcl Scaling", "", "A", 2, 1, 1',
+                 'P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1')
+    replace_once('P: "Lcl Translation", "Lcl Translation", "", "A", 10, 0, 0',
+                 'P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0')
+    objects_end = text.index("\n}\nConnections: {")
+    objects = '''
+    Deformer: 5101, "Deformer::OverflowSkin", "Skin" {
+        Version: 101
+        Link_DeformAcuracy: 50
+    }
+    Model: 1104, "Model::OverflowBone", "LimbNode" {
+        Version: 232
+        Properties70: {
+            P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0
+            P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+        }
+    }
+    Deformer: 5102, "SubDeformer::OverflowCluster", "Cluster" {
+        Version: 100
+        UserData: "", ""
+        Indexes: *3 { a: 0, 1, 2 }
+        Weights: *3 { a: 1, 1, 1 }
+        Transform: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+        TransformLink: *16 { a: 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+    }
+    AnimationStack: 9401, "AnimStack::OverflowAtHalf", "" {
+        Properties70: {
+            P: "LocalStart", "KTime", "Time", "", 0
+            P: "LocalStop", "KTime", "Time", "", 46186158000
+        }
+    }
+    AnimationLayer: 9402, "AnimLayer::OverflowAtHalfLayer", "" {
+        Version: 100
+    }
+    AnimationCurveNode: 9403, "AnimCurveNode::OverflowScale", "" {
+        Properties70: {
+            P: "d|X", "Number", "", "A", 1
+            P: "d|Y", "Number", "", "A", 1
+            P: "d|Z", "Number", "", "A", 1
+        }
+    }
+    AnimationCurve: 9404, "AnimCurve::OverflowScaleX", "" {
+        Default: 1
+        KeyVer: 4008
+        KeyTime: *2 { a: 0, 46186158000 }
+        KeyValueFloat: *2 { a: 1, 1e20 }
+        KeyAttrFlags: *2 { a: 4, 4 }
+        KeyAttrDataFloat: *8 { a: 0, 0, 0, 0, 0, 0, 0, 0 }
+        KeyAttrRefCount: *2 { a: 1, 1 }
+    }
+    AnimationCurve: 9405, "AnimCurve::OverflowScaleY", "" {
+        Default: 1
+        KeyVer: 4008
+        KeyTime: *2 { a: 0, 46186158000 }
+        KeyValueFloat: *2 { a: 1, 1e20 }
+        KeyAttrFlags: *2 { a: 4, 4 }
+        KeyAttrDataFloat: *8 { a: 0, 0, 0, 0, 0, 0, 0, 0 }
+        KeyAttrRefCount: *2 { a: 1, 1 }
+    }
+    AnimationCurve: 9406, "AnimCurve::OverflowScaleZ", "" {
+        Default: 1
+        KeyVer: 4008
+        KeyTime: *2 { a: 0, 46186158000 }
+        KeyValueFloat: *2 { a: 1, 1e20 }
+        KeyAttrFlags: *2 { a: 4, 4 }
+        KeyAttrDataFloat: *8 { a: 0, 0, 0, 0, 0, 0, 0, 0 }
+        KeyAttrRefCount: *2 { a: 1, 1 }
+    }
+'''
+    text = text[:objects_end] + objects + text[objects_end:]
+    connections_end = text.rfind("\n}")
+    text = text[:connections_end] + '''
+    C: "OO", 5101, 1001
+    C: "OO", 5102, 5101
+    C: "OO", 1104, 5102
+    C: "OO", 1104, 1003
+    C: "OO", 9402, 9401
+    C: "OO", 9403, 9402
+    C: "OP", 9403, 1104, "Lcl Scaling"
+    C: "OP", 9404, 9403, "d|X"
+    C: "OP", 9405, 9403, "d|Y"
+    C: "OP", 9406, 9403, "d|Z"
+''' + text[connections_end:]
     text = remove_external_material_images(text)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(text, encoding="utf-8")
@@ -219,6 +514,23 @@ def main():
                           args.output_dir / "fbx-animation-node-translation.fbx")
     make_skin_translation(args.source_model,
                           args.output_dir / "fbx-animation-skin-translation.fbx")
+    make_skin_transformed(args.source_model,
+                          args.output_dir / "fbx-animation-skin-transformed.fbx")
+    make_skin_zero_weight(args.source_model,
+                          args.output_dir / "fbx-animation-skin-zero-weight.fbx")
+    make_gpu_degenerate_triangle(args.source_model,
+                                 args.output_dir / "fbx-animation-gpu-degenerate-triangle.fbx")
+    make_gpu_overflow_triangle(args.source_model,
+                               args.output_dir / "fbx-animation-gpu-overflow-triangle.fbx")
+    make_gpu_overflow_triangle(args.source_model,
+                               args.output_dir / "fbx-animation-gpu-large-finite-triangle.fbx",
+                               "1e20")
+    make_skin_translation(args.source_model,
+                          args.output_dir / "fbx-animation-skin-empty-cluster.fbx",
+                          empty_cluster=True)
+    make_skin_translation(args.source_model,
+                          args.output_dir / "fbx-animation-skin-empty-only.fbx",
+                          empty_only=True)
     make_morph_animation(args.source_model,
                          args.output_dir / "fbx-animation-morph-weight.fbx")
     make_morph_animation(args.source_model,

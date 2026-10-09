@@ -2,11 +2,11 @@
 #ifndef GKCORE_MODEL_FBXGEOMETRY_H
 #define GKCORE_MODEL_FBXGEOMETRY_H
 
-#include "Model.h"
-#include "FbxMaterial.h"
-#include "animation/FbxGeometrySegment.h"
-#include "../../third_party/ufbx/ufbx.h"
-#include "../foundation/String.h"
+#include "model/Model.h"
+#include "model/FbxMaterial.h"
+#include "model/animation/FbxGeometrySegment.h"
+#include <ufbx/ufbx.h>
+#include "foundation/String.h"
 #include <stdint.h>
 
 /**

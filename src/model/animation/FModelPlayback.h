@@ -2,8 +2,8 @@
 #ifndef GKCORE_MODEL_ANIMATION_FMODELPLAYBACK_H
 #define GKCORE_MODEL_ANIMATION_FMODELPLAYBACK_H
 
-#include "FModelClipState.h"
-#include "FModelIkCommand.h"
+#include "model/animation/FModelClipState.h"
+#include "model/animation/FModelIkCommand.h"
 
 /**
  * model animationの内部状態型。

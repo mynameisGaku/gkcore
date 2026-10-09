@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "../src/render/TextureMipChain.h"
-#include "../src/foundation/Memory.h"
+#include "render/TextureMipChain.h"
+#include "foundation/Memory.h"
 
 #include <stdio.h>
 #include <string.h>

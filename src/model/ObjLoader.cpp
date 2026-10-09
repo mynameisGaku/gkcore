@@ -1,4 +1,4 @@
-﻿#include "ObjLoader.h"
+﻿#include "model/ObjLoader.h"
 #include <math.h>
 #include <errno.h>
 #include <limits.h>

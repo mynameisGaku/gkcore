@@ -4,11 +4,11 @@
 
 #if defined(_WIN32) && defined(DIRECT3D12)
 
-#include "../resources/Resources.h"
-#include "../resources/TextureSampler.h"
-#include "ETextureColorSpace.h"
-#include "TextureCachePolicy.h"
-#include "TextureMipChain.h"
+#include "resources/Resources.h"
+#include "resources/TextureSampler.h"
+#include "render/ETextureColorSpace.h"
+#include "render/TextureCachePolicy.h"
+#include "render/TextureMipChain.h"
 
 #include <Graphics/Interfaces/IGraphics.h>
 #include <Resources/ResourceLoader/Interfaces/IResourceLoader.h>

@@ -1,0 +1,179 @@
+﻿STRUCT(ModelSkinningConstants)
+{
+    DATA(uint4, Ranges0, None);
+    DATA(uint4, Ranges1, None);
+    DATA(uint4, Ranges2, None);
+    DATA(uint4, Ranges3, None);
+    DATA(uint4, Ranges4, None);
+    DATA(uint, Phase, None);
+};
+
+#include "gkcore_model_skinning.srt.h"
+
+ROOT_SIGNATURE(ComputeRootSignature)
+
+bool IsFiniteSkinDouble(double value)
+{
+    uint lowBits = 0;
+    uint highBits = 0;
+    asuint(value, lowBits, highBits);
+    return (highBits & 0x7ff00000u) != 0x7ff00000u;
+}
+
+bool IsFiniteSkinDouble3(double3 value)
+{
+    return IsFiniteSkinDouble(value.x) && IsFiniteSkinDouble(value.y) && IsFiniteSkinDouble(value.z);
+}
+
+double4 ReadSkinMatrixRow(uint matrixBase, uint row)
+{
+    uint4 firstPair = gSkinMatrices[matrixBase + row * 2];
+    uint4 secondPair = gSkinMatrices[matrixBase + row * 2 + 1];
+    return double4(asdouble(firstPair.x, firstPair.y), asdouble(firstPair.z, firstPair.w), asdouble(secondPair.x, secondPair.y), asdouble(secondPair.z, secondPair.w));
+}
+
+double3 ReadSkinPosition(uint positionBase)
+{
+    uint4 firstPair = gSkinRecords[positionBase];
+    uint4 secondPair = gSkinRecords[positionBase + 1];
+    return double3(asdouble(firstPair.x, firstPair.y), asdouble(firstPair.z, firstPair.w), asdouble(secondPair.x, secondPair.y));
+}
+
+double3 TransformSkinPosition(uint matrixBase, double3 position)
+{
+    double4 source = double4(position, 1.0);
+    double4 row0 = ReadSkinMatrixRow(matrixBase, 0);
+    double4 row1 = ReadSkinMatrixRow(matrixBase, 1);
+    double4 row2 = ReadSkinMatrixRow(matrixBase, 2);
+    return double3(source.x * row0.x + source.y * row0.y + source.z * row0.z + row0.w, source.x * row1.x + source.y * row1.y + source.z * row1.z + row1.w, source.x * row2.x + source.y * row2.y + source.z * row2.z + row2.w);
+}
+
+NUM_THREADS(64, 1, 1)
+void CS_MAIN(SV_DispatchThreadID(uint3) dispatchThreadID)
+{
+    INIT_MAIN;
+    uint index = dispatchThreadID.x;
+    uint4 ranges0 = gSkinConstants.Ranges0;
+    uint4 ranges1 = gSkinConstants.Ranges1;
+    uint4 ranges2 = gSkinConstants.Ranges2;
+    uint4 ranges3 = gSkinConstants.Ranges3;
+    uint4 ranges4 = gSkinConstants.Ranges4;
+    uint phase = gSkinConstants.Phase;
+    if (phase == 0)
+    {
+        uint positionCount = ranges0.y;
+        if (index >= positionCount || index >= ranges0.w || index >= ranges4.y)
+            RETURN();
+        double3 sourcePosition = ReadSkinPosition(ranges0.x + index * 2);
+        uint2 influenceRange = gSkinRecords[ranges0.z + index].xy;
+        double3 skinned = double3(0.0, 0.0, 0.0);
+        if (influenceRange.x <= ranges1.y && influenceRange.y <= ranges1.y - influenceRange.x)
+        {
+            for (uint influenceIndex = 0; influenceIndex < influenceRange.y; ++influenceIndex)
+            {
+                uint4 influence = gSkinRecords[ranges1.x + influenceRange.x + influenceIndex];
+                if (influence.x >= ranges1.w || influence.x > (0xffffffffu - ranges1.z) / 6)
+                    continue;
+                uint matrixBase = ranges1.z + influence.x * 6;
+                if (matrixBase > 0xffffffffu - 5 || influence.x > ranges1.w - 1)
+                    continue;
+                double weight = asdouble(influence.y, influence.z);
+                skinned += TransformSkinPosition(matrixBase, sourcePosition) * weight;
+            }
+        }
+        uint outputPosition = ranges4.x / 3 + index;
+        float3 drawPosition = float3(skinned.x, skinned.y, skinned.z);
+        if (!IsFiniteSkinDouble3(skinned) || !all(isfinite(drawPosition)))
+            InterlockedOr(gSkinErrors[0], 1u);
+        gSkinPrecisePositions[outputPosition] = double4(skinned, 1.0);
+        gSkinOutput[ranges4.x + index * 3] = float4(drawPosition, 1.0);
+    }
+    else if (phase == 1)
+    {
+        if (index >= ranges2.y)
+            RETURN();
+        uint2 face = gSkinRecords[ranges2.x + index].xy;
+        double3 faceNormal = double3(0.0, 0.0, 0.0);
+        if (face.y >= 3 && face.x <= ranges2.w && face.y <= ranges2.w - face.x)
+        {
+            uint ia = gSkinRecords[ranges2.z + face.x].x;
+            uint ib = gSkinRecords[ranges2.z + face.x + 1].x;
+            uint ic = gSkinRecords[ranges2.z + face.x + 2].x;
+            if (ia < ranges0.y && ib < ranges0.y && ic < ranges0.y)
+            {
+                double3 a = gSkinPrecisePositions[ranges4.x / 3 + ia].xyz;
+                double3 b = gSkinPrecisePositions[ranges4.x / 3 + ib].xyz;
+                double3 c = gSkinPrecisePositions[ranges4.x / 3 + ic].xyz;
+                if (face.y == 3)
+                {
+                    double3 ab = b - a;
+                    double3 ac = c - a;
+                    faceNormal = double3(ab.y * ac.z - ab.z * ac.y, ab.z * ac.x - ab.x * ac.z, ab.x * ac.y - ab.y * ac.x);
+                }
+                else if (face.y == 4)
+                {
+                    uint id = gSkinRecords[ranges2.z + face.x + 3].x;
+                    if (id < ranges0.y)
+                    {
+                        double3 d = gSkinPrecisePositions[ranges4.x / 3 + id].xyz;
+                        double3 ac = c - a;
+                        double3 db = d - b;
+                        faceNormal = double3(ac.y * db.z - ac.z * db.y, ac.z * db.x - ac.x * db.z, ac.x * db.y - ac.y * db.x);
+                    }
+                }
+                else
+                {
+                    faceNormal = double3(0.0, 0.0, 0.0);
+                    for (uint corner = 0; corner < face.y; ++corner)
+                    {
+                        uint current = gSkinRecords[ranges2.z + face.x + corner].x;
+                        uint next = gSkinRecords[ranges2.z + face.x + ((corner + 1) % face.y)].x;
+                        if (current >= ranges0.y || next >= ranges0.y)
+                        {
+                            faceNormal = double3(0.0, 0.0, 0.0);
+                            break;
+                        }
+                        double3 p = gSkinPrecisePositions[ranges4.x / 3 + current].xyz;
+                        double3 q = gSkinPrecisePositions[ranges4.x / 3 + next].xyz;
+                        faceNormal.x += (p.y - q.y) * (p.z + q.z);
+                        faceNormal.y += (p.z - q.z) * (p.x + q.x);
+                        faceNormal.z += (p.x - q.x) * (p.y + q.y);
+                    }
+                }
+            }
+        }
+        if (!IsFiniteSkinDouble3(faceNormal))
+            InterlockedOr(gSkinErrors[0], 2u);
+        gSkinFaceNormals[index] = double4(faceNormal, 0.0);
+    }
+    else
+    {
+        uint groupCount = ranges4.w;
+        if (index >= groupCount || index >= ranges3.y)
+            RETURN();
+        uint2 incidenceRange = gSkinRecords[ranges3.x + index].xy;
+        uint groupReferenced = gSkinRecords[ranges3.x + index].z;
+        double3 sum = double3(0.0, 0.0, 0.0);
+        if (incidenceRange.x <= ranges3.w && incidenceRange.y <= ranges3.w - incidenceRange.x)
+        {
+            for (uint incidence = 0; incidence < incidenceRange.y; ++incidence)
+            {
+                uint faceIndex = gSkinRecords[ranges3.z + incidenceRange.x + incidence].x;
+                if (faceIndex < ranges2.y)
+                    sum += gSkinFaceNormals[faceIndex].xyz;
+            }
+        }
+        double largest = max(abs(sum.x), max(abs(sum.y), abs(sum.z)));
+        double3 normal = double3(0.0, 0.0, 0.0);
+        if (IsFiniteSkinDouble3(sum) && largest > 0.0 && IsFiniteSkinDouble(largest))
+        {
+            double3 scaled = sum / largest;
+            double scaledLengthSquared = scaled.x * scaled.x + scaled.y * scaled.y + scaled.z * scaled.z;
+            if (scaledLengthSquared > 0.0 && IsFiniteSkinDouble(scaledLengthSquared))
+                normal = scaled / sqrt(scaledLengthSquared);
+        }
+        if (groupReferenced != 0 && (!IsFiniteSkinDouble3(sum) || largest <= 0.0 || !IsFiniteSkinDouble3(normal)))
+            InterlockedOr(gSkinErrors[0], 4u);
+        gSkinOutput[ranges4.z + index * 3] = float4((float)normal.x, (float)normal.y, (float)normal.z, 0.0);
+    }
+}

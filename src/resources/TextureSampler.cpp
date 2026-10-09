@@ -1,4 +1,4 @@
-﻿#include "TextureSampler.h"
+﻿#include "resources/TextureSampler.h"
 
 /**
  * texture samplerの小さな値検査とindex計算。

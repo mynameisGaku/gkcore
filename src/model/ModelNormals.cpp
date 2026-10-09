@@ -1,5 +1,5 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#include "ModelNormals.h"
+#include "model/ModelNormals.h"
 
 #include <float.h>
 #include <math.h>

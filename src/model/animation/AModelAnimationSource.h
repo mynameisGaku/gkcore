@@ -2,10 +2,13 @@
 #ifndef GKCORE_MODEL_ANIMATION_AMODELANIMATIONSOURCE_H
 #define GKCORE_MODEL_ANIMATION_AMODELANIMATIONSOURCE_H
 
-#include "EModelAnimationFormat.h"
-#include "FModelPose.h"
-#include "FModelSkeleton.h"
-#include "../../resources/Resources.h"
+#include "model/animation/EModelAnimationFormat.h"
+#include "model/animation/FModelPose.h"
+#include "model/animation/FModelGpuSkinningGeometry.h"
+#include "model/animation/FModelSparsePoseGeometry.h"
+#include "model/animation/FModelSparseVertexMap.h"
+#include "model/animation/FModelSkeleton.h"
+#include "resources/Resources.h"
 
 /**
  * formatごとのanimation source共通interface。
@@ -68,6 +71,58 @@ class AModelAnimationSource
      * skin・morph・node変換を反映し、失敗時はoutputを変更しない。
      */
     virtual bool Deform(const animation::FModelPose& pose, detail::ModelResource& output, String& error) const = 0;
+    /**
+     * sparse変形に使うcorner対応表を借用参照で返す。未対応形式はnullを返す。
+     */
+    virtual const Array<animation::FModelSparseVertexMap>* SparseVertexMap() const
+    {
+        return nullptr;
+    }
+    /**
+     * sparse変形成功時に位置・法線と対応表が検証済みか返す。
+     */
+    virtual bool SparseDeformationIsValidated() const
+    {
+        return false;
+    }
+    /**
+     * GPU skinningへ渡せる不変geometryを借用参照で返す。未対応形式はnullを返す。
+     */
+    virtual const animation::FModelGpuSkinningGeometry* GpuSkinningGeometry() const
+    {
+        return nullptr;
+    }
+    /**
+     * 指定poseをGPU skinningで扱えるか確認する。未対応poseはfalseを返す。
+     */
+    virtual bool SupportsGpuSkinningPose(const animation::FModelPose&) const
+    {
+        return false;
+    }
+    /**
+     * 共通poseからcluster順のaffine行列を作る。失敗時はoutputを変更しない。
+     */
+    virtual bool EvaluateGpuSkinningMatrices(const animation::FModelPose&, Array<animation::FModelGpuSkinningGeometry::FMatrix>&, String& error) const
+    {
+        error.Assign("GPU model skinning is unsupported for this source");
+        return false;
+    }
+    /**
+     * sparse変形とGPU用pose行列を同時に作る。失敗時は両outputを変更しない。
+     */
+    virtual bool DeformSparseWithGpuSkinningData(const animation::FModelPose&, animation::FModelSparsePoseGeometry&, Array<animation::FModelGpuSkinningGeometry::FMatrix>&, String& error) const
+    {
+        error.Assign("GPU model skinning data is unsupported for this source");
+        return false;
+    }
+    /**
+     * unique位置とnormal groupだけを計算する。失敗時はoutputを変更しない。
+     */
+    virtual bool DeformSparse(const animation::FModelPose&, animation::FModelSparsePoseGeometry&, String& error) const
+    {
+        error.Assign("sparse model deformation is unsupported for this source");
+        return false;
+    }
 };
 }
 
