@@ -21,6 +21,8 @@ Runtime の公開 API、実装、利用者向けサンプルでは C++ 標準ラ
 
 ルートの `.clang-format` を使って整形します。固定した開発用依存物にはclang-format 12が含まれています。対象は変更する自作コードに限定し、`third_party`や取得済み依存物を一括整形しないでください。FSLのSRT宣言など、formatterが構文を扱えないマクロは元の階層を維持します。
 
+`.editorconfig`が対応するeditorへ文字コードと改行を指定します。MarkdownはUTF-8、batchはBOMなしで保存し、固定依存物と生成物の形式は変更しません。内部includeは`"render/ModelGeometry.h"`のようにmodule rootから指定し、`../`で別moduleへ辿りません。
+
 Windows APIも使うコードでは、Windows.hを先に読み込み、その後にgkcore.hを読み込んでください。gkcore.hは公開APIとの衝突を避けるためLoadImageマクロを除去します。Windows側の画像読み込みを呼ぶ場合はLoadImageWまたはLoadImageAを明示します。
 
 ## ブランチの管理

@@ -8,6 +8,8 @@ third_party/** -text -whitespace
 /examples/*.cpp text eol=crlf
 /examples/shaders/*.hlsl text eol=crlf
 /tools/*.py text eol=crlf
+/tools/*.ps1 text eol=crlf
+/samples/*.ps1 text eol=crlf
 /tests/*.cpp text eol=crlf
 /tests/*.py text eol=crlf
 /tests/support/** text eol=crlf
