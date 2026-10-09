@@ -17,9 +17,9 @@ class FHumanoidMappingSource final : public gk::model::AModelAnimationSource
     // 骨名推定fixtureの親階層。
     gk::model::animation::FModelSkeleton skeleton;
     // 各骨の候補名。
-    const char* names[32]{};
+    const char* names[64]{};
     // 書き換え可能性をfixtureごとに指定する。
-    bool writable[32]{};
+    bool writable[64]{};
     // 実際に使うfixture骨数。
     uint32_t count = 0;
 
@@ -209,6 +209,36 @@ bool TestYumekaBoneAliases()
 }
 
 /**
+ * Sci-Fi TrooperとClown Monsterに記録されたUE骨名を親階層つきで割り当てる。
+ */
+bool TestUnrealAssetBoneAliases()
+{
+    FHumanoidMappingSource source;
+    const char* names[] = { "root", "pelvis", "spine_01", "spine_02", "spine_03", "spine_04", "spine_05", "upperarm_twist_01_l", "hand_l", "thumb_01_l", "thumb_02_l", "thumb_03_l", "index_01_l", "index_02_l", "index_03_l", "middle_01_l", "middle_02_l", "middle_03_l", "ring_01_l", "ring_02_l", "ring_03_l", "pinky_01_l", "pinky_02_l", "pinky_03_l", "hand_r", "thumb_01_r", "thumb_02_r", "thumb_03_r", "index_01_r", "index_02_r", "index_03_r", "middle_01_r", "middle_02_r", "middle_03_r", "ring_01_r", "ring_02_r", "ring_03_r", "pinky_01_r", "pinky_02_r", "pinky_03_r", "index_metacarpal_l", "neck_01", "neck_02", "head", "thigh_l", "calf_l", "foot_l", "ball_l", "thigh_r", "calf_r", "foot_r", "ball_r" };
+    const int32_t parents[] = { -1, 0, 1, 2, 3, 4, 5, 0, 0, 8, 9, 10, 8, 12, 13, 8, 15, 16, 8, 18, 19, 8, 21, 22, 0, 24, 25, 26, 24, 28, 29, 24, 31, 32, 24, 34, 35, 24, 37, 38, 8, 4, 41, 42, 1, 44, 45, 46, 1, 48, 49, 50 };
+    if (!SetupSource(source, names, parents, 52))
+        return false;
+    gk::Array<uint16_t> existing, output;
+    gk::String error;
+    if (!gk::model::InferHumanoidBoneRoles(source, existing, output, error))
+    {
+        fprintf(stderr, "Unreal asset bone inference failed: %s\n", error.CStr());
+        return false;
+    }
+    using Bone = gk::EHumanoidBone;
+    const uint16_t expected[] = { 0, static_cast<uint16_t>(Bone::Hips), static_cast<uint16_t>(Bone::Spine), static_cast<uint16_t>(Bone::Chest), static_cast<uint16_t>(Bone::UpperChest), 0, 0, 0, static_cast<uint16_t>(Bone::LeftHand), static_cast<uint16_t>(Bone::LeftThumbProximal), static_cast<uint16_t>(Bone::LeftThumbIntermediate), static_cast<uint16_t>(Bone::LeftThumbDistal), static_cast<uint16_t>(Bone::LeftIndexProximal), static_cast<uint16_t>(Bone::LeftIndexIntermediate), static_cast<uint16_t>(Bone::LeftIndexDistal), static_cast<uint16_t>(Bone::LeftMiddleProximal), static_cast<uint16_t>(Bone::LeftMiddleIntermediate), static_cast<uint16_t>(Bone::LeftMiddleDistal), static_cast<uint16_t>(Bone::LeftRingProximal), static_cast<uint16_t>(Bone::LeftRingIntermediate), static_cast<uint16_t>(Bone::LeftRingDistal), static_cast<uint16_t>(Bone::LeftLittleProximal), static_cast<uint16_t>(Bone::LeftLittleIntermediate), static_cast<uint16_t>(Bone::LeftLittleDistal), static_cast<uint16_t>(Bone::RightHand), static_cast<uint16_t>(Bone::RightThumbProximal), static_cast<uint16_t>(Bone::RightThumbIntermediate), static_cast<uint16_t>(Bone::RightThumbDistal), static_cast<uint16_t>(Bone::RightIndexProximal), static_cast<uint16_t>(Bone::RightIndexIntermediate), static_cast<uint16_t>(Bone::RightIndexDistal), static_cast<uint16_t>(Bone::RightMiddleProximal), static_cast<uint16_t>(Bone::RightMiddleIntermediate), static_cast<uint16_t>(Bone::RightMiddleDistal), static_cast<uint16_t>(Bone::RightRingProximal), static_cast<uint16_t>(Bone::RightRingIntermediate), static_cast<uint16_t>(Bone::RightRingDistal), static_cast<uint16_t>(Bone::RightLittleProximal), static_cast<uint16_t>(Bone::RightLittleIntermediate), static_cast<uint16_t>(Bone::RightLittleDistal), 0, static_cast<uint16_t>(Bone::Neck), 0, static_cast<uint16_t>(Bone::Head), static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::LeftFoot), static_cast<uint16_t>(Bone::LeftToes), static_cast<uint16_t>(Bone::RightUpperLeg), static_cast<uint16_t>(Bone::RightLowerLeg), static_cast<uint16_t>(Bone::RightFoot), static_cast<uint16_t>(Bone::RightToes) };
+    if (output.Count() != 52)
+        return false;
+    for (uint32_t i = 0; i < 52; ++i)
+        if (output.At(i) != expected[i])
+        {
+            fprintf(stderr, "Unreal asset role mismatch at %s: expected=%u actual=%u\n", names[i], expected[i], output.At(i));
+            return false;
+        }
+    return true;
+}
+
+/**
  * 手動指定を優先し、固定骨と一般的なRoot名を割り当てない。
  */
 bool TestManualAndUnwritableBones()
@@ -272,7 +302,7 @@ bool TestInvalidInputIsAtomicFailure()
 
 int main()
 {
-    if (!TestCommonAliases() || !TestMixamoLegChains() || !TestJapaneseAliases() || !TestYumekaBoneAliases() || !TestManualAndUnwritableBones() || !TestDuplicateRoleIsAtomicFailure() || !TestInvalidInputIsAtomicFailure())
+    if (!TestCommonAliases() || !TestMixamoLegChains() || !TestJapaneseAliases() || !TestYumekaBoneAliases() || !TestUnrealAssetBoneAliases() || !TestManualAndUnwritableBones() || !TestDuplicateRoleIsAtomicFailure() || !TestInvalidInputIsAtomicFailure())
         return 1;
     return 0;
 }

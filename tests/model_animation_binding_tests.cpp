@@ -5,6 +5,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 namespace
 {
@@ -21,14 +22,18 @@ class FBindingTestSource final : public AModelAnimationSource
     animation::FModelSkeleton skeleton;
     // clip評価時に返す変換。
     animation::FModelPose sampled;
-    // fixture内の親・腕名。
-    const char* names[2] = { "parent", "arm" };
+    // Fixtureが宣言する骨名の要素数。
+    uint32_t boneCount = 2;
+    // BoneNameが返す固定名。
+    const char* names[8] = { "parent", "arm" };
+    // 固定sourceが返す形式。
+    EModelAnimationFormat format = EModelAnimationFormat::Glb;
     // fixture内のmorph名。
     const char* morphNames[2] = { nullptr, nullptr };
 
     EModelAnimationFormat Format() const override
     {
-        return EModelAnimationFormat::Glb;
+        return format;
     }
     const animation::FModelSkeleton& Skeleton() const override
     {
@@ -36,7 +41,7 @@ class FBindingTestSource final : public AModelAnimationSource
     }
     const char* BoneName(uint32_t bone) const override
     {
-        return bone < 2 ? names[bone] : nullptr;
+        return bone < boneCount ? names[bone] : nullptr;
     }
     const char* MorphName(uint32_t morph) const override
     {
@@ -82,6 +87,18 @@ void SetRotationZ(animation::FModelBoneTransform& transform, float degrees)
     const double halfAngle = degrees * 3.14159265358979323846 / 360.0;
     transform.rotation[2] = static_cast<float>(sin(halfAngle));
     transform.rotation[3] = static_cast<float>(cos(halfAngle));
+}
+
+/**
+ * 骨のZ回転が独立に計算した角度と一致することを確認する。
+ */
+bool MatchesRotationZ(const animation::FModelBoneTransform& transform, double degrees)
+{
+    // 期待回転のquaternion。
+    const double halfAngle = degrees * 3.14159265358979323846 / 360.0;
+    const double expectedZ = sin(halfAngle);
+    const double expectedW = cos(halfAngle);
+    return fabs(transform.rotation[0]) < 0.0001 && fabs(transform.rotation[1]) < 0.0001 && fabs(transform.rotation[2] - expectedZ) < 0.0001 && fabs(transform.rotation[3] - expectedW) < 0.0001;
 }
 
 /**
@@ -285,6 +302,114 @@ bool TestRoleBindingAndMorphNameOrder()
 }
 
 /**
+ * 異なる任意名と形式の人型骨格を手動roleで結び、膝の曲げと適用先の脚長を確認する。
+ */
+bool TestGenericHumanoidRoleRetarget()
+{
+    // source clipと、名称・姿勢・骨長が異なるtarget。
+    FBindingTestSource source;
+    FBindingTestSource target;
+    source.boneCount = 5;
+    target.boneCount = 5;
+    source.format = EModelAnimationFormat::Fbx;
+    target.format = EModelAnimationFormat::Glb;
+    const char* sourceNames[5] = { "source origin q", "pelvis amber", "joint orbit seven", "segment cobalt", "terminal ivory" };
+    const char* targetNames[5] = { "destination root m", "waist cedar", "stratum violet", "member copper", "end pearl" };
+    for (uint32_t i = 0; i < 5; ++i)
+    {
+        source.names[i] = sourceNames[i];
+        target.names[i] = targetNames[i];
+    }
+    // root、腰、大腿、すね、足首からなる別名の階層。
+    const int32_t parents[5] = { -1, 0, 1, 2, 3 };
+    animation::FModelBoneTransform sourceRest[5]{};
+    animation::FModelBoneTransform sourceAnimated[5]{};
+    animation::FModelBoneTransform targetRest[5]{};
+    SetRotationZ(sourceRest[1], 20.0f);
+    SetRotationZ(sourceRest[2], -10.0f);
+    SetRotationZ(sourceRest[3], 5.0f);
+    sourceRest[1].position[1] = 2.0f;
+    sourceRest[2].position[1] = -4.0f;
+    sourceRest[3].position[1] = -5.0f;
+    sourceRest[4].position[1] = -1.5f;
+    memcpy(sourceAnimated, sourceRest, sizeof(sourceRest));
+    SetRotationZ(sourceAnimated[3], 65.0f);
+    SetRotationZ(targetRest[0], 90.0f);
+    SetRotationZ(targetRest[1], -15.0f);
+    SetRotationZ(targetRest[2], 30.0f);
+    SetRotationZ(targetRest[3], -20.0f);
+    SetRotationZ(targetRest[4], 10.0f);
+    targetRest[1].position[1] = 1.0f;
+    targetRest[2].position[1] = -2.0f;
+    targetRest[3].position[1] = -3.0f;
+    targetRest[4].position[1] = -0.75f;
+    if (!source.skeleton.parents.AppendRange(parents, 5) || !source.skeleton.restLocalTransforms.AppendRange(sourceRest, 5) || !source.sampled.localTransforms.AppendRange(sourceAnimated, 5) || !target.skeleton.parents.AppendRange(parents, 5) || !target.skeleton.restLocalTransforms.AppendRange(targetRest, 5))
+    {
+        fprintf(stderr, "generic humanoid fixture allocation failed\n");
+        return false;
+    }
+    // 異なる形式間でもbone名に頼らず手動roleで対応する。
+    FModelAnimationAsset sourceAsset, targetAsset;
+    sourceAsset.reference = { 1, nullptr };
+    sourceAsset.source = &source;
+    targetAsset.source = &target;
+    using Bone = gk::EHumanoidBone;
+    const uint16_t roles[5] = { 0, static_cast<uint16_t>(Bone::Hips), static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::LeftFoot) };
+    gk::Array<uint16_t> targetRoles;
+    if (!sourceAsset.roles.AppendRange(roles, 5) || !targetRoles.AppendRange(roles, 5))
+    {
+        fprintf(stderr, "generic humanoid role allocation failed\n");
+        return false;
+    }
+    // role対応を構築し、別体型のsample姿勢へ適用する。
+    FModelClipState state;
+    gk::String error;
+    if (!BuildClipBinding(sourceAsset, 0, &targetAsset, targetRoles, state, error))
+    {
+        fprintf(stderr, "generic humanoid role binding failed: %s\n", error.CStr());
+        return false;
+    }
+    animation::FModelPose output;
+    const bool sampled = SampleBoundClip(state, targetAsset, output, error);
+    Release(&sourceAsset.reference);
+    if (!sampled)
+    {
+        fprintf(stderr, "generic humanoid role sample failed: %s\n", error.CStr());
+        return false;
+    }
+    if (output.localTransforms.Count() != 5)
+    {
+        fprintf(stderr, "generic humanoid role sample returned an unexpected bone count\n");
+        return false;
+    }
+    // 想定されるtarget local回転はroot90、hips-15、thigh30、knee40、foot10度。
+    const double expectedAngles[5] = { 90.0, -15.0, 30.0, 40.0, 10.0 };
+    for (uint32_t i = 0; i < 5; ++i)
+        if (!MatchesRotationZ(output.localTransforms.At(i), expectedAngles[i]))
+        {
+            fprintf(stderr, "generic humanoid retarget rotation mismatch at %s\n", targetNames[i]);
+            return false;
+        }
+    // roleで対応した腰から足首までの親基準位置はtarget restの長さを保つ。
+    for (uint32_t i = 1; i < 5; ++i)
+        if (fabsf(output.localTransforms.At(i).position[0] - targetRest[i].position[0]) > 0.0001f || fabsf(output.localTransforms.At(i).position[1] - targetRest[i].position[1]) > 0.0001f || fabsf(output.localTransforms.At(i).position[2] - targetRest[i].position[2]) > 0.0001f)
+        {
+            fprintf(stderr, "generic humanoid retarget changed target limb length at %s\n", targetNames[i]);
+            return false;
+        }
+    // 期待足首位置はtargetの各rest長を独立に回転・加算した座標。
+    const double expectedFootX = -1.0 + 2.0 * sin(75.0 * 3.14159265358979323846 / 180.0) + 3.0 * sin(105.0 * 3.14159265358979323846 / 180.0) + 0.75 * sin(145.0 * 3.14159265358979323846 / 180.0);
+    const double expectedFootY = -2.0 * cos(75.0 * 3.14159265358979323846 / 180.0) - 3.0 * cos(105.0 * 3.14159265358979323846 / 180.0) - 0.75 * cos(145.0 * 3.14159265358979323846 / 180.0);
+    gk::Array<float> matrices;
+    if (!animation::EvaluateModelPose(target.skeleton, output, matrices, error) || matrices.Count() != 80 || fabs(matrices.At(4u * 16u + 12u) - expectedFootX) > 0.0002 || fabs(matrices.At(4u * 16u + 13u) - expectedFootY) > 0.0002)
+    {
+        fprintf(stderr, "generic humanoid foot position disagreed with the independent rest-length calculation\n");
+        return false;
+    }
+    return true;
+}
+
+/**
  * 重複roleでclip bindingを拒否し、candidateを元の状態に保つ。
  */
 bool TestDuplicateRolesPreserveCandidate()
@@ -432,5 +557,5 @@ bool TestScaledSourceParentTranslation()
 
 int main()
 {
-    return TestRestRelativeRetargetWithDifferentParents() && TestHumanoidRolePreservesTargetLimbLength() && TestRoleBindingAndMorphNameOrder() && TestDuplicateRolesPreserveCandidate() && TestDuplicateTargetNamesAreRejected() && TestScaledSourceParentTranslation() ? 0 : 1;
+    return TestRestRelativeRetargetWithDifferentParents() && TestHumanoidRolePreservesTargetLimbLength() && TestRoleBindingAndMorphNameOrder() && TestGenericHumanoidRoleRetarget() && TestDuplicateRolesPreserveCandidate() && TestDuplicateTargetNamesAreRejected() && TestScaledSourceParentTranslation() ? 0 : 1;
 }

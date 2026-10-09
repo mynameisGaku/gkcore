@@ -85,7 +85,7 @@ bool ExtractSide(char name[256], bool& left)
         char candidate[256];
         memcpy(candidate, name, length);
         candidate[length - 1] = 0;
-        const char* bases[] = { "shoulder", "clavicle", "upperarm", "lowerarm", "forearm", "hand", "wrist", "upperleg", "lowerleg", "thigh", "calf", "knee", "leg", "foot", "toe", "toebase", "toes", "eye", "thumb", "thumbproximal", "thumbintermediate", "thumbdistal", "index", "indexproximal", "indexintermediate", "indexdistal", "middle", "middleproximal", "middleintermediate", "middledistal", "ring", "ringproximal", "ringintermediate", "ringdistal", "little", "littleproximal", "littleintermediate", "littledistal", "pinky" };
+        const char* bases[] = { "shoulder", "clavicle", "upperarm", "lowerarm", "forearm", "hand", "wrist", "upperleg", "lowerleg", "thigh", "calf", "knee", "leg", "foot", "ball", "toe", "toebase", "toes", "eye", "thumb", "thumb01", "thumb02", "thumb03", "thumbproximal", "thumbintermediate", "thumbdistal", "index", "index01", "index02", "index03", "indexproximal", "indexintermediate", "indexdistal", "middle", "middle01", "middle02", "middle03", "middleproximal", "middleintermediate", "middledistal", "ring", "ring01", "ring02", "ring03", "ringproximal", "ringintermediate", "ringdistal", "little", "little01", "little02", "little03", "littleproximal", "littleintermediate", "littledistal", "pinky", "pinky01", "pinky02", "pinky03" };
         for (uint32_t i = 0; i < sizeof(bases) / sizeof(bases[0]); ++i)
         {
             if (strcmp(candidate, bases[i]) == 0)
@@ -137,13 +137,13 @@ uint16_t MatchRole(const char* sourceName, uint16_t parentRole)
         return 0;
     if (strcmp(name, "hips") == 0 || strcmp(name, "pelvis") == 0 || strcmp(name, "chips") == 0)
         return static_cast<uint16_t>(Bone::Hips);
-    if (strcmp(name, "spine") == 0 || strcmp(name, "cspine") == 0)
+    if (strcmp(name, "spine") == 0 || strcmp(name, "cspine") == 0 || strcmp(name, "spine01") == 0)
         return static_cast<uint16_t>(Bone::Spine);
-    if (strcmp(name, "spine1") == 0 || strcmp(name, "chest") == 0 || strcmp(name, "cchest") == 0)
+    if (strcmp(name, "spine1") == 0 || strcmp(name, "spine02") == 0 || strcmp(name, "chest") == 0 || strcmp(name, "cchest") == 0)
         return static_cast<uint16_t>(Bone::Chest);
-    if (strcmp(name, "spine2") == 0 || strcmp(name, "upperchest") == 0 || strcmp(name, "cupperchest") == 0)
+    if (strcmp(name, "spine2") == 0 || strcmp(name, "spine03") == 0 || strcmp(name, "upperchest") == 0 || strcmp(name, "cupperchest") == 0)
         return static_cast<uint16_t>(Bone::UpperChest);
-    if (strcmp(name, "neck") == 0 || strcmp(name, "cneck") == 0)
+    if (strcmp(name, "neck") == 0 || strcmp(name, "cneck") == 0 || strcmp(name, "neck01") == 0)
         return static_cast<uint16_t>(Bone::Neck);
     if (strcmp(name, "head") == 0 || strcmp(name, "chead") == 0)
         return static_cast<uint16_t>(Bone::Head);
@@ -183,6 +183,8 @@ uint16_t MatchRole(const char* sourceName, uint16_t parentRole)
     }
     if (strcmp(name, "foot") == 0)
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftFoot), static_cast<uint16_t>(Bone::RightFoot));
+    if (strcmp(name, "ball") == 0)
+        return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftToes), static_cast<uint16_t>(Bone::RightToes));
     if (strcmp(name, "toe") == 0 || strcmp(name, "toebase") == 0 || strcmp(name, "toes") == 0)
         return MakeRole(isLeft, static_cast<uint16_t>(Bone::LeftToes), static_cast<uint16_t>(Bone::RightToes));
     if (strcmp(name, "eye") == 0)
@@ -203,8 +205,8 @@ uint16_t MatchRole(const char* sourceName, uint16_t parentRole)
         if (strncmp(name, fingers[i].name, length) == 0)
         {
             const char* suffix = name + length;
-            uint32_t joint = suffix[0] == '1' || strcmp(suffix, "proximal") == 0 ? 0 : suffix[0] == '2' || strcmp(suffix, "intermediate") == 0 ? 1 : suffix[0] == '3' || strcmp(suffix, "distal") == 0 ? 2 : 3;
-            if (joint < 3 && (!suffix[0] || suffix[0] == '1' || suffix[0] == '2' || suffix[0] == '3' || strcmp(suffix, "proximal") == 0 || strcmp(suffix, "intermediate") == 0 || strcmp(suffix, "distal") == 0))
+            uint32_t joint = suffix[0] == '1' || strcmp(suffix, "01") == 0 || strcmp(suffix, "proximal") == 0 ? 0 : suffix[0] == '2' || strcmp(suffix, "02") == 0 || strcmp(suffix, "intermediate") == 0 ? 1 : suffix[0] == '3' || strcmp(suffix, "03") == 0 || strcmp(suffix, "distal") == 0 ? 2 : 3;
+            if (joint < 3 && (!suffix[0] || suffix[0] == '1' || suffix[0] == '2' || suffix[0] == '3' || strcmp(suffix, "01") == 0 || strcmp(suffix, "02") == 0 || strcmp(suffix, "03") == 0 || strcmp(suffix, "proximal") == 0 || strcmp(suffix, "intermediate") == 0 || strcmp(suffix, "distal") == 0))
                 return isLeft ? fingers[i].left[joint] : fingers[i].right[joint];
         }
     }

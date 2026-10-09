@@ -115,3 +115,7 @@ FBXは固定ufbxのclip評価、skin、blend shapeを使います。右手系の
 材質・UV・画像の読み込み条件は[モデルガイド](models.md)と共通です。アニメーションのブレンドと、透明材質の`alphaMode=BLEND`は別の機能です。GLBのalpha合成とsort範囲は[GLBの透明部分](models.md#glb-の透明部分)を参照してください。
 
 法線・接線を生成するmorphは、初期形状と各targetの形状から別々に計算し、差分へ係数を掛けます。最終位置だけから法線を計算する方式とは中間の係数で結果が異なります。[glTF 2.0のmorph処理](https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#applying-morph-data)に合わせて検査しています。
+
+spine_01/02/03、neck_01、ball_l/r、thumb/index/middle/ring/pinky_01/02/03_l/rの名前にも対応します。既存のspine1/spine2とは番号の意味を分け、追加の背骨・首・補助骨は役割を重複させません。[Unrealモデルのローカル表示](unreal-models.md)に実モデルの確認結果を記録しています。
+
+人型モーションの適用は特定の提供元に限定しません。GLB/FBXの骨格を共通の人型役割へ対応付け、初期姿勢と骨長の違いを補正します。自動推定できない名前はSetModelBoneRoleとSetAnimationBoneRoleで指定してください。元の名前が異なっても同じ役割で結び付きます。今回のUnreal由来のWalkをTrooperへ、IdleをClownへ移す両方向も確認しました。骨格を持たないOBJへ骨モーションを適用することはできません。
