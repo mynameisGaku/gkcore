@@ -96,6 +96,14 @@ function Assert-SafeTarget([string] $Path, [string] $RequiredParent, [bool] $IsD
     return $targetItem
 }
 
+# 書き出しが終わった検証用コピーだけを対象にし、元のDownloadsは保持する。
+$retiredUnrealProject = Join-Path $buildRoot 'unreal-model-validation-20261009'
+if (Test-Path -LiteralPath $retiredUnrealProject)
+{
+    $item = Assert-SafeTarget $retiredUnrealProject $buildRoot $true
+    $targets.Add($item)
+}
+
 $archiveRoot = Join-Path $buildRoot 'archive'
 $probeRoot = Join-Path $buildRoot 'native-validation'
 foreach ($name in $archiveNames) {

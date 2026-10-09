@@ -26,3 +26,5 @@ Unreal Engine 5.8.3で書き出し、元のIdleまたはWalkと、外部Mixamo�
 今回のcommandletはAllowCommandletRenderingとRenderOffscreenを使用しました。NullRHIはskeletal meshの書き出しでMeshObjectのassertになり、NoShaderCompileは初期材質のassertになるため使用しません。不要なengine pluginとremote shader compileを無効にしたコピーで書き出しています。APIはUnreal Engineの[AssetExportTask](https://dev.epicgames.com/documentation/en-us/unreal-engine/python-api/class/AssetExportTask?application_version=5.6)を使用します。
 
 Mixamo以外の共通適用も、ClownMonsterWalkをSci-Fi Trooperへ、SciFITrooperIdleをClown Monsterへ移す両方向で確認しました。骨数79/169の違いがあっても各52人型役割が対応し、補助骨の名前対応を含め各68本を結び付けました。各6姿勢はDebug/Releaseとも脚の8役割とGPU/CPU一致を通過しています。
+
+書き出し後の一時コピーbuild/unreal-model-validation-20261009/は、CLEAN.batの既知対象へ含めています。CLEAN.bat -WhatIfで対象を確認できます。準備済みFBX・画像、最新capture・logとDownloadsの元データは保持します。
