@@ -3,6 +3,7 @@
 #include <gkcore/Handle.h>
 #include <gkcore/ModelSecondaryMotion.h>
 #include <gkcore/FModelSecondaryMotionSettings.h>
+#include <gkcore/FModelSecondaryMotionCollider.h>
 
 /**
  * 配布headerとDLLだけで、揺れものの公開APIをリンク・呼び出しできることを確認する。
@@ -11,8 +12,9 @@ bool VerifySecondaryMotionApiExports()
 {
     // 配布headerだけで設定を作り、新しい揺れものAPIのexportも呼び出す。
     const gk::FModelSecondaryMotionSettings secondarySettings{};
+    const gk::FModelSecondaryMotionCollider collider{};
     const uint32_t bone = 0;
-    if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1)
+    if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1)
     {
         return false;
     }

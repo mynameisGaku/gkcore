@@ -61,4 +61,4 @@ viewerは起動時にモデルと各外部motionの人型役割を推定して�
 
 ## 髪・スカート・尻尾の揺れ
 
-`START.bat`の11は、YUMEKAの外部blend・右腕IKに、髪2鎖、スカート10鎖、尻尾1鎖の揺れを重ねます。`--secondary-motion <config-file>`で別のモデル用設定も指定できます。更新はアニメーションとIKの後に行い、`R`で回転と揺れをリセットします。身体との衝突とスカートの枝どうしの制約は未対応です。[モデルの揺れもの](model-secondary-motion.md)に設定行とAPIを記載しています。
+`START.bat`の11は、YUMEKAの外部blend・右腕IKに、髪2鎖、スカート10鎖、尻尾1鎖の揺れを重ねます。12は同じ13鎖に身体の球・カプセル8個を追加します。12の設定では髪・尻尾を8回、スカート鎖を32回制約反復します。設定ファイルはそれぞれ[接触なしの鎖](../samples/config/yumeka-secondary-motion.txt)、[接触ありの鎖](../samples/config/yumeka-secondary-contact-motion.txt)、[身体形状](../samples/config/yumeka-secondary-colliders.txt)です。外部viewerでは`--secondary-motion <config-file>`と`--secondary-colliders <config-file>`を指定します。更新はアニメーションとIKの後に行い、`R`で回転と揺れをリセットします。身体接触を含むNative描画・見た目は未検証です。cloth meshと鎖どうしの制約は未対応です。[モデルの揺れもの](model-secondary-motion.md)に設定形式とAPIを記載しています。

@@ -1,0 +1,15 @@
+﻿# 振動数 減衰比 最大角度 tipX tipY tipZ 重力X 重力Y 重力Z [反復数1..32] | 先頭から末端のbone名
+# YUMEKAの髪・尻尾・スカートの枝を独立した鎖として設定する。身体との接触を併用する設定。
+4 0.8 45 0 0.035 0 0 -1.0 0 | Hair_twintale_1_L Hair_twintale_1_L.001 Hair_twintale_1_L.002 Hair_twintale_1_L.003 Hair_twintale_1_L.004 Hair_twintale_1_L.005 Hair_twintale_1_L.006 Hair_twintale_1_L.007 Hair_twintale_1_L.008 Hair_twintale_1_L.009 Hair_twintale_1_L.010
+4 0.8 45 0 0.035 0 0 -1.0 0 | Hair_twintale_1_R Hair_twintale_1_R.001 Hair_twintale_1_R.002 Hair_twintale_1_R.003 Hair_twintale_1_R.004 Hair_twintale_1_R.005 Hair_twintale_1_R.006 Hair_twintale_1_R.007 Hair_twintale_1_R.008 Hair_twintale_1_R.009 Hair_twintale_1_R.010
+4 0.8 45 0 0.035 0 0 -1.0 0 | Tail Tail.001 Tail.002 Tail.003 Tail.004 Tail.005 Tail.006 Tail.007 Tail.008 Tail.009 Tail.010 Tail.011 Tail.012 Tail.013
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_1 Skirt_1.001 Skirt_1.002 Skirt_1.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_2_L Skirt_2_L.001 Skirt_2_L.002 Skirt_2_L.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_3_L Skirt_3_L.001 Skirt_3_L.002 Skirt_3_L.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_4_L Skirt_4_L.001 Skirt_4_L.002 Skirt_4_L.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_5_L Skirt_5_L.001 Skirt_5_L.002 Skirt_5_L.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_6 Skirt_6.001 Skirt_6.002 Skirt_6.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_2_R Skirt_2_R.001 Skirt_2_R.002 Skirt_2_R.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_3_R Skirt_3_R.001 Skirt_3_R.002 Skirt_3_R.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_4_R Skirt_4_R.001 Skirt_4_R.002 Skirt_4_R.003
+5 0.8 60 0 0.035 0 0 -1.0 0 32 | Skirt_5_R Skirt_5_R.001 Skirt_5_R.002 Skirt_5_R.003

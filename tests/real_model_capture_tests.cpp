@@ -478,6 +478,12 @@ int main(int argc, char** argv)
         return 2;
     }
     // 大きく移動するmotionを画面内で見るための任意指定。
+    const char* secondaryColliderPath = nullptr;
+    if (!gk::examples::ParseSecondaryColliderOptions(argc, argv, secondaryColliderPath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-colliders option\n");
+        return 2;
+    }
     const char* secondaryMotionPath = nullptr;
     if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
     {
@@ -490,9 +496,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
+    if (secondaryColliderPath && !secondaryMotionPath)
+    {
+        fprintf(stderr, "--secondary-colliders requires --secondary-motion\n");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>]\n");
+        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -713,6 +724,10 @@ int main(int argc, char** argv)
     if (passed && secondaryMotionPath)
     {
         passed = gk::examples::ApplySecondaryMotionPreview(model, secondaryMotionPath);
+    }
+    if (passed && secondaryColliderPath)
+    {
+        passed = gk::examples::ApplySecondaryColliderPreview(model, secondaryColliderPath);
     }
     if (passed)
     {

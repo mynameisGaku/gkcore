@@ -24,6 +24,10 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 
 最新ログは`build/native-validation/secondary-motion-final-benchmark.log`、初回は`secondary-motion-benchmark.log`です。途中で閉じた630frameの測定は完了結果に含めません。追加処理の計測はbenchmarkだけで行い、通常viewerへ計測用配列は含めません。
 
+身体形状8個を加えた構成の最新計測は172.024FPS、p95 6.400msでした。DrawModel平均0.866ms、Present 2.290ms、IK設定0.512ms、揺れもの更新1.670msです。骨長・角度を戻した後も接触が解けていれば反復を終了し、float回転からの再構成に備えて計算中だけ数値上の余白を取ります。既存の半径・余白・最大角度の設定は保持します。初回の全反復構成は98.748FPS、更新5.883msでした。両方とも通常Release、1280×720、3000frame / warmup300で完走しています。300FPSは未達です。
+
+途中で接触境界の再構成に失敗した605/127frameの測定は完走結果へ含めません。最終記録は`build/native-validation/secondary-contact-final-benchmark.log`、初回は`secondary-contact-benchmark.log`です。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
+#include <gkcore/ModelSecondaryMotion.h>
 
 #include "core/Context.h"
 #include "internal/Backend.hpp"
@@ -8,6 +9,7 @@
 #include "model/animation/AModelAnimationSource.h"
 #include "model/animation/FModelAnimationAsset.h"
 #include "model/animation/FModelPlayback.h"
+#include "model/animation/FModelSecondaryMotionState.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
@@ -364,6 +366,163 @@ bool TestModelSecondaryMotion(gk::ModelHandle model, gk::ModelHandle instance)
 }
 
 /**
+ * 身体接触設定の検証、instance分離、更新順、解除後の鎖更新を確認する。
+ */
+bool TestModelSecondaryMotionColliders(gk::ModelHandle model, gk::ModelHandle instance, AAnimationRigTestSource& source)
+{
+    const uint32_t chainBones[2] = { 1, 2 };
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.frequencyHz = 6.0f;
+    settings.dampingRatio = 0.8f;
+    settings.gravity = { 0.0f, 0.0f, -9.81f };
+    settings.endOffset = { 0.1f, 0.0f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 8;
+    gk::FModelSecondaryMotionCollider collider{};
+    collider.bone = 0;
+    collider.start = { 3.0f, 0.0f, 0.0f };
+    collider.end = { 3.0f, 0.5f, 0.0f };
+    collider.radius = 0.05f;
+    gk::FModelSecondaryMotionCollider tooMany[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+    {
+        tooMany[index] = collider;
+    }
+    bool passed = gk::ClearModelSecondaryMotion(model) == 0 && gk::ClearModelSecondaryMotion(instance) == 0;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && passed;
+
+    // 骨格に追従する身体capsuleを登録する。
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == 0 && passed;
+    auto* instanceTransform = gk::detail::FindModelTransform(instance);
+    auto* state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->colliders.Count() == 1 && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).radius, 0.06f) && passed;
+
+    // count、bone、半径、余白の不正値は失敗し、直前の接触設定を保つ。
+    gk::FModelSecondaryMotionCollider invalid = collider;
+    invalid.bone = 99;
+    passed = gk::SetModelSecondaryMotionColliders(instance, nullptr, 1) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, tooMany, 65) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &invalid, 1) == -1 && passed;
+    invalid = collider;
+    invalid.radius = 0.0f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &invalid, 1) == -1 && passed;
+    invalid = collider;
+    invalid.radius = std::numeric_limits<float>::quiet_NaN();
+    passed = gk::SetModelSecondaryMotionColliders(instance, &invalid, 1) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, -0.001f) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, std::numeric_limits<float>::infinity()) == -1 && passed;
+
+    // 揺れる鎖のroot自身と、その子孫には身体形状を取り付けられない。
+    invalid = collider;
+    invalid.bone = 1;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &invalid, 1) == -1 && passed;
+    invalid.bone = 2;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &invalid, 1) == -1 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->colliders.Count() == 1 && state->colliders.At(0).bone == collider.bone && state->colliders.At(0).radius == collider.radius && state->colliderMargin == 0.01f && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, 4.0f) && Near(state->previousCollisionShapes.At(0).radius, 0.06f) && passed;
+
+    // 有効な一様scaleは端点と半径へ反映し、わずかな軸差も許す。
+    passed = gk::SetModelAnimationBlendWeight(instance, 0.0f) == 0 && passed;
+    source.skeleton.restLocalTransforms.At(0).scale[0] = 2.0f;
+    source.skeleton.restLocalTransforms.At(0).scale[1] = 2.0f;
+    source.skeleton.restLocalTransforms.At(0).scale[2] = 2.0f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, 6.0f) && Near(state->previousCollisionShapes.At(0).end.y, 1.0f) && Near(state->previousCollisionShapes.At(0).radius, 0.11f) && passed;
+    source.skeleton.restLocalTransforms.At(0).scale[1] = 2.00001f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, 6.0f) && Near(state->previousCollisionShapes.At(0).radius, 0.11f) && passed;
+
+    // zero・負・目立つ非一様scaleは拒否し、直前の配置を保つ。
+    gk::model::animation::FModelSecondaryMotionCollisionShape preservedShape{};
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    if (state && state->previousCollisionShapes.Count() == 1)
+    {
+        preservedShape = state->previousCollisionShapes.At(0);
+    }
+    source.skeleton.restLocalTransforms.At(0).scale[0] = 0.0f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == -1 && passed;
+    source.skeleton.restLocalTransforms.At(0).scale[0] = -2.0f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == -1 && passed;
+    source.skeleton.restLocalTransforms.At(0).scale[0] = 2.1f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == -1 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, preservedShape.start.x) && Near(state->previousCollisionShapes.At(0).end.y, preservedShape.end.y) && Near(state->previousCollisionShapes.At(0).radius, preservedShape.radius) && passed;
+    source.skeleton.restLocalTransforms.At(0).scale[0] = 1.0f;
+    source.skeleton.restLocalTransforms.At(0).scale[1] = 1.0f;
+    source.skeleton.restLocalTransforms.At(0).scale[2] = 1.0f;
+
+    // 身体に形状を取り付けた後、そのboneを揺れ鎖に含める変更は失敗し設定を保つ。
+    const uint32_t collidingChain[3] = { 0, 1, 2 };
+    passed = gk::SetModelSecondaryMotionChain(instance, collidingChain, 3, settings) == -1 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->chains.Count() == 1 && state->chains.At(0)->bones.At(0) == chainBones[0] && state->colliders.Count() == 1 && passed;
+
+    // クリップのroot移動後、明示更新で保存された形状も同じ移動量だけ追従する。
+    gk::Vec3 before[3]{};
+    gk::Vec3 after[3]{};
+    gk::Vec3 repeated[3]{};
+    gk::Vec3 basePose[3]{};
+    const uint32_t queryBones[3] = { 0, 1, 2 };
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1) == 0 && passed;
+    passed = gk::SetModelAnimationBlendWeight(instance, 0.0f) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    const float stationaryStartX = state && state->previousCollisionShapes.Count() == 1 ? state->previousCollisionShapes.At(0).start.x : -1000.0f;
+    passed = gk::SetModelAnimationBlendWeight(instance, 1.0f) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x - stationaryStartX, 2.0f) && passed;
+    // 純粋なbone照会は保存済み身体形状を更新しない。
+    passed = gk::GetModelBonePositions(model, queryBones, 3, basePose) == 0 && gk::GetModelBonePositions(instance, queryBones, 3, before) == 0 && passed;
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, after) == 0 && passed;
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, repeated) == 0 && NearVector(after[0], repeated[0]) && NearVector(after[1], repeated[1]) && NearVector(after[2], repeated[2]) && passed;
+    passed = gk::GetModelBonePositions(model, queryBones, 3, repeated) == 0 && NearVector(basePose[0], repeated[0]) && NearVector(basePose[1], repeated[1]) && NearVector(basePose[2], repeated[2]) && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, stationaryStartX + 2.0f) && passed;
+
+    // IKによる身体bone回転で、局所capsuleの軸方向も追従する。
+    collider.start = { 3.0f, 0.0f, 0.0f };
+    collider.end = { 3.0f, 0.5f, 0.0f };
+    passed = gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 2.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }) == 0 && gk::SetModelAnimationBlendWeight(instance, 0.0f) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    const gk::Vec3 straightAxisEnd = state && state->previousCollisionShapes.Count() == 1 ? state->previousCollisionShapes.At(0).end : gk::Vec3{};
+    passed = gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 0.0f, 2.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && (fabsf(state->previousCollisionShapes.At(0).end.x - straightAxisEnd.x) > 0.1f || fabsf(state->previousCollisionShapes.At(0).end.y - straightAxisEnd.y) > 0.1f) && passed;
+
+    // 予約済みsnapshotは後続のIK・物理更新で変わらず、形状は明示更新時だけ進む。
+    passed = gk::BeginFrame() == 0 && gk::DrawModel(instance) == 0 && passed;
+    const auto& draws = gk::detail::GetContext().frame.draws;
+    const float queuedVertexX = draws.Count() == 1 ? draws.At(0).model->vertices.At(2).position[0] : -1000.0f;
+    const float queuedVertexY = draws.Count() == 1 ? draws.At(0).model->vertices.At(2).position[1] : -1000.0f;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    const gk::Vec3 queuedShapeEnd = state && state->previousCollisionShapes.Count() == 1 ? state->previousCollisionShapes.At(0).end : gk::Vec3{};
+    passed = gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 2.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::DrawModel(instance) == 0 && draws.Count() == 2 && Near(draws.At(0).model->vertices.At(2).position[0], queuedVertexX) && Near(draws.At(0).model->vertices.At(2).position[1], queuedVertexY) && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    passed = state && state->previousCollisionShapes.Count() == 1 && (fabsf(state->previousCollisionShapes.At(0).end.x - queuedShapeEnd.x) > 0.1f || fabsf(state->previousCollisionShapes.At(0).end.y - queuedShapeEnd.y) > 0.1f) && gk::Present() == 0 && passed;
+
+    // 接触だけを解除しても鎖設定は残り、重力による更新を続ける。
+    passed = gk::SetModelSecondaryMotionColliders(instance, nullptr, 0) == 0 && passed;
+    passed = gk::ClearModelIk(instance) == 0 && gk::StopModelAnimation(instance) == 0 && gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && passed;
+    for (uint32_t step = 0; step < 8; ++step)
+    {
+        passed = gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && passed;
+    }
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, after) == 0 && passed;
+    passed = fabsf(after[2].z - basePose[2].z) > 0.001f && passed;
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "secondary motion collider validation, ownership, or contact clear contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
  * 腕IK preview計算の独立した幾何期待値と失敗時保持を確認する。
  */
 bool TestModelArmIkPreview()
@@ -460,10 +619,7 @@ bool TestMotionFollowingArmIkPreview()
     {
         const char axis = rotations[index].axis;
         const float angle = rotations[index].angle;
-        const auto rotatePoint = [axis, angle, translation](gk::Vec3 point)
-        {
-            return axis == 'y' ? RotateTranslateY(point, angle, translation) : (axis == 'z' ? RotateTranslateZ(point, angle, translation) : RotateTranslateX(point, angle, translation));
-        };
+        const auto rotatePoint = [axis, angle, translation](gk::Vec3 point) { return axis == 'y' ? RotateTranslateY(point, angle, translation) : (axis == 'z' ? RotateTranslateZ(point, angle, translation) : RotateTranslateX(point, angle, translation)); };
         const gk::Vec3 rotatedJoints[3] = { rotatePoint(bentJoints[0]), rotatePoint(bentJoints[1]), rotatePoint(bentJoints[2]) };
         gk::examples::FModelArmIkPreview rotated{};
         const bool built = gk::examples::MakeMotionFollowingArmIkPreview(rotatePoint(hips), rotatePoint(torso), rotatePoint(leftShoulder), rotatedJoints, rotated);
@@ -1164,7 +1320,7 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
-    if (!TestModelSecondaryMotion(model, instance) || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
+    if (!TestModelSecondaryMotion(model, instance) || !TestModelSecondaryMotionColliders(model, instance, *source) || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
     {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);

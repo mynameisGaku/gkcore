@@ -1,0 +1,10 @@
+﻿# startX startY startZ endX endY endZ radius | 身体のbone名
+# 端点と半径はboneのローカル空間。モデル空間の余白0.005を別に加える。
+0 0 0 0 0 0 0.065 | Hips
+0 0 0 0 0.11 0 0.075 | Spine
+0 0 0 0 0.13 -0.02 0.075 | Chest
+0 0.055 0 0 0.055 0 0.085 | Head
+0 0.03 0 0 0.24 0 0.035 | UpperLeg_L
+0 0.03 0 0 0.24 0 0.035 | UpperLeg_R
+0 0.03 0 0 0.32 0 0.027 | LowerLeg_L
+0 0.03 0 0 0.32 0 0.027 | LowerLeg_R

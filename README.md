@@ -56,7 +56,7 @@ HLSL で書いたピクセルシェーダーを 2D・3D の描画に設定する
 
 Scene 全体に適用する HLSL ポストシェーダーの使い方は[別ガイド](docs/post-effect-shader.md)にまとめています。
 
-モデルはGLB/FBXのclipと連番OBJを再生し、外部clip、ブレンド、人型ボーンの役割対応、IKを設定できます。髪や衣服のボーン鎖には、アニメーションに追従する[揺れもの](docs/model-secondary-motion.md)も設定できます。[モデルアニメーションの使い方](docs/model-animation.md)と[開発用モデルviewer](docs/model-viewer.md)を参照してください。
+モデルはGLB/FBXのclipと連番OBJを再生し、外部clip、ブレンド、人型ボーンの役割対応、IKを設定できます。髪や衣服のボーン鎖にはアニメーションに追従する揺れものを、身体boneには球・カプセル接触形状を設定できます。使い方は[揺れものと身体接触](docs/model-secondary-motion.md)、[モデルアニメーション](docs/model-animation.md)、[開発用モデルviewer](docs/model-viewer.md)を参照してください。
 
 ## 2D・3D とエフェクト
 

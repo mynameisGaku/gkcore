@@ -1262,3 +1262,21 @@ Swingingは腰が大きく移動し、固定cameraではframe2が画面外に出
 - SDK Runtime54ファイルがallowlistに一致。配布header/DLLの4 API exportを外部consumerから呼び、GPU起動からPresent/Shutdownまで成功。再利用したconsumer出力の古いgkcore.dllでentrypoint未検出が一度発生したため、現SDKのDLLへ更新して成功を確認した。
 - 計測: 1280x720通常Release、VSyncなし、標準効果、3000frame/warmup300。最新188.150FPS、p95 5.610ms、揺れ更新1.045ms。300FPS、身体sphere/capsule、スカート隣接制約、world SRT慣性、近接時の品質は未完。
 - 最新記録: build/native-validation/secondary-{full-debug,full-release}-test.log、secondary-final-{release,debug}-capture.log、secondary-motion-final-benchmark.log、secondary-sdk-consumer-run.log。STARTの11へ設定を追加し、CheckOnlyで起動pathを確認した。
+
+## 2026-10-11 揺れものの身体接触
+
+身体boneへlocal球・カプセルを最大64個設定するFModelSecondaryMotionColliderとSetModelSecondaryMotionCollidersを追加しました。古いFModelSecondaryMotionSettingsのlayoutは変えません。instance所有の設定・前回形状を候補状態で全置換し、count0は鎖を残して接触だけ解除します。clip/blend/IK後の身体を小刻み時刻で補間し、節と線分を離散検査します。root内部の最初の線分だけを免除し、自由節は常に検査します。Resetは元poseへ戻し、次のUpdateで接触を解きます。
+
+REDから修正した問題は、球中心で線分方向へ押していた退化normal、pointの表面吸着によるspan押出との循環、長capsuleを親からの最近球だけで避ける誤判定、骨長・角度の復元中に一時侵入した親節で反復を止める処理です。実frameのroot44/shape5/span3をCPU fixtureへ移し、root例外・短/長capsule・複数重複・不可能配置・float境界を確認しました。長capsule側面は軸平行成分を保って直交面の接線方向を解きます。
+
+全拘束後・float保存後・実際の回転から再構成したFK位置を検算します。最後のFK境界で途中終了した605/127frameのbenchmarkは完走結果へ数えません。早期終了だけの導入前後は48画像がbyte一致しました。最終実装は許容幅へ頼らず解けたときに反復を止め、solver内だけ半径へ0.1%の数値余白を加えてFK丸め差に備えます。登録された半径とmarginは保持します。失敗は診断を返し、前回状態を保ちます。
+
+Previewは--secondary-collidersとSTART12を追加しました。鎖設定の既存9数値形式は既定8回を保ち、任意10個目で反復数1..32を指定します。YUMEKAは髪/尻尾8回、スカート32回、身体8形状。60度境界で8回が未収束だったloopは32回で完走しました。身体形状は初期の概算です。2560×1920で脚のprofileを広げた試行も行いましたが、一部スカートの埋まりは解消しませんでした。mesh面の接触・隣接鎖・自己衝突は未実装で、骨の非侵入とcloth品質を区別します。
+
+Windows11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0で、0秒と3.35秒開始の各120frameをDebug/Releaseで再生しました。最終480frameのGPU位置・法線validationはすべてvalid=true、24画像ペアがbyte一致。接触なしの従来13鎖は以前の12画像とbyte一致しました。CPU MSVC19.51はDebug/Release各58/58件成功（4.62秒/4.33秒）。
+
+commandはcmake --build build/dev-windows --config Debug/Release、ctest --test-dir build/dev-windows -C Debug/Release --output-on-failure。nativeはgkcore_real_model_capture_tests <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Silly Dancing.fbx> <Capoeira.fbx> --follow-motion --secondary-motion samples/config/yumeka-secondary-contact-motion.txt --secondary-colliders samples/config/yumeka-secondary-colliders.txt --materials <material-config.txt>。GKCORE_TEST_ANIMATION_FRAMES=120、START_SECONDS=0/3.35、STEP_SECONDS=1/60、CAPTURE_START_FRAME=108、CAPTURE_FRAMES=12、GKCORE_VERIFY_GPU_SKINNING=1を指定し非表示windowを使いました。
+
+通常Release 1280×720、VSyncなし、標準効果、3000frame/warmup300は、全反復の初回98.748FPS（更新5.883ms）から最終172.024FPS（p95 6.400ms、更新1.670ms）へ改善。最終3000frameは完走しました。300FPSは未達です。記録はbuild/native-validation/secondary-contact-{full-debug,full-release}-test.log、secondary-contact-{Release,Debug}-{start,loop}-capture.log、secondary-contact-comparison.json、secondary-contact-final-benchmark.log。拡大比較はbuild/real-model-captures/Release/secondary-contact/quality-comparison.pngにあります。
+
+ゲーム構築用333ファイルのtreeをprepare_game_repository.pyのallowlist・変換処理で既存stagingへ更新しました。tests・開発記録・私有assetは除外し、同treeからRuntimeと5sampleをRelease buildしました。installしたRuntime SDK55ファイルがallowlistと一致し、新APIを別consumerからリンク・呼び出してGPUのInit→Present→Shutdownが成功しました。ログはsecondary-contact-game-{build,install,consumer-build,consumer-run}.logです。生成した試行configと旧first capture12枚はworkspace内の生成物と確認して削除し、現build・最新画像・必要な失敗記録を残しました。

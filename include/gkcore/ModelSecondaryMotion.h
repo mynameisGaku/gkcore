@@ -7,8 +7,10 @@
 namespace gk
 {
 struct FModelSecondaryMotionSettings;
+struct FModelSecondaryMotionCollider;
 }
 #include <gkcore/FModelSecondaryMotionSettings.h>
+#include <gkcore/FModelSecondaryMotionCollider.h>
 
 /**
  * アニメーションの後に、髪や衣服のボーンへ揺れを加えるAPI。
@@ -35,6 +37,15 @@ GKCORE_API int ResetModelSecondaryMotion(ModelHandle model);
  * このinstanceの揺れもの設定と状態を解放する。未設定でも成功する。
  */
 GKCORE_API int ClearModelSecondaryMotion(ModelHandle model);
+/**
+ * 身体の接触形状をコピーして全置換する。先に揺れものの鎖を登録する。
+ * 最大64個、marginはmodel空間の有限な0以上の余白。count=0で接触だけを解除する。
+ * 形状はclip・blend・IK後の身体に追従し、揺れるboneの子孫へは取り付けない。
+ * rootは動かさず、rootが形状内にある場合は最初の線分だけ接触から除外する。
+ * 各更新時の節と線分を検査する。更新間の高速なすり抜けやmesh面の接触は扱わない。
+ */
+GKCORE_API int SetModelSecondaryMotionColliders(ModelHandle model, const FModelSecondaryMotionCollider* colliders, uint32_t count, float margin = 0.005f);
+
 }
 
 #endif
