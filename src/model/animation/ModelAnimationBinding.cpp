@@ -163,6 +163,73 @@ Float4 ReadWorldRotation(const Array<float>& rotations, uint32_t index)
 }
 
 /**
+ * 対応済みの役割から適用先の骨番号を探す。見つからない場合はUINT32_MAX。
+ */
+uint32_t FindMappedRole(const FModelClipState& state, EHumanoidBone role)
+{
+    for (uint32_t bone = 0; bone < state.mappedRoles.Count(); ++bone)
+    {
+        if (state.mappedRoles.At(bone) == static_cast<uint16_t>(role) && bone < state.bones.Count() && state.bones.At(bone) >= 0)
+        {
+            return bone;
+        }
+    }
+    return UINT32_MAX;
+}
+
+/**
+ * rest model行列の骨原点間距離を返す。対応範囲が不正なら0。
+ */
+double RestBoneDistance(const Array<float>& matrices, uint32_t first, uint32_t second)
+{
+    if (first >= matrices.Count() / 16u || second >= matrices.Count() / 16u)
+    {
+        return 0.0;
+    }
+    const float* a = matrices.Data() + first * 16u + 12u;
+    const float* b = matrices.Data() + second * 16u + 12u;
+    const double x = static_cast<double>(a[0]) - b[0];
+    const double y = static_cast<double>(a[1]) - b[1];
+    const double z = static_cast<double>(a[2]) - b[2];
+    return sqrt(x * x + y * y + z * z);
+}
+
+/**
+ * 完全に対応した左右の脚長比を求め、親の平行移動の分け方に依存しない倍率を返す。
+ * 有効な脚が一つもない場合は0を返し、従来の腰位置比へ戻す。
+ */
+double HumanoidTranslationScale(const FModelClipState& state, const Array<float>& sourceMatrices, const Array<float>& targetMatrices)
+{
+    const EHumanoidBone roles[2][3] = { { EHumanoidBone::LeftUpperLeg, EHumanoidBone::LeftLowerLeg, EHumanoidBone::LeftFoot }, { EHumanoidBone::RightUpperLeg, EHumanoidBone::RightLowerLeg, EHumanoidBone::RightFoot } };
+    double sourceLength = 0.0;
+    double targetLength = 0.0;
+    for (uint32_t side = 0; side < 2; ++side)
+    {
+        const uint32_t upper = FindMappedRole(state, roles[side][0]);
+        const uint32_t lower = FindMappedRole(state, roles[side][1]);
+        const uint32_t foot = FindMappedRole(state, roles[side][2]);
+        if (upper == UINT32_MAX || lower == UINT32_MAX || foot == UINT32_MAX)
+        {
+            continue;
+        }
+        const uint32_t sourceUpper = static_cast<uint32_t>(state.bones.At(upper));
+        const uint32_t sourceLower = static_cast<uint32_t>(state.bones.At(lower));
+        const uint32_t sourceFoot = static_cast<uint32_t>(state.bones.At(foot));
+        const double sourceUpperLength = RestBoneDistance(sourceMatrices, sourceUpper, sourceLower);
+        const double sourceLowerLength = RestBoneDistance(sourceMatrices, sourceLower, sourceFoot);
+        const double targetUpperLength = RestBoneDistance(targetMatrices, upper, lower);
+        const double targetLowerLength = RestBoneDistance(targetMatrices, lower, foot);
+        if (sourceUpperLength > 0.0 && sourceLowerLength > 0.0 && targetUpperLength > 0.0 && targetLowerLength > 0.0 && isfinite(sourceUpperLength) && isfinite(sourceLowerLength) && isfinite(targetUpperLength) && isfinite(targetLowerLength))
+        {
+            sourceLength += sourceUpperLength + sourceLowerLength;
+            targetLength += targetUpperLength + targetLowerLength;
+        }
+    }
+    const double ratio = sourceLength > 0.0 ? targetLength / sourceLength : 0.0;
+    return isfinite(ratio) && ratio > 0.0 ? ratio : 0.0;
+}
+
+/**
  * sourceとtargetの不変rest pose行列・親階層回転を候補へ構築する。
  */
 bool BuildRestPoseCache(const animation::FModelSkeleton& sourceSkeleton, const animation::FModelSkeleton& targetSkeleton, Array<float>& sourceMatrices, Array<float>& targetMatrices, Array<float>& sourceRotations, Array<float>& targetRotations, String& error)
@@ -287,6 +354,10 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
         }
         if (&source != target && !BuildRestPoseCache(source.source->Skeleton(), destination.Skeleton(), staged.sourceRestModelMatrices, staged.targetRestModelMatrices, staged.sourceRestWorldRotations, staged.targetRestWorldRotations, error))
             return false;
+        if (&source != target)
+        {
+            staged.humanoidTranslationScale = HumanoidTranslationScale(staged, staged.sourceRestModelMatrices, staged.targetRestModelMatrices);
+        }
     }
     if (!Retain(&source.reference))
     {
@@ -302,6 +373,7 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
     candidate.targetRestModelMatrices.MoveFrom(staged.targetRestModelMatrices);
     candidate.sourceRestWorldRotations.MoveFrom(staged.sourceRestWorldRotations);
     candidate.targetRestWorldRotations.MoveFrom(staged.targetRestWorldRotations);
+    candidate.humanoidTranslationScale = staged.humanoidTranslationScale;
     candidate.asset = &source;
     candidate.clip = clip;
     error.Clear();
@@ -345,6 +417,7 @@ bool SampleBoundClip(const FModelClipState& state, const FModelAnimationAsset& t
     const Array<float>& targetRestMatrices = hasCachedRestData ? state.targetRestModelMatrices : fallbackTargetMatrices;
     const Array<float>& sourceRestRotations = hasCachedRestData ? state.sourceRestWorldRotations : fallbackSourceRotations;
     const Array<float>& targetRestRotations = hasCachedRestData ? state.targetRestWorldRotations : fallbackTargetRotations;
+    const double humanoidScale = hasCachedRestData ? state.humanoidTranslationScale : HumanoidTranslationScale(state, sourceRestMatrices, targetRestMatrices);
     Array<Float4> sourceAnimated, targetAnimated;
     Array<float> sourceMatrices, targetMatrices;
     if (!animation::EvaluateModelPose(sourceSkeleton, sampled, sourceMatrices, error))
@@ -393,7 +466,11 @@ bool SampleBoundClip(const FModelClipState& state, const FModelAnimationAsset& t
                 else
                     memcpy(delta, modelDelta, sizeof(delta));
                 double ratio = 1.0;
-                if (role == static_cast<uint16_t>(EHumanoidBone::Hips))
+                if (role == static_cast<uint16_t>(EHumanoidBone::Hips) && humanoidScale > 0.0)
+                {
+                    ratio = humanoidScale;
+                }
+                else if (role == static_cast<uint16_t>(EHumanoidBone::Hips))
                 {
                     const double sourceOffset[3] = { rest.position[0], rest.position[1], rest.position[2] };
                     const double targetOffset[3] = { value.position[0], value.position[1], value.position[2] };

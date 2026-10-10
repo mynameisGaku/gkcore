@@ -35,6 +35,8 @@ struct FModelClipState
     Array<float> sourceRestModelMatrices;
     // 外部clipを結ぶ時に固定されるtarget rest poseのmodel行列。
     Array<float> targetRestModelMatrices;
+    // 対応脚の長さから求めた腰移動の倍率。0なら従来の腰位置比を使う。
+    double humanoidTranslationScale = 0.0;
     // source rest poseの親階層回転を4成分ずつ保持する。
     Array<float> sourceRestWorldRotations;
     // target rest poseの親階層回転を4成分ずつ保持する。
