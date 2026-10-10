@@ -14,7 +14,6 @@ namespace
 thread_local uint64_t worldRotationCountForTesting = 0;
 #endif
 
-
 /**
  * IK計算に使うmodel空間の倍精度位置。
  */
@@ -732,11 +731,12 @@ bool SolveCcdIk(const FModelSkeleton& skeleton, const FModelPose& source, const 
     return BlendIkResult(skeleton, source, solved, weight, output, error);
 }
 
-bool OrientModelPoseChain(const FModelSkeleton& skeleton, const FModelPose& source, const uint32_t* bones, uint32_t count, gk::Vec3 endOffset, const gk::Vec3* points, FModelPose& output, gk::String& error)
+bool OrientModelPoseChains(const FModelSkeleton& skeleton, const FModelPose& source, const FModelPoseChain* chains, uint32_t chainCount, FModelPose& output, gk::String& error)
 {
-    if (!bones || !points || count == 0 || count > skeleton.parents.Count() || !isfinite(endOffset.x) || !isfinite(endOffset.y) || !isfinite(endOffset.z))
+    error.Clear();
+    if (!chains || chainCount == 0 || chainCount > skeleton.parents.Count())
     {
-        error.Assign("secondary chain orientation input is invalid");
+        error.Assign("secondary chain batch input is invalid");
         return false;
     }
     gk::Array<float> matrices;
@@ -744,118 +744,165 @@ bool OrientModelPoseChain(const FModelSkeleton& skeleton, const FModelPose& sour
     {
         return false;
     }
-    for (uint32_t item = 0; item < count; ++item)
+    for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
     {
-        const uint32_t bone = bones[item];
-        if (bone >= skeleton.parents.Count() || (item > 0 && skeleton.parents.At(bone) != static_cast<int32_t>(bones[item - 1])))
+        const FModelPoseChain& chain = chains[chainIndex];
+        if (!chain.bones || !chain.points || chain.count == 0 || chain.count > skeleton.parents.Count() || !isfinite(chain.endOffset.x) || !isfinite(chain.endOffset.y) || !isfinite(chain.endOffset.z))
         {
-            error.Assign("secondary bones must form a continuous parent-child chain");
+            error.Assign("secondary chain orientation input is invalid");
             return false;
         }
-        for (int32_t ancestor = static_cast<int32_t>(bone); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
+        for (uint32_t item = 0; item < chain.count; ++item)
         {
-            const auto& transform = source.localTransforms.At(static_cast<uint32_t>(ancestor));
-            const float largest = fmaxf(transform.scale[0], fmaxf(transform.scale[1], transform.scale[2]));
-            const float smallest = fminf(transform.scale[0], fminf(transform.scale[1], transform.scale[2]));
-            // 小さな入力軸差だけを許し、非一様scaleによる変形誤差を抑える。
-            if (!(smallest > 0.0f) || largest - smallest > largest * (128.0f * FLT_EPSILON))
+            const uint32_t bone = chain.bones[item];
+            if (bone >= skeleton.parents.Count() || (item > 0 && skeleton.parents.At(bone) != static_cast<int32_t>(chain.bones[item - 1])))
             {
-                char diagnosis[192]{};
-                snprintf(diagnosis, sizeof(diagnosis), "secondary motion requires positive near-uniform ancestor scale: bone=%d scale=(%.9g,%.9g,%.9g)", ancestor, transform.scale[0], transform.scale[1], transform.scale[2]);
-                error.Assign(diagnosis);
+                error.Assign("secondary bones must form a continuous parent-child chain");
+                return false;
+            }
+            for (int32_t ancestor = static_cast<int32_t>(bone); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
+            {
+                const auto& transform = source.localTransforms.At(static_cast<uint32_t>(ancestor));
+                const float largest = fmaxf(transform.scale[0], fmaxf(transform.scale[1], transform.scale[2]));
+                const float smallest = fminf(transform.scale[0], fminf(transform.scale[1], transform.scale[2]));
+                // 小さな入力軸差だけを許し、非一様scaleによる変形誤差を抑える。
+                if (!(smallest > 0.0f) || largest - smallest > largest * (128.0f * FLT_EPSILON))
+                {
+                    char diagnosis[192]{};
+                    snprintf(diagnosis, sizeof(diagnosis), "secondary motion requires positive near-uniform ancestor scale: bone=%d scale=(%.9g,%.9g,%.9g)", ancestor, transform.scale[0], transform.scale[1], transform.scale[2]);
+                    error.Assign(diagnosis);
+                    return false;
+                }
+            }
+        }
+        for (uint32_t item = 0; item <= chain.count; ++item)
+        {
+            if (!isfinite(chain.points[item].x) || !isfinite(chain.points[item].y) || !isfinite(chain.points[item].z))
+            {
+                error.Assign("secondary point is not finite");
                 return false;
             }
         }
     }
-    for (uint32_t item = 0; item <= count; ++item)
+
+    // 鎖同士の親子重なりだけを拒み、骨格上の共有parentは許す。
+    for (uint32_t first = 0; first < chainCount; ++first)
     {
-        if (!isfinite(points[item].x) || !isfinite(points[item].y) || !isfinite(points[item].z))
+        for (uint32_t second = first + 1; second < chainCount; ++second)
         {
-            error.Assign("secondary point is not finite");
-            return false;
+            const uint32_t firstRoot = chains[first].bones[0];
+            const uint32_t secondRoot = chains[second].bones[0];
+            for (int32_t ancestor = static_cast<int32_t>(firstRoot); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
+            {
+                if (static_cast<uint32_t>(ancestor) == secondRoot)
+                {
+                    error.Assign("secondary chains must not share bones or contain ancestor-descendant overlap");
+                    return false;
+                }
+            }
+            for (int32_t ancestor = static_cast<int32_t>(secondRoot); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
+            {
+                if (static_cast<uint32_t>(ancestor) == firstRoot)
+                {
+                    error.Assign("secondary chains must not share bones or contain ancestor-descendant overlap");
+                    return false;
+                }
+            }
         }
     }
+
     FModelPose candidate;
     if (!CopyPose(source, candidate, error))
     {
         return false;
     }
-    // 先頭の祖先だけを積算し、連続した鎖は前の節のworld回転を引き継ぐ。
-    FQuaternion baseParent{};
-    if (!EvaluateParentWorldRotation(skeleton, source, bones[0], baseParent, error))
+    for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
     {
-        return false;
-    }
-    FQuaternion updatedParent = baseParent;
-    for (uint32_t item = 0; item < count; ++item)
-    {
-        const uint32_t offset = bones[item] * 16u;
-        const FVector3 origin{ { matrices.At(offset + 12), matrices.At(offset + 13), matrices.At(offset + 14) } };
-        FVector3 currentDirection{};
-        if (item + 1 < count)
+        const FModelPoseChain& chain = chains[chainIndex];
+        // 先頭の祖先だけを積算し、連続した鎖は前の節のworld回転を引き継ぐ。
+        FQuaternion baseParent{};
+        if (!EvaluateParentWorldRotation(skeleton, source, chain.bones[0], baseParent, error))
         {
-            const uint32_t childOffset = bones[item + 1] * 16u;
-            currentDirection = Subtract(FVector3{ { matrices.At(childOffset + 12), matrices.At(childOffset + 13), matrices.At(childOffset + 14) } }, origin);
+            return false;
         }
-        else
+        FQuaternion updatedParent = baseParent;
+        for (uint32_t item = 0; item < chain.count; ++item)
         {
-            currentDirection = { { matrices.At(offset) * static_cast<double>(endOffset.x) + matrices.At(offset + 4) * static_cast<double>(endOffset.y) + matrices.At(offset + 8) * static_cast<double>(endOffset.z), matrices.At(offset + 1) * static_cast<double>(endOffset.x) + matrices.At(offset + 5) * static_cast<double>(endOffset.y) + matrices.At(offset + 9) * static_cast<double>(endOffset.z), matrices.At(offset + 2) * static_cast<double>(endOffset.x) + matrices.At(offset + 6) * static_cast<double>(endOffset.y) + matrices.At(offset + 10) * static_cast<double>(endOffset.z) } };
-        }
-        const FVector3 desiredDirection{ { static_cast<double>(points[item + 1].x) - points[item].x, static_cast<double>(points[item + 1].y) - points[item].y, static_cast<double>(points[item + 1].z) - points[item].z } };
-        // ねじれは元の姿勢から保ち、節の向きを結ぶ最小回転だけを加える。
-        const FVector3 fallback{ { matrices.At(offset + 4), matrices.At(offset + 5), matrices.At(offset + 6) } };
-        FQuaternion delta{}, local{};
-        if (!RotationBetween(currentDirection, desiredDirection, fallback, delta))
-        {
-            if (error.Empty())
+            const uint32_t bone = chain.bones[item];
+            const uint32_t offset = bone * 16u;
+            const FVector3 origin{ { matrices.At(offset + 12), matrices.At(offset + 13), matrices.At(offset + 14) } };
+            FVector3 currentDirection{};
+            if (item + 1 < chain.count)
             {
-                error.Assign("secondary motion cannot orient a zero-length segment");
+                const uint32_t childOffset = chain.bones[item + 1] * 16u;
+                currentDirection = Subtract(FVector3{ { matrices.At(childOffset + 12), matrices.At(childOffset + 13), matrices.At(childOffset + 14) } }, origin);
             }
-            return false;
-        }
-        for (uint32_t component = 0; component < 4; ++component)
-        {
-            local.value[component] = source.localTransforms.At(bones[item]).rotation[component];
-        }
-        if (!NormalizeQuaternion(local))
-        {
-            error.Assign("secondary motion source rotation is invalid");
-            return false;
-        }
-        // 元のworld回転を最小回転で曲げ、新しい親に対するlocal回転へ戻す。
-        FQuaternion rotation = MultiplyQuaternion(Conjugate(updatedParent), MultiplyQuaternion(delta, MultiplyQuaternion(baseParent, local)));
-        if (!NormalizeQuaternion(rotation))
-        {
-            error.Assign("secondary motion produced an invalid rotation");
-            return false;
-        }
-        for (uint32_t component = 0; component < 4; ++component)
-        {
-            candidate.localTransforms.At(bones[item]).rotation[component] = static_cast<float>(rotation.value[component]);
-        }
-        // 次の節では、floatへ保存した実際のlocal回転を親の積算に使う。
-        FQuaternion storedLocal{};
-        for (uint32_t component = 0; component < 4; ++component)
-        {
-            storedLocal.value[component] = candidate.localTransforms.At(bones[item]).rotation[component];
-        }
-        if (!NormalizeQuaternion(storedLocal))
-        {
-            error.Assign("secondary motion stored rotation is invalid");
-            return false;
-        }
-        baseParent = skeleton.parents.At(bones[item]) < 0 ? local : MultiplyQuaternion(baseParent, local);
-        updatedParent = skeleton.parents.At(bones[item]) < 0 ? storedLocal : MultiplyQuaternion(updatedParent, storedLocal);
-        if (!NormalizeQuaternion(baseParent) || !NormalizeQuaternion(updatedParent))
-        {
-            error.Assign("secondary motion chain world rotation is invalid");
-            return false;
+            else
+            {
+                currentDirection = { { matrices.At(offset) * static_cast<double>(chain.endOffset.x) + matrices.At(offset + 4) * static_cast<double>(chain.endOffset.y) + matrices.At(offset + 8) * static_cast<double>(chain.endOffset.z), matrices.At(offset + 1) * static_cast<double>(chain.endOffset.x) + matrices.At(offset + 5) * static_cast<double>(chain.endOffset.y) + matrices.At(offset + 9) * static_cast<double>(chain.endOffset.z), matrices.At(offset + 2) * static_cast<double>(chain.endOffset.x) + matrices.At(offset + 6) * static_cast<double>(chain.endOffset.y) + matrices.At(offset + 10) * static_cast<double>(chain.endOffset.z) } };
+            }
+            const FVector3 desiredDirection{ { static_cast<double>(chain.points[item + 1].x) - chain.points[item].x, static_cast<double>(chain.points[item + 1].y) - chain.points[item].y, static_cast<double>(chain.points[item + 1].z) - chain.points[item].z } };
+            // ねじれは元の姿勢から保ち、節の向きを結ぶ最小回転だけを加える。
+            const FVector3 fallback{ { matrices.At(offset + 4), matrices.At(offset + 5), matrices.At(offset + 6) } };
+            FQuaternion delta{}, local{};
+            if (!RotationBetween(currentDirection, desiredDirection, fallback, delta))
+            {
+                if (error.Empty())
+                {
+                    error.Assign("secondary motion cannot orient a zero-length segment");
+                }
+                return false;
+            }
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                local.value[component] = source.localTransforms.At(bone).rotation[component];
+            }
+            if (!NormalizeQuaternion(local))
+            {
+                error.Assign("secondary motion source rotation is invalid");
+                return false;
+            }
+            // 元のworld回転を最小回転で曲げ、新しい親に対するlocal回転へ戻す。
+            FQuaternion rotation = MultiplyQuaternion(Conjugate(updatedParent), MultiplyQuaternion(delta, MultiplyQuaternion(baseParent, local)));
+            if (!NormalizeQuaternion(rotation))
+            {
+                error.Assign("secondary motion produced an invalid rotation");
+                return false;
+            }
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                candidate.localTransforms.At(bone).rotation[component] = static_cast<float>(rotation.value[component]);
+            }
+            // 次の節では、floatへ保存した実際のlocal回転を親の積算に使う。
+            FQuaternion storedLocal{};
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                storedLocal.value[component] = candidate.localTransforms.At(bone).rotation[component];
+            }
+            if (!NormalizeQuaternion(storedLocal))
+            {
+                error.Assign("secondary motion stored rotation is invalid");
+                return false;
+            }
+            baseParent = skeleton.parents.At(bone) < 0 ? local : MultiplyQuaternion(baseParent, local);
+            updatedParent = skeleton.parents.At(bone) < 0 ? storedLocal : MultiplyQuaternion(updatedParent, storedLocal);
+            if (!NormalizeQuaternion(baseParent) || !NormalizeQuaternion(updatedParent))
+            {
+                error.Assign("secondary motion chain world rotation is invalid");
+                return false;
+            }
         }
     }
     output.localTransforms.MoveFrom(candidate.localTransforms);
     output.morphWeights.MoveFrom(candidate.morphWeights);
     error.Clear();
     return true;
+}
+
+bool OrientModelPoseChain(const FModelSkeleton& skeleton, const FModelPose& source, const uint32_t* bones, uint32_t count, gk::Vec3 endOffset, const gk::Vec3* points, FModelPose& output, gk::String& error)
+{
+    const FModelPoseChain chain{ bones, count, endOffset, points };
+    return OrientModelPoseChains(skeleton, source, &chain, 1, output, error);
 }
 
 }

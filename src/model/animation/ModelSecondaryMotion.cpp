@@ -5,6 +5,7 @@
 #include "model/animation/ModelSecondaryMotionColliders.h"
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelIk.h"
+#include "model/animation/FModelPoseChain.h"
 #include "model/animation/AModelAnimationSource.h"
 #include "core/Context.h"
 #include <math.h>
@@ -271,6 +272,26 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         return Failure(error);
     }
+    // 全鎖の点を一度だけ確保し、一括で回す間は参照先を移動させない。
+    Array<Vec3> orientationPoints;
+    Array<model::animation::FModelPoseChain> orientationChains;
+    if (!reset)
+    {
+        uint64_t pointCapacity = 0;
+        for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+        {
+            const auto* chain = previous->chains.At(index);
+            if (!chain || chain->bones.Count() == 0)
+            {
+                return detail::SetError("secondary motion chain is empty");
+            }
+            pointCapacity += static_cast<uint64_t>(chain->bones.Count()) + 1u;
+        }
+        if (pointCapacity > UINT32_MAX || !orientationPoints.Reserve(static_cast<uint32_t>(pointCapacity)) || !orientationChains.Reserve(previous->chains.Count()))
+        {
+            return detail::SetError("secondary motion orientation allocation failed");
+        }
+    }
     for (uint32_t index = 0; index < previous->chains.Count(); ++index)
     {
         if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
@@ -301,16 +322,31 @@ int Update(ModelHandle handle, double delta, bool reset)
                 error.Append(")");
                 return Failure(error);
             }
-            Array<Vec3> points;
+            // 鎖ごとに全身姿勢を作らず、同じ基準姿勢へまとめて回転を加える。
+            const uint32_t pointOffset = orientationPoints.Count();
             for (uint32_t point = 0; point < chain.simulation.points.Count(); ++point)
             {
-                if (!points.Append(chain.simulation.points.At(point).position))
+                if (!orientationPoints.Append(chain.simulation.points.At(point).position))
                 {
                     return detail::SetError("secondary motion point allocation failed");
                 }
             }
-            model::animation::FModelPose oriented;
-            if (!model::animation::OrientModelPoseChain(resource->animation->source->Skeleton(), base, chain.bones.Data(), chain.bones.Count(), chain.settings.endOffset, points.Data(), oriented, error) || !CacheTransforms(chain, oriented, error))
+            if (!orientationChains.Append(model::animation::FModelPoseChain{ chain.bones.Data(), chain.bones.Count(), chain.settings.endOffset, orientationPoints.Data() + pointOffset }))
+            {
+                return detail::SetError("secondary motion orientation allocation failed");
+            }
+        }
+    }
+    model::animation::FModelPose combined;
+    if (!reset && orientationChains.Count() > 0)
+    {
+        if (!model::animation::OrientModelPoseChains(resource->animation->source->Skeleton(), base, orientationChains.Data(), orientationChains.Count(), combined, error))
+        {
+            return Failure(error);
+        }
+        for (uint32_t index = 0; index < candidate.chains.Count(); ++index)
+        {
+            if (!CacheTransforms(*candidate.chains.At(index), combined, error))
             {
                 return Failure(error);
             }
@@ -319,9 +355,13 @@ int Update(ModelHandle handle, double delta, bool reset)
     if (!reset && currentShapes.Count() > 0)
     {
         // 描画へ渡す回転を全鎖へ重ね、実際のFK位置でも接触が成立することを確認する。
-        model::animation::FModelPose combined;
         Array<float> renderedMatrices;
-        if (!combined.localTransforms.AppendRange(base.localTransforms.Data(), base.localTransforms.Count()) || !combined.morphWeights.AppendRange(base.morphWeights.Data(), base.morphWeights.Count()) || !model::ApplyModelSecondaryMotion(candidate, combined, error) || !model::animation::EvaluateModelPose(resource->animation->source->Skeleton(), combined, renderedMatrices, error))
+        // 未登録の空状態も従来どおり基準姿勢として検査する。
+        if (orientationChains.Count() == 0 && (!combined.localTransforms.AppendRange(base.localTransforms.Data(), base.localTransforms.Count()) || !combined.morphWeights.AppendRange(base.morphWeights.Data(), base.morphWeights.Count())))
+        {
+            return detail::SetError("secondary motion pose allocation failed");
+        }
+        if (!model::animation::EvaluateModelPose(resource->animation->source->Skeleton(), combined, renderedMatrices, error))
         {
             return Failure(error);
         }

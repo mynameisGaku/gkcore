@@ -15,11 +15,14 @@ namespace gk::model::animation
  */
 void ResetModelPoseWorkForTesting();
 /**
+ * 検査中に実行した姿勢の全骨格評価回数を返す。
+ */
+uint64_t GetModelPoseEvaluationCountForTesting();
+/**
  * 検査中に実行したquaternion正規化回数を返す。
  */
 uint64_t GetModelPoseQuaternionNormalizationCountForTesting();
 #endif
-
 
 /**
  * 骨格姿勢の初期化、補間、親子変換評価を提供する。

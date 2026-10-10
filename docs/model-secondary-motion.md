@@ -88,6 +88,10 @@ scaleは正でほぼ一様なものに限り、各祖先の最大・最小scale�
 各軸差が約5%のfixtureは拒否され、失敗時に出力姿勢を保つことも確認しています。
 YUMEKA実データと同じscale値を使った3骨fixtureでは、姿勢点誤差が0.0001未満でした。
 
+鎖に登録したboneでも、頂点を動かすskin weightが設定されていなければ、そのboneを動かしても対応するmesh部分は動きません。
+頂点は複数boneの動きを混ぜて変形し、布の表面はboneの線から横へ広がるため、鎖の節や線分を身体に接触させても布全体が身体から離れるとは限りません。
+この機能は衣服や髪が身体へ埋まらないことを保証するものではありません。
+
 ## ViewerのYUMEKA設定
 
 `model_viewer`と`real_model_capture_tests`は`--secondary-motion <config-file>`を受け付けます。
