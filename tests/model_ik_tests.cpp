@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelIk.h"
+#include "model/animation/FModelPoseChain.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -780,9 +781,243 @@ bool TestSecondaryChainOrientation()
     return true;
 }
 
+/**
+ * 339骨姿勢に共有親を持つ独立2節鎖を用意する。
+ */
+bool MakeMultiChainOrientationFixture(FModelSkeleton& skeleton, FModelPose& source)
+{
+    if (!MakeWideFixture(339, false, skeleton, source))
+    {
+        return false;
+    }
+    skeleton.parents.At(4) = 3;
+    skeleton.restLocalTransforms.At(3).position[0] = -0.65f;
+    skeleton.restLocalTransforms.At(3).position[1] = 0.25f;
+    skeleton.restLocalTransforms.At(3).position[2] = 0.1f;
+    source.localTransforms.At(3).position[0] = -0.65f;
+    source.localTransforms.At(3).position[1] = 0.25f;
+    source.localTransforms.At(3).position[2] = 0.1f;
+    skeleton.restLocalTransforms.At(4).position[0] = 0.8f;
+    skeleton.restLocalTransforms.At(4).position[1] = 0.15f;
+    skeleton.restLocalTransforms.At(4).position[2] = -0.05f;
+    source.localTransforms.At(4).position[0] = 0.8f;
+    source.localTransforms.At(4).position[1] = 0.15f;
+    source.localTransforms.At(4).position[2] = -0.05f;
+    const float morphWeights[2] = { 0.25f, -0.4f };
+    return source.morphWeights.AppendRange(morphWeights, 2) && skeleton.restMorphWeights.AppendRange(morphWeights, 2);
+}
+
+/**
+ * 3次元方向をZ軸回りに回してfixtureの目標点列を作る。
+ */
+gk::Vec3 RotateAroundZ(gk::Vec3 value, double angle)
+{
+    const double cosine = cos(angle);
+    const double sine = sin(angle);
+    return { static_cast<float>(cosine * value.x - sine * value.y), static_cast<float>(sine * value.x + cosine * value.y), value.z };
+}
+
+/**
+ * source FKから指定鎖の回転後jointとtip目標を作る。
+ */
+bool MakeMultiChainTargets(const gk::Array<float>& matrices, uint32_t rootBone, uint32_t endBone, gk::Vec3 endOffset, double angle, gk::Vec3 points[3])
+{
+    const uint32_t rootOffset = rootBone * 16u;
+    const uint32_t endOffsetIndex = endBone * 16u;
+    const gk::Vec3 root{ matrices.At(rootOffset + 12u), matrices.At(rootOffset + 13u), matrices.At(rootOffset + 14u) };
+    const gk::Vec3 end{ matrices.At(endOffsetIndex + 12u), matrices.At(endOffsetIndex + 13u), matrices.At(endOffsetIndex + 14u) };
+    const gk::Vec3 jointDirection{ end.x - root.x, end.y - root.y, end.z - root.z };
+    const gk::Vec3 tipDirection{ matrices.At(endOffsetIndex) * endOffset.x + matrices.At(endOffsetIndex + 4u) * endOffset.y + matrices.At(endOffsetIndex + 8u) * endOffset.z, matrices.At(endOffsetIndex + 1u) * endOffset.x + matrices.At(endOffsetIndex + 5u) * endOffset.y + matrices.At(endOffsetIndex + 9u) * endOffset.z, matrices.At(endOffsetIndex + 2u) * endOffset.x + matrices.At(endOffsetIndex + 6u) * endOffset.y + matrices.At(endOffsetIndex + 10u) * endOffset.z };
+    const gk::Vec3 desiredJointDirection = RotateAroundZ(jointDirection, angle);
+    const gk::Vec3 desiredTipDirection = RotateAroundZ(tipDirection, angle);
+    points[0] = root;
+    points[1] = { root.x + desiredJointDirection.x, root.y + desiredJointDirection.y, root.z + desiredJointDirection.z };
+    points[2] = { points[1].x + desiredTipDirection.x, points[1].y + desiredTipDirection.y, points[1].z + desiredTipDirection.z };
+    return true;
+}
+
+/**
+ * 複数独立鎖を共有parent姿勢から一度のFKで合わせる。
+ */
+bool TestMultipleSecondaryChainOrientation()
+{
+    FModelSkeleton skeleton;
+    FModelPose source, combined, firstOnly, sequential, aliased;
+    gk::Array<float> sourceMatrices;
+    gk::String error;
+    const uint32_t firstBones[2] = { 1, 2 };
+    const uint32_t secondBones[2] = { 3, 4 };
+    const gk::Vec3 endOffset{ 0.35f, 0.07f, -0.04f };
+    gk::Vec3 firstPoints[3]{};
+    gk::Vec3 secondPoints[3]{};
+    if (!MakeMultiChainOrientationFixture(skeleton, source) || !EvaluateModelPose(skeleton, source, sourceMatrices, error) || !MakeMultiChainTargets(sourceMatrices, 1, 2, endOffset, 0.63, firstPoints) || !MakeMultiChainTargets(sourceMatrices, 3, 4, endOffset, -0.82, secondPoints))
+    {
+        return Fail(error.Empty() ? "multi-chain orientation fixture failed" : error.CStr());
+    }
+    const FModelPoseChain chains[2] = { { firstBones, 2, endOffset, firstPoints }, { secondBones, 2, endOffset, secondPoints } };
+    ResetModelPoseWorkForTesting();
+    if (!OrientModelPoseChains(skeleton, source, chains, 2, combined, error))
+    {
+        return Fail(error.CStr());
+    }
+    if (GetModelPoseEvaluationCountForTesting() != 1u)
+    {
+        return Fail("multi-chain orientation evaluated the shared pose more than once");
+    }
+    if (!OrientModelPoseChain(skeleton, source, firstBones, 2, endOffset, firstPoints, firstOnly, error) || !OrientModelPoseChain(skeleton, firstOnly, secondBones, 2, endOffset, secondPoints, sequential, error))
+    {
+        return Fail(error.CStr());
+    }
+    if (!SamePose(combined, sequential))
+    {
+        return Fail("multi-chain result differed from applying the single-chain wrapper to independent branches");
+    }
+    if (!ClonePose(source, aliased) || !OrientModelPoseChains(skeleton, aliased, chains, 2, aliased, error) || !SamePose(combined, aliased))
+    {
+        return Fail(error.Empty() ? "multi-chain source/output alias changed its result" : error.CStr());
+    }
+    gk::Array<float> resultMatrices;
+    if (!EvaluateModelPose(skeleton, combined, resultMatrices, error))
+    {
+        return Fail(error.CStr());
+    }
+    const uint32_t checkBones[2][2] = { { 1, 2 }, { 3, 4 } };
+    const gk::Vec3* expectedPoints[2] = { firstPoints, secondPoints };
+    for (uint32_t chain = 0; chain < 2; ++chain)
+    {
+        for (uint32_t item = 0; item < 2; ++item)
+        {
+            const uint32_t offset = checkBones[chain][item] * 16u;
+            if (fabsf(resultMatrices.At(offset + 12u) - expectedPoints[chain][item].x) > 0.0002f || fabsf(resultMatrices.At(offset + 13u) - expectedPoints[chain][item].y) > 0.0002f || fabsf(resultMatrices.At(offset + 14u) - expectedPoints[chain][item].z) > 0.0002f)
+            {
+                return Fail("multi-chain orientation missed an analytic joint target");
+            }
+        }
+        const uint32_t endOffsetIndex = checkBones[chain][1] * 16u;
+        const gk::Vec3 tip{ resultMatrices.At(endOffsetIndex + 12u) + resultMatrices.At(endOffsetIndex) * endOffset.x + resultMatrices.At(endOffsetIndex + 4u) * endOffset.y + resultMatrices.At(endOffsetIndex + 8u) * endOffset.z, resultMatrices.At(endOffsetIndex + 13u) + resultMatrices.At(endOffsetIndex + 1u) * endOffset.x + resultMatrices.At(endOffsetIndex + 5u) * endOffset.y + resultMatrices.At(endOffsetIndex + 9u) * endOffset.z, resultMatrices.At(endOffsetIndex + 14u) + resultMatrices.At(endOffsetIndex + 2u) * endOffset.x + resultMatrices.At(endOffsetIndex + 6u) * endOffset.y + resultMatrices.At(endOffsetIndex + 10u) * endOffset.z };
+        if (fabsf(tip.x - expectedPoints[chain][2].x) > 0.0002f || fabsf(tip.y - expectedPoints[chain][2].y) > 0.0002f || fabsf(tip.z - expectedPoints[chain][2].z) > 0.0002f)
+        {
+            return Fail("multi-chain orientation missed an analytic tip target");
+        }
+    }
+    for (uint32_t bone = 0; bone < source.localTransforms.Count(); ++bone)
+    {
+        const FModelBoneTransform& before = source.localTransforms.At(bone);
+        const FModelBoneTransform& after = combined.localTransforms.At(bone);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (before.position[axis] != after.position[axis] || before.scale[axis] != after.scale[axis])
+            {
+                return Fail("multi-chain orientation changed a local position or scale");
+            }
+        }
+        if (bone != 1 && bone != 2 && bone != 3 && bone != 4)
+        {
+            for (uint32_t component = 0; component < 4; ++component)
+            {
+                if (before.rotation[component] != after.rotation[component])
+                {
+                    return Fail("multi-chain orientation changed a rotation outside its requested chains");
+                }
+            }
+        }
+    }
+    for (uint32_t morph = 0; morph < source.morphWeights.Count(); ++morph)
+    {
+        if (source.morphWeights.At(morph) != combined.morphWeights.At(morph))
+        {
+            return Fail("multi-chain orientation changed a morph weight");
+        }
+    }
+    return true;
+}
+
+/**
+ * 不正な複数鎖入力を検出し、sourceとoutputの姿勢を保つ。
+ */
+bool TestMultipleSecondaryChainOrientationAtomicValidation()
+{
+    FModelSkeleton skeleton;
+    FModelPose source, output, snapshot;
+    gk::String error;
+    const uint32_t firstBones[2] = { 1, 2 };
+    const uint32_t secondBones[2] = { 3, 4 };
+    const uint32_t repeatedRoot[2] = { 1, 2 };
+    const uint32_t descendantBones[1] = { 2 };
+    const uint32_t disconnectedBones[2] = { 5, 6 };
+    const gk::Vec3 points[3] = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f } };
+    const gk::Vec3 shortPoints[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const gk::Vec3 endOffset{ 0.35f, 0.07f, -0.04f };
+    if (!MakeMultiChainOrientationFixture(skeleton, source))
+    {
+        return Fail("multi-chain validation fixture allocation failed");
+    }
+    if (!ClonePose(source, output))
+    {
+        return Fail("multi-chain output snapshot allocation failed");
+    }
+    output.localTransforms.At(338).position[0] = 123.0f;
+    if (!ClonePose(output, snapshot))
+    {
+        return Fail("multi-chain output preservation snapshot allocation failed");
+    }
+    const FModelPoseChain valid[2] = { { firstBones, 2, endOffset, points }, { secondBones, 2, endOffset, points } };
+    const FModelPoseChain empty[1] = { { nullptr, 0, endOffset, nullptr } };
+    const FModelPoseChain nullSecond[2] = { valid[0], { secondBones, 2, endOffset, nullptr } };
+    const FModelPoseChain badSecond[2] = { valid[0], { disconnectedBones, 2, endOffset, points } };
+    const FModelPoseChain duplicate[2] = { valid[0], { repeatedRoot, 2, endOffset, points } };
+    const FModelPoseChain ancestorOverlap[2] = { valid[0], { descendantBones, 1, endOffset, shortPoints } };
+    if (OrientModelPoseChains(skeleton, source, nullptr, 1, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("null multi-chain input changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, empty, 1, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("empty multi-chain entry changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, valid, 0, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("zero chain count changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, nullSecond, 2, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("null second-chain points changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, badSecond, 2, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("invalid second chain changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, duplicate, 2, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("duplicate chain root changed output or omitted a diagnostic");
+    }
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, source, ancestorOverlap, 2, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("ancestor-descendant chains changed output or omitted a diagnostic");
+    }
+    FModelPose invalidSource;
+    if (!ClonePose(source, invalidSource))
+    {
+        return Fail("multi-chain invalid source allocation failed");
+    }
+    invalidSource.localTransforms.At(338).rotation[0] = NAN;
+    error.Clear();
+    if (OrientModelPoseChains(skeleton, invalidSource, valid, 2, output, error) || error.Empty() || !SamePose(output, snapshot))
+    {
+        return Fail("unrelated invalid source transform changed output or omitted a diagnostic");
+    }
+    return true;
+}
+
 }
 
 int main()
 {
-    return TestSecondaryChainOrientation() && TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() && TestUnchangedTargetPreservesRotatedUnequalChain() && TestWideTwoBoneResultsMatchReducedFixture() && TestWideTwoBoneValidationAndAliasing() ? 0 : 1;
+    return TestSecondaryChainOrientation() && TestMultipleSecondaryChainOrientation() && TestMultipleSecondaryChainOrientationAtomicValidation() && TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() && TestUnchangedTargetPreservesRotatedUnequalChain() && TestWideTwoBoneResultsMatchReducedFixture() && TestWideTwoBoneValidationAndAliasing() ? 0 : 1;
 }

@@ -28,6 +28,10 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 
 途中で接触境界の再構成に失敗した605/127frameの測定は完走結果へ含めません。最終記録は`build/native-validation/secondary-contact-final-benchmark.log`、初回は`secondary-contact-benchmark.log`です。
 
+複数の鎖の向きを一括で合わせる変更後は188.537FPS、p95 5.827msでした。DrawModel平均0.852ms、Present2.255ms、IK設定0.515ms、揺れもの更新1.199msです。13鎖がそれぞれ行っていた全骨格のFKと全pose複製を一度にまとめました。基準姿勢を作るFKと接触検算のFKは残し、physics solver・半径・角度・反復設定は同じです。前回172.024FPSからの変化には計測時の負荷も含まれますが、揺れ更新の重複計算は契約テストで削減を確認しています。300FPSは未達です。
+
+通常Release 1280×720、3000frame / warmup300で完走し、変更前後の固定時刻48画像はbyte一致しました。最新記録は`build/native-validation/secondary-batch-benchmark.log`です。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

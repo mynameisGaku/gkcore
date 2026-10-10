@@ -688,6 +688,98 @@ bool TestMotionFollowingArmIkPreview()
 }
 
 /**
+ * 複数揺れ鎖の更新がFKを共有し、身体接触時だけ描画姿勢の検算を加える。
+ */
+bool TestSecondaryMotionPoseEvaluationBudget()
+{
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+    {
+        return false;
+    }
+    auto* source = new AAnimationRigTestSource;
+    source->boneCount = 7;
+    const int32_t parents[7] = { -1, 0, 1, 0, 3, 0, 0 };
+    gk::model::animation::FModelBoneTransform rest[7]{};
+    rest[1].position[0] = 1.0f;
+    rest[2].position[0] = 1.0f;
+    rest[3].position[1] = 1.0f;
+    rest[4].position[0] = 1.0f;
+    rest[5].position[0] = 10.0f;
+    rest[6].position[1] = -10.0f;
+    if (!source->skeleton.parents.AppendRange(parents, 7) || !source->skeleton.restLocalTransforms.AppendRange(rest, 7))
+    {
+        delete source;
+        gk::Release(&resource->reference);
+        return false;
+    }
+    gk::String error;
+    resource->animation = gk::model::CreateModelAnimationAsset(source, error);
+    gk::detail::ModelVertex vertices[7]{};
+    if (!resource->animation || !resource->vertices.AppendRange(vertices, 7))
+    {
+        gk::Release(&resource->reference);
+        return false;
+    }
+    const auto model = gk::detail::RegisterModelResource(resource, error);
+    gk::detail::ModelTransform baseTransform{};
+    baseTransform.handle = model;
+    baseTransform.scale = { 1.0f, 1.0f, 1.0f };
+    const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
+    const auto instance = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    if (!transformAdded || !instance.IsValid())
+    {
+        if (instance.IsValid())
+        {
+            gk::DeleteModel(instance);
+        }
+        if (model.IsValid())
+        {
+            gk::DeleteModel(model);
+        }
+        else
+        {
+            gk::Release(&resource->reference);
+        }
+        fprintf(stderr, "secondary-motion pose-budget fixture setup failed: %s\n", error.CStr());
+        return false;
+    }
+    const uint32_t firstChain[2] = { 1, 2 };
+    const uint32_t secondChain[2] = { 3, 4 };
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.gravity = {};
+    settings.windAcceleration = {};
+    settings.endOffset = { 0.0f, 0.25f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    bool passed = gk::SetModelSecondaryMotionChain(instance, firstChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChain(instance, secondChain, 2, settings) == 0;
+    if (passed)
+    {
+        gk::model::animation::ResetModelPoseWorkForTesting();
+        passed = gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::model::animation::GetModelPoseEvaluationCountForTesting() == 2u;
+    }
+    gk::FModelSecondaryMotionCollider collider{};
+    collider.bone = 5;
+    collider.radius = 0.1f;
+    if (passed)
+    {
+        passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.0f) == 0;
+    }
+    if (passed)
+    {
+        gk::model::animation::ResetModelPoseWorkForTesting();
+        passed = gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::model::animation::GetModelPoseEvaluationCountForTesting() == 3u;
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "multiple secondary chains exceeded the shared FK evaluation budget: %s\n", gk::GetLastErrorMessage());
+    }
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
+    passed = gk::DeleteModel(instance) == 0 && passed;
+    passed = gk::DeleteModel(model) == 0 && passed;
+    return passed;
+}
+
+/**
  * UpperChest未設定時にChestへ胴体位置を探し直してpreviewを作る。
  */
 bool TestBuildArmIkTorsoFallback()
@@ -1320,7 +1412,7 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
-    if (!TestModelSecondaryMotion(model, instance) || !TestModelSecondaryMotionColliders(model, instance, *source) || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
+    if (!TestModelSecondaryMotion(model, instance) || !TestModelSecondaryMotionColliders(model, instance, *source) || !TestSecondaryMotionPoseEvaluationBudget() || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
     {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);

@@ -11,8 +11,9 @@ namespace
 #if defined(GKCORE_TESTING)
 // このthreadの姿勢計算で実行した正規化数。
 thread_local uint64_t quaternionNormalizationCountForTesting = 0;
+// このthreadの全骨格姿勢評価数。
+thread_local uint64_t modelPoseEvaluationCountForTesting = 0;
 #endif
-
 
 /**
  * 四成分quaternionを一時計算で扱う。
@@ -47,7 +48,6 @@ bool HasValidRotation(const float rotation[4])
     }
     return nonzero;
 }
-
 
 /**
  * 骨格rest変換が有限値と有効親順を持つか調べる。
@@ -265,6 +265,12 @@ bool BuildLocalMatrix(const FModelBoneTransform& transform, float output[16])
 void ResetModelPoseWorkForTesting()
 {
     quaternionNormalizationCountForTesting = 0;
+    modelPoseEvaluationCountForTesting = 0;
+}
+
+uint64_t GetModelPoseEvaluationCountForTesting()
+{
+    return modelPoseEvaluationCountForTesting;
 }
 
 uint64_t GetModelPoseQuaternionNormalizationCountForTesting()
@@ -394,6 +400,9 @@ bool BlendModelPoses(const FModelSkeleton& skeleton, const FModelPose& first, co
  */
 bool EvaluateModelPose(const FModelSkeleton& skeleton, const FModelPose& pose, gk::Array<float>& worldMatrices, gk::String& error)
 {
+#if defined(GKCORE_TESTING)
+    ++modelPoseEvaluationCountForTesting;
+#endif
     error.Clear();
     if (!ValidatePose(skeleton, pose, error))
         return false;

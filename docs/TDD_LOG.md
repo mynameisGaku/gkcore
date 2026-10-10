@@ -1280,3 +1280,19 @@ commandはcmake --build build/dev-windows --config Debug/Release、ctest --test-
 通常Release 1280×720、VSyncなし、標準効果、3000frame/warmup300は、全反復の初回98.748FPS（更新5.883ms）から最終172.024FPS（p95 6.400ms、更新1.670ms）へ改善。最終3000frameは完走しました。300FPSは未達です。記録はbuild/native-validation/secondary-contact-{full-debug,full-release}-test.log、secondary-contact-{Release,Debug}-{start,loop}-capture.log、secondary-contact-comparison.json、secondary-contact-final-benchmark.log。拡大比較はbuild/real-model-captures/Release/secondary-contact/quality-comparison.pngにあります。
 
 ゲーム構築用333ファイルのtreeをprepare_game_repository.pyのallowlist・変換処理で既存stagingへ更新しました。tests・開発記録・私有assetは除外し、同treeからRuntimeと5sampleをRelease buildしました。installしたRuntime SDK55ファイルがallowlistと一致し、新APIを別consumerからリンク・呼び出してGPUのInit→Present→Shutdownが成功しました。ログはsecondary-contact-game-{build,install,consumer-build,consumer-run}.logです。生成した試行configと旧first capture12枚はworkspace内の生成物と確認して削除し、現build・最新画像・必要な失敗記録を残しました。
+
+## 2026-10-11 揺れものの姿勢計算を共有
+
+独立した鎖をFModelPoseChainの借用配列でまとめ、OrientModelPoseChainsが同じ基準FKとpose複製を各1回だけ行います。単一鎖APIは同じkernelを使います。共有親は許可し、同じ根・祖先子孫の重なり、空入力、非finite、無効な別枝は候補側で拒否します。長さ・角度・接触solverや公開ABIは変更しません。
+
+REDは新header/API未実装のbuild失敗として取得しました（secondary-batch-red-build.log）。339骨の2枝fixtureで解析的joint/tip到達、未指定の位置・scale・morph・回転保持、単一鎖結果との一致、source/output alias、失敗時の出力保持を確認しています。FK entry counterはGKCORE_TESTINGだけに含め、一括orient1回、Runtimeの2鎖更新はcontact無し2回/有り3回を契約化しました。13鎖の従来更新は基準1+各鎖13+接触1の15回で、現在は1+1+1の3回です。更新用の点配列は先に全数Reserveし、全鎖のorient完了まで参照先を移動させません。
+
+CPU Debug/Release全58件成功。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、Silly Dancing/Capoeira blend+右腕IK+YUMEKA13鎖/8身体形状の0秒と3.35秒開始各120frameをDebug/Releaseで再生しました。GPU位置/法線検査は480frameすべてvalid=true、保存した48画像が前commitのbyteと一致。command/環境変数は身体接触節のものと同じです。ログはsecondary-batch-{full-debug,full-release}-test.log、secondary-batch-{Release,Debug}-{start,loop}-capture.log、secondary-batch-image-comparison.jsonです。
+
+通常Release/1280×720/標準効果/VSync無し、3000frame/warmup300は188.537FPS、p95 5.827ms、揺れ更新1.199ms。前回は172.024FPS、更新1.670msです。300FPSは未達。記録はsecondary-batch-benchmark.log。
+
+スカートのFBX clusterを読み取り、Circle.051の3039 control points中443がSkirt weightを持ち、その全てに登録骨のweightがあることを確認しました。登録40骨中非ゼロweightは19骨（10root+9 first child）で21骨はweightゼロ。443点中336（75.85%）はHips/Spine/胸との混合、Skirt合計weightが50%超の点は221でした。骨線からの横幅目安はp50 .037832/p95 .076814/max .090467 model unitですが、raw座標変換による概算で接触の厳密検査には使用しません。深い骨を動かしてもcloth meshへ効かないことと、幅・複数骨blendが点/線分contactの外にあることを分けます。
+
+実weight骨まで鎖を短縮し、次の未weight子のrestLocalをvirtual tipにしたtrialも、3.35秒開始120frameで完走しましたが、2560×1920の比較像で埋まりを解消しませんでした。正式presetは変更せず、trial configは使用後に削除します。最新比較像はquality-skin-bones-comparison.png、ログはsecondary-batch-skin-bones-capture.log。衣服の面または実変形点を検査する経路が残作業で、骨の接触成立をclothの合格に置き換えません。
+
+prepare_game_repository.pyのallowlist/変換処理で既存公開treeを334ファイルへ更新し、Runtimeと5sampleのRelease buildが成功しました。Runtime SDK55ファイルがallowlistに一致し、別consumerのGPU Init→Present→Shutdownも成功。tests・開発記録・私有assetはmainへ含めません。記録はsecondary-batch-game-{build,install,consumer-build,consumer-run}.logです。公開ABIとSDK header数は変更していません。

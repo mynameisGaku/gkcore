@@ -3,6 +3,7 @@
 #define GKCORE_MODEL_ANIMATION_MODEL_IK_H
 
 #include "model/animation/ModelPose.h"
+#include "model/animation/FModelPoseChain.h"
 #include <stdint.h>
 #include <gkcore.h>
 
@@ -18,7 +19,6 @@ void ResetModelIkWorkForTesting();
  */
 uint64_t GetModelIkWorldRotationCountForTesting();
 #endif
-
 
 /**
  * モデル空間の目標位置へ骨格姿勢を解くIK関数を提供する。
@@ -43,6 +43,12 @@ bool SolveCcdIk(const FModelSkeleton& skeleton, const FModelPose& source, const 
  * 鎖と末端の先をmodel空間の方向へ回す。位置とscaleは保ち、失敗時はoutputを保つ。
  */
 bool OrientModelPoseChain(const FModelSkeleton& skeleton, const FModelPose& source, const uint32_t* bones, uint32_t count, gk::Vec3 endOffset, const gk::Vec3* points, FModelPose& output, gk::String& error);
+
+/**
+ * 独立した複数の鎖を共有する基準姿勢から向ける。失敗時はoutputを保つ。
+ * 同じ親を持つ枝は使用できる。空の入力や祖先・子孫が重なる鎖は拒否する。
+ */
+bool OrientModelPoseChains(const FModelSkeleton& skeleton, const FModelPose& source, const FModelPoseChain* chains, uint32_t chainCount, FModelPose& output, gk::String& error);
 
 }
 
