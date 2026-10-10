@@ -117,6 +117,12 @@ GKCORE_API const char* GetModelBoneName(ModelHandle model, uint32_t bone);
  */
 GKCORE_API int GetModelBonePosition(ModelHandle model, uint32_t bone, Vec3& output);
 /**
+ * 同じ現在姿勢から複数ボーンのモデル空間位置を入力順に取得する。重複番号も取得できる。
+ * countは1からモデルの全ボーン数。配列はcount要素が必要。成功は0。
+ * 無効指定・骨格なし・姿勢評価失敗は-1で、outputの全要素を保つ。時刻は進めない。
+ */
+GKCORE_API int GetModelBonePositions(ModelHandle model, const uint32_t* bones, uint32_t count, Vec3* output);
+/**
  * 一意なボーン名を検索する。見つからない・同名が複数ある場合は-1。
  */
 GKCORE_API int32_t FindModelBone(ModelHandle model, const char* name);
