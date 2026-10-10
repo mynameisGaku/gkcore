@@ -12,6 +12,8 @@
 
 毎frameはanimation clockを進め、clipをsampleしてblendし、IKを設定・解決した後、描画前に`UpdateModelSecondaryMotion`を一度呼びます。この明示更新がmodel空間の鎖を進め、確定姿勢をinstanceへ保存します。身体形状もその時点のclip・blend・IK姿勢へ追従します。`DrawModel`、`GetModelBonePosition(s)`、描画済みpacketの表示は保存済み姿勢を使い、再度積分しません。更新後に同じframeで何度描画しても結果は変わりません。
 
+成功した`UpdateModelSecondaryMotion`は、clip・blend・IKを反映し、揺れを重ねる前の基準姿勢をmodel instanceごとに保存します。再生条件が同じ間は、`DrawModel`と骨位置のqueryがこの姿勢を再利用するため、clipを再sampleしません。再生時刻・speed・loop・blend・clip登録・IK・model bone roleの変更でcacheを無効にし、失敗したsetterや揺れ更新は直前の有効な状態を保ちます。描画snapshotは毎回独立して作られ、queryとdrawはsimulationやanimation clockを進めません。
+
 ```cpp
 uint32_t hairBones[] = { rootBone, middleBone, tipBone };
 gk::FModelSecondaryMotionSettings settings{};
@@ -83,6 +85,6 @@ model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-ble
 
 ## 対応範囲と未対応
 
-この機能はskeletal GLB / FBX等の書き換え可能なbone姿勢へ適用します。OBJ連番など非skeletal animationには適用できません。髪・スカート・アクセサリー等の二次動作自体はユーザー指定の必須範囲です。一方、spring式、重力・風、許容値、model空間でのsimulationは開発側が選んだ成立手段です。実装はばね、減衰、重力、風、bone長、基準方向からの最大曲げ角を扱います。RTX 4070 SUPERで、YUMEKAの髪2鎖・スカート10鎖・尻尾1鎖とSilly Dancing / Capoeiraのblend・IKを組み合わせた120frame実GPU検証が`valid: true`で完了しました。比較画像では13鎖の変化を確認し、明確な発散や裂けは見つかっていません。接近時の揺れと角度制約を含む見た目の品質判定は継続中です。
+この機能はskeletal GLB / FBX等の書き換え可能なbone姿勢へ適用します。OBJ連番など非skeletal animationには適用できません。髪・スカート・アクセサリー等の二次動作自体はユーザー指定の必須範囲です。一方、spring式、重力・風、許容値、model空間でのsimulationは開発側が選んだ成立手段です。実装はばね、減衰、重力、風、bone長、基準方向からの最大曲げ角を扱います。RTX 4070 SUPERで、YUMEKAの髪2鎖・スカート10鎖・尻尾1鎖とSilly Dancing / Capoeiraのblend・IKを組み合わせた120frame実GPU検証が`valid: true`で完了しました。比較画像では13鎖の変化を確認し、明確な発散や裂けは見つかっていません。接近時の揺れと角度制約を含む見た目の品質判定は継続中です。skin weightを調べる補助処理は内部向けで、zero-morph FBXに限られます。cloth meshを補正する処理はなく、衣服が身体へ埋まらないことは保証しません。
 
 身体の球・カプセルとの離散接触を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。

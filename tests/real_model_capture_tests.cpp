@@ -6,6 +6,7 @@
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
+#include "tests/support/ModelSkinPointsCapture.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -793,6 +794,12 @@ int main(int argc, char** argv)
             if (passed && secondaryMotionPath)
             {
                 passed = Check(gk::UpdateModelSecondaryMotion(model, hasAnimationStep ? animationStepSeconds : 1.0 / 60.0), "UpdateModelSecondaryMotion");
+            }
+            // opt-in時だけ、衣服の実変形点を既存の全体変形結果と比較する。
+            const char* skinPointPrefix = getenv("GKCORE_VERIFY_SKIN_POINTS");
+            if (passed && skinPointPrefix && skinPointPrefix[0])
+            {
+                passed = VerifyModelSkinPointsForTesting(model, frame, skinPointPrefix) == 1;
             }
             gk::Vec3 displayCenter{ center[0], center[1], center[2] };
             if (passed && followMotion && !motionView.GetCenter(displayCenter))

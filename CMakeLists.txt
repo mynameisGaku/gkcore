@@ -68,6 +68,8 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/FModelPlayback.cpp
     src/model/animation/ModelAnimationBinding.cpp
     src/model/animation/ModelSnapshot.cpp
+    src/model/animation/ModelPoseCache.cpp
+    src/model/animation/ModelSkinPoints.cpp
     src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
     src/model/animation/HumanoidMapping.cpp
@@ -138,6 +140,13 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_secondary_motion_collision_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_secondary_motion_collision_tests)
     add_test(NAME gkcore.model_secondary_motion_collision COMMAND gkcore_model_secondary_motion_collision_tests)
+    add_executable(gkcore_model_skin_points_tests tests/model_skin_points_tests.cpp
+        src/model/animation/ModelSkinPoints.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_skin_points_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_skin_points_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_skin_points_tests)
+    add_test(NAME gkcore.model_skin_points COMMAND gkcore_model_skin_points_tests)
     add_executable(gkcore_model_animation_binding_tests tests/model_animation_binding_tests.cpp
         src/model/animation/ModelAnimationBinding.cpp src/model/animation/FModelAnimationAsset.cpp
         src/model/animation/ModelPose.cpp src/foundation/RefCount.cpp
@@ -886,7 +895,7 @@ if(GKCORE_BUILD_RUNTIME)
     if(GKCORE_BUILD_TESTS AND GKCORE_RUN_BACKEND_SMOKE)
         # 配布DLLには画像取得コードを含めず、同じソースから検査用DLLを別に作る。
         get_target_property(_gkcore_capture_sources gkcore SOURCES)
-        add_library(gkcore_capture_runtime SHARED ${_gkcore_capture_sources} tests/support/FrameCapture.cpp tests/support/FModelSkinningReadback.cpp)
+        add_library(gkcore_capture_runtime SHARED ${_gkcore_capture_sources} tests/support/FrameCapture.cpp tests/support/FModelSkinningReadback.cpp tests/support/ModelSkinPointsCapture.cpp)
         foreach(_capture_property IN ITEMS INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS LINK_LIBRARIES)
             get_target_property(_capture_value gkcore ${_capture_property})
             set_property(TARGET gkcore_capture_runtime PROPERTY ${_capture_property} "${_capture_value}")

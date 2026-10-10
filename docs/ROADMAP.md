@@ -58,7 +58,7 @@ FSL artifactは`python tests/shader_contract_tests.py`で検査します。固�
 
 実モデルviewerは、RTX 4070 SUPER・Release・1280×720の3,000frame連続計測で、静止・回転表示が約340FPS、外部motionのブレンドが約325FPSでした。条件と再計測方法は[モデルviewerの処理時間](model-performance.md)を参照してください。他GPUや下記の残作業は別に確認します。
 
-YUMEKAの髪・尻尾・スカートへ13本のsecondary chainと8個の身体形状を加えた最新構成は188.537FPSで、300FPSの完成条件に届いていません。接触なしの前回構成は188.150FPSです。273.666FPSはsecondary motionを含まない外部motion blend＋右腕IKの測定値です。captureは120frame取得済みですが、画像の受入確認は継続中です。測定条件とログは[モデルviewerの処理時間](model-performance.md)に記録します。secondary motionの物理更新や姿勢合成の計測と実モデルの復帰品質を確認します。
+YUMEKAの髪・尻尾・スカートへ13本のsecondary chainと8個の身体形状を加えた最新構成は226.342FPSで、300FPSの完成条件に届いていません。接触なしの前回構成は188.150FPSです。273.666FPSはsecondary motionを含まない外部motion blend＋右腕IKの測定値です。基準姿勢の再利用前後で固定時刻48画像がbyte一致し、480frameのGPU位置・法線を確認しました。画像の品質評価は継続中です。測定条件とログは[モデルviewerの処理時間](model-performance.md)に記録します。骨の線分とは別に、Skirt weightを持つ全1,314点の変形位置を検査しました。身体形状へ侵入する点は各frameに17〜65点残ります。骨の接触だけでは布の非貫通を保証できないため、混合weightを含む実頂点の接触補正を次に設計し、物理更新・姿勢合成の処理時間と復帰品質を確認します。
 
 動作中の外部motion blend+右腕IKは、元の腕振りを保つsample目標へ変更しました。4モデルの12姿勢とYUMEKAのloop境界を実機で確認しています。同じGPU・解像度・3000frameの前回計測は269.801FPS、今回の計測は210.209FPSでした。有効な同時刻の対照がなく、処理削減によるFPS改善は未確認で、このmodeの300FPSにも未達です。IK設定と姿勢評価の重複処理を調べ、twist補助骨への回転配分と大きな目標での肩品質も次の課題として扱います。
 

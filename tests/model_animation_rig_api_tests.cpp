@@ -9,6 +9,7 @@
 #include "model/animation/AModelAnimationSource.h"
 #include "model/animation/FModelAnimationAsset.h"
 #include "model/animation/FModelPlayback.h"
+#include "model/animation/FModelPoseCache.h"
 #include "model/animation/FModelSecondaryMotionState.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/ModelPose.h"
@@ -769,9 +770,224 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         gk::model::animation::ResetModelPoseWorkForTesting();
         passed = gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::model::animation::GetModelPoseEvaluationCountForTesting() == 3u;
     }
+    if (passed)
+    {
+        const auto CheckCacheStage = [&](bool result, const char* stage)
+        {
+            if (!result)
+            {
+                fprintf(stderr, "secondary motion pose-cache contract failed at %s (sampleCount=%u): %s\n", stage, source->sampleCount, gk::GetLastErrorMessage());
+            }
+            passed = result && passed;
+            return result;
+        };
+
+        // 更新済みのclip姿勢をcacheへ保存し、描画と照会が再利用できることを調べる。
+        const bool cachePlaybackReady = gk::PlayModelAnimation(instance, 0, false) == 0 && gk::SetModelAnimationBlend(instance, 1, 0.5f) == 0;
+        CheckCacheStage(cachePlaybackReady, "cache warmup setup");
+        source->sampleCount = 0;
+        const bool cachePublished = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        CheckCacheStage(cachePublished && source->sampleCount > 0, "successful secondary update publishes sampled base pose");
+        source->sampleCount = 0;
+        const bool repeatedUpdateSucceeded = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        CheckCacheStage(repeatedUpdateSucceeded && source->sampleCount == 0, "same-condition secondary update reuses base pose");
+
+        // 同じclip・時刻・blend・IKではqueryと複数drawでclipを再標本化しない。
+        const uint32_t queryBones[3] = { 0, 2, 4 };
+        gk::Vec3 queried[3]{};
+        source->sampleCount = 0;
+        const bool querySucceeded = gk::GetModelBonePositions(instance, queryBones, 3, queried) == 0;
+        if (!CheckCacheStage(querySucceeded && source->sampleCount == 0, "bone query reuses cached base pose"))
+        {
+            fprintf(stderr, "  query source samples: %u\n", source->sampleCount);
+        }
+        const bool frameStarted = gk::BeginFrame() == 0;
+        const bool firstDrawSucceeded = frameStarted && gk::DrawModel(instance) == 0;
+        const bool secondDrawSucceeded = firstDrawSucceeded && gk::DrawModel(instance) == 0;
+        CheckCacheStage(secondDrawSucceeded && source->sampleCount == 0, "repeated CPU draws reuse cached base pose");
+        const auto& draws = gk::detail::GetContext().frame.draws;
+        const bool snapshotsMatch = draws.Count() == 2 && draws.At(0).model != draws.At(1).model && Near(draws.At(0).model->vertices.At(2).position[0], queried[1].x) && Near(draws.At(0).model->vertices.At(2).position[1], queried[1].y) && Near(draws.At(0).model->vertices.At(2).position[2], queried[1].z);
+        CheckCacheStage(snapshotsMatch, "cached query and independent draw snapshots agree");
+        const float queuedX = draws.Count() > 0 ? draws.At(0).model->vertices.At(2).position[0] : 0.0f;
+        const float queuedY = draws.Count() > 0 ? draws.At(0).model->vertices.At(2).position[1] : 0.0f;
+        const float queuedZ = draws.Count() > 0 ? draws.At(0).model->vertices.At(2).position[2] : 0.0f;
+
+        // 再生時刻、blend、IKの変更はcacheを無効にして新しい姿勢を評価する。
+        source->sampleCount = 0;
+        const bool timeDrawSucceeded = gk::SetModelAnimationTime(instance, 0.25, 0) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(timeDrawSucceeded && source->sampleCount > 0, "animation time mutation invalidates cache");
+        source->sampleCount = 0;
+        const bool changedTimeUpdateSucceeded = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        CheckCacheStage(changedTimeUpdateSucceeded && source->sampleCount > 0, "secondary update resamples after animation time mutation");
+        source->sampleCount = 0;
+        const bool blendDrawSucceeded = gk::SetModelAnimationBlendWeight(instance, 1.0f) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(blendDrawSucceeded && source->sampleCount > 0, "blend mutation invalidates cache");
+        source->sampleCount = 0;
+        const bool ikDrawSucceeded = gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 1.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(ikDrawSucceeded && source->sampleCount > 0, "IK insertion invalidates cache");
+        source->sampleCount = 0;
+        const bool clearIkDrawSucceeded = gk::ClearModelIk(instance) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(clearIkDrawSucceeded && source->sampleCount > 0, "IK removal invalidates cache");
+        const bool queuedSnapshotStable = draws.Count() >= 6 && Near(draws.At(0).model->vertices.At(2).position[0], queuedX) && Near(draws.At(0).model->vertices.At(2).position[1], queuedY) && Near(draws.At(0).model->vertices.At(2).position[2], queuedZ);
+        CheckCacheStage(queuedSnapshotStable, "queued draw snapshot remains immutable after invalidation");
+
+        // 失敗したsetterはcacheを無効化せず、揺れもの専用操作も基準姿勢を再標本化しない。
+        source->sampleCount = 0;
+        CheckCacheStage(gk::UpdateModelSecondaryMotion(instance, 0.0) == 0, "cache refresh after valid mutations");
+        source->sampleCount = 0;
+        const bool failedSetterPreservedCache = gk::SetModelAnimationTime(instance, std::numeric_limits<double>::quiet_NaN(), 0) == -1 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(failedSetterPreservedCache && source->sampleCount == 0, "failed setter preserves matching cache");
+        source->sampleCount = 0;
+        const bool secondaryOnlyOperationsSucceeded = gk::ResetModelSecondaryMotion(instance) == 0 && gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.0f) == 0 && gk::SetModelSecondaryMotionChain(instance, secondChain, 2, settings) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(secondaryOnlyOperationsSucceeded && source->sampleCount == 0, "secondary-only changes preserve base-pose cache");
+
+        const auto GetPlayback = [&]()
+        {
+            auto* currentTransform = gk::detail::FindModelTransform(instance);
+            return currentTransform ? currentTransform->playback : nullptr;
+        };
+        const auto WarmCache = [&](const char* stage)
+        {
+            source->sampleCount = 0;
+            const bool updated = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+            const auto* currentPlayback = GetPlayback();
+            return CheckCacheStage(updated && currentPlayback && currentPlayback->basePoseCache && currentPlayback->basePoseCache->revision == currentPlayback->poseRevision, stage);
+        };
+        const auto CheckMutationMiss = [&](bool setterSucceeded, const char* stage)
+        {
+            source->sampleCount = 0;
+            const bool drawn = gk::DrawModel(instance) == 0;
+            return CheckCacheStage(setterSucceeded && drawn && source->sampleCount > 0, stage);
+        };
+        const auto CheckQueryFallback = [&](const char* stage)
+        {
+            const uint32_t bone = 2;
+            gk::Vec3 position{};
+            source->sampleCount = 0;
+            const bool queriedSuccessfully = gk::GetModelBonePosition(instance, bone, position) == 0;
+            const bool finitePosition = isfinite(position.x) && isfinite(position.y) && isfinite(position.z);
+            return CheckCacheStage(queriedSuccessfully && finitePosition && source->sampleCount > 0, stage);
+        };
+
+        // NaNや配列数が崩れたcacheは読まず、正しい姿勢を評価し直す。
+        WarmCache("warm cache before private-state validation");
+        auto* cachePlayback = GetPlayback();
+        CheckCacheStage(cachePlayback && cachePlayback->basePoseCache, "private cache exists before validation");
+        if (cachePlayback && cachePlayback->basePoseCache)
+        {
+            cachePlayback->basePoseCache->source = nullptr;
+            CheckQueryFallback("source identity mismatch falls back to fresh evaluation");
+            WarmCache("replace source-mismatched cache");
+            cachePlayback = GetPlayback();
+            if (cachePlayback && cachePlayback->basePoseCache && cachePlayback->basePoseCache->pose.localTransforms.Count() > 0)
+            {
+                cachePlayback->basePoseCache->pose.localTransforms.At(0).position[0] = std::numeric_limits<float>::quiet_NaN();
+                CheckQueryFallback("NaN cached transform falls back to fresh evaluation");
+            }
+            else
+            {
+                CheckCacheStage(false, "cache pose exists before NaN validation");
+            }
+            WarmCache("replace nonfinite cache");
+            cachePlayback = GetPlayback();
+            if (cachePlayback && cachePlayback->basePoseCache)
+            {
+                cachePlayback->basePoseCache->pose.localTransforms.Clear();
+                CheckQueryFallback("cached transform count mismatch falls back to fresh evaluation");
+            }
+            else
+            {
+                CheckCacheStage(false, "cache exists before count validation");
+            }
+            WarmCache("replace count-mismatched cache");
+        }
+
+        // 失敗した揺れ更新は、直前に公開したcacheとsimulation状態を保つ。
+        auto* failedUpdatePlayback = GetPlayback();
+        auto* const cacheBeforeFailedUpdate = failedUpdatePlayback ? failedUpdatePlayback->basePoseCache : nullptr;
+        const auto* const secondaryBeforeFailedUpdate = failedUpdatePlayback ? failedUpdatePlayback->secondaryMotion : nullptr;
+        const uint64_t revisionBeforeFailedUpdate = failedUpdatePlayback ? failedUpdatePlayback->poseRevision : 0;
+        source->sampleCount = 0;
+        const bool failedUpdateRejected = gk::UpdateModelSecondaryMotion(instance, std::numeric_limits<double>::quiet_NaN()) == -1;
+        failedUpdatePlayback = GetPlayback();
+        CheckCacheStage(failedUpdateRejected && failedUpdatePlayback && failedUpdatePlayback->basePoseCache == cacheBeforeFailedUpdate && failedUpdatePlayback->secondaryMotion == secondaryBeforeFailedUpdate && failedUpdatePlayback->poseRevision == revisionBeforeFailedUpdate, "failed secondary update preserves cache and simulation");
+        source->sampleCount = 0;
+        CheckCacheStage(gk::DrawModel(instance) == 0 && source->sampleCount == 0, "failed update leaves reusable cache intact");
+
+        // cache世代番号の上限では古いcacheを破棄し、番号を安全な値へ戻す。
+        WarmCache("warm cache before revision overflow");
+        auto* overflowPlayback = GetPlayback();
+        if (overflowPlayback)
+        {
+            overflowPlayback->poseRevision = std::numeric_limits<uint64_t>::max();
+        }
+        source->sampleCount = 0;
+        const bool overflowSetterSucceeded = gk::SetModelAnimationSpeed(instance, 0.75, 0) == 0;
+        overflowPlayback = GetPlayback();
+        CheckCacheStage(overflowSetterSucceeded && overflowPlayback && overflowPlayback->poseRevision == 1 && overflowPlayback->basePoseCache == nullptr, "revision overflow drops stale cache");
+        CheckMutationMiss(overflowSetterSucceeded, "revision overflow setter forces fresh sampling");
+
+        // speed、loop、bone role、humanoid map、Stopの成功後は古いcacheを使わない。
+        WarmCache("warm cache before speed setter");
+        CheckMutationMiss(gk::SetModelAnimationSpeed(instance, 0.5, 0) == 0, "speed setter invalidates cache");
+        WarmCache("warm cache before loop setter");
+        CheckMutationMiss(gk::SetModelAnimationLoop(instance, true, 0) == 0, "loop setter invalidates cache");
+        WarmCache("warm cache before bone role setter");
+        CheckMutationMiss(gk::SetModelBoneRole(instance, 0, gk::EHumanoidBone::Hips) == 0, "model bone role setter invalidates cache");
+        WarmCache("warm cache before humanoid auto-map");
+        const char* savedBoneNames[3] = { source->boneNames[0], source->boneNames[1], source->boneNames[2] };
+        source->boneNames[0] = "Hips";
+        source->boneNames[1] = "LeftUpperLeg";
+        source->boneNames[2] = "LeftLowerLeg";
+        const int autoMapResult = gk::AutoMapModelHumanoidBones(instance);
+        source->boneNames[0] = savedBoneNames[0];
+        source->boneNames[1] = savedBoneNames[1];
+        source->boneNames[2] = savedBoneNames[2];
+        CheckMutationMiss(autoMapResult == 0, "successful humanoid auto-map invalidates cache");
+        WarmCache("warm cache before stop");
+        const auto* beforeStopPlayback = GetPlayback();
+        const uint64_t revisionBeforeStop = beforeStopPlayback ? beforeStopPlayback->poseRevision : 0;
+        const bool stopped = gk::StopModelAnimation(instance) == 0;
+        const auto* afterStopPlayback = GetPlayback();
+        CheckCacheStage(stopped && afterStopPlayback && afterStopPlayback->poseRevision != revisionBeforeStop, "StopModelAnimation invalidates cache revision");
+        source->sampleCount = 0;
+        const bool restartedAfterStop = gk::PlayModelAnimation(instance, 0, false) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(restartedAfterStop && source->sampleCount > 0, "animation restart after stop evaluates a fresh pose");
+        WarmCache("publish cache after animation restart");
+
+        // 新instanceはcacheを共有せず、一方の失効がもう一方のcacheへ波及しない。
+        const auto separateInstance = gk::CreateModelInstance(model);
+        const uint32_t separateChain[2] = { 1, 2 };
+        const bool separateCreated = separateInstance.IsValid() && gk::SetModelSecondaryMotionChain(separateInstance, separateChain, 2, settings) == 0 && gk::PlayModelAnimation(separateInstance, 0, false) == 0;
+        const auto* mainPlayback = GetPlayback();
+        const auto* separateTransform = gk::detail::FindModelTransform(separateInstance);
+        const auto* separatePlayback = separateTransform ? separateTransform->playback : nullptr;
+        CheckCacheStage(separateCreated && mainPlayback && mainPlayback->basePoseCache && separatePlayback && separatePlayback->basePoseCache == nullptr, "new instance starts without shared pose cache");
+        source->sampleCount = 0;
+        const bool separateUpdateSucceeded = separateCreated && gk::UpdateModelSecondaryMotion(separateInstance, 0.0) == 0;
+        separateTransform = gk::detail::FindModelTransform(separateInstance);
+        separatePlayback = separateTransform ? separateTransform->playback : nullptr;
+        CheckCacheStage(separateUpdateSucceeded && mainPlayback && separatePlayback && separatePlayback->basePoseCache && separatePlayback->basePoseCache != mainPlayback->basePoseCache, "instances own distinct pose caches");
+        source->sampleCount = 0;
+        const bool changedSeparateTime = gk::SetModelAnimationTime(separateInstance, 0.5, 0) == 0;
+        const bool mainCacheStillHits = gk::DrawModel(instance) == 0 && source->sampleCount == 0;
+        CheckCacheStage(changedSeparateTime && mainCacheStillHits, "one instance mutation preserves the other instance cache");
+        source->sampleCount = 0;
+        CheckCacheStage(gk::DrawModel(separateInstance) == 0 && source->sampleCount > 0, "mutated instance misses its own cache");
+        CheckCacheStage(gk::DeleteModel(separateInstance) == 0, "separate instance cleanup");
+
+        // 最後にcacheを伴うinstanceを消し、clear後も基準姿勢を使えることを確認する。
+        source->sampleCount = 0;
+        const bool clearedSecondary = gk::ClearModelSecondaryMotion(instance) == 0 && gk::DrawModel(instance) == 0;
+        CheckCacheStage(clearedSecondary && source->sampleCount == 0, "clearing secondary motion preserves cached base pose");
+    }
     if (!passed)
     {
-        fprintf(stderr, "multiple secondary chains exceeded the shared FK evaluation budget: %s\n", gk::GetLastErrorMessage());
+        fprintf(stderr, "multiple secondary chains exceeded the shared FK budget or base-pose cache contract: %s\n", gk::GetLastErrorMessage());
+    }
+    if (gk::detail::GetContext().frameOpen)
+    {
+        passed = gk::Present() == 0 && passed;
     }
     passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
     passed = gk::DeleteModel(instance) == 0 && passed;

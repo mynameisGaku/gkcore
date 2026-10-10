@@ -49,11 +49,11 @@ struct FModelGpuSkinningGeometry
     };
 
     /**
-     * 親基準affine行列を保持する。
+     * bind位置をmodel空間へ変換するskin行列を、3行×4列の行順で保持する。
      */
     struct FMatrix
     {
-        double value[12]; // ufbxの列基準4x3順。
+        double value[12]; // 各行のXYZ係数と移動量を、4要素ずつ並べる。
     };
 
     /**

@@ -1296,3 +1296,22 @@ CPU Debug/Release全58件成功。Win11 build26200 / RTX4070SUPER driver617.42 /
 実weight骨まで鎖を短縮し、次の未weight子のrestLocalをvirtual tipにしたtrialも、3.35秒開始120frameで完走しましたが、2560×1920の比較像で埋まりを解消しませんでした。正式presetは変更せず、trial configは使用後に削除します。最新比較像はquality-skin-bones-comparison.png、ログはsecondary-batch-skin-bones-capture.log。衣服の面または実変形点を検査する経路が残作業で、骨の接触成立をclothの合格に置き換えません。
 
 prepare_game_repository.pyのallowlist/変換処理で既存公開treeを334ファイルへ更新し、Runtimeと5sampleのRelease buildが成功しました。Runtime SDK55ファイルがallowlistに一致し、別consumerのGPU Init→Present→Shutdownも成功。tests・開発記録・私有assetはmainへ含めません。記録はsecondary-batch-game-{build,install,consumer-build,consumer-run}.logです。公開ABIとSDK header数は変更していません。
+
+
+## 2026-10-11 基準姿勢の再利用と実skin点の診断
+
+UpdateModelSecondaryMotionとResetの成功時に、clip・blend・IKを反映し揺れを重ねる前のposeをinstance所有cacheへ保存します。Draw/queryは独立したposeへ複製し、その時点のsecondary回転だけを重ねます。同じ再生条件での反復更新もbaseを再sampleせず、指定dtでphysicsを進めます。model/clip sourceの識別、revision、slotの時刻・speed・loop、blendとIKの値を照合し、cache内poseの数とfinite値も検査します。binding、再生条件、IK、model bone roleの成功した変更はrevisionを進めます。番号上限では旧cacheを破棄し1へ戻します。asset役割変更は既存bindingを変えず、secondary設定変更や表示SRTもbaseの入力を変えません。
+
+更新用cacheはsimulationのCommitより先に候補を作り、確定後に旧cacheを交換します。失敗したsetter/updateは旧状態を保ちます。SetModelAnimationLoopも時計を先に検査し、失敗時にloopを変更しません。REDはcache未実装とskin点stubで契約失敗を取得しました（skin-cache-red-test.log）。成功後のquery/multiple drawのsample数0、予約描画の独立、time/speed/loop/blend/IK/roles/Stop後のmiss、失敗後のhit、source相違・NaN・数破損のfallback、番号上限、別instance所有を確認しています。最終fixtureでStop→Play→Draw後の古いcacheをhitと期待して2件失敗しましたが、Drawはcacheを公開しないため、Updateで再公開してから独立性を検査する順へ修正しました。
+
+ModelSkinPointsはGPU skin cacheの行順3×4行列で、指定IDのbind位置へ全influenceをそのまま加算します。weightを再正規化せず、無weight点はsegment末尾のfallback clusterを使います。要求順・重複ID・最大8192点・空入力を扱い、範囲/finite値/行列を検査して失敗時のoutputを保ちます。Runtime内部の補助処理で公開ABIは追加していません。単一/混合weight、affine変換とZ回転、合計0.5のweight、fallback、出力保持を契約化しました。FMatrixの既存説明が列順となっていたため、実際のproducerとshaderが使う行順へコメントを修正しています。
+
+dev専用capture probeは、正weightのbone名prefixに合う点を選び、全weightで評価した位置をFBX sparse referenceと比較します。全対象数と最大8192の上限を出し、上限超では決定的な等間隔ordinalを抽出します。現caseはSkirtの対象1,314点を全て評価します。nonzero morphや未対応sourceは拒否します。JSONのvalidは参照一致だけで、pointPenCountは重複しない侵入点数、pointShapeContactCountは点と形状の組合せ数です。shapeCount/contactTestedを出し、形状がないときcontactClear=nullとします。接触はinstance共通SRT前のmodel空間で、現在の更新が確定した身体球/capsuleとの点距離です。このprobe自体はCPU参照比較であり、実GPUの全位置/法線readbackは別の既存validationで確認します。probe・環境変数・test用exportは通常DLL、main、SDKに含めません。
+
+CPUはMSVC19.51でDebug/Release各59/59件成功（4.57秒/4.80秒）。nativeはWindows11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / Windows SDK10.0.22621.0で、0秒と3.35秒開始をDebug/Release各120frame実行しました。GPU位置/法線は480frame全てvalid=true。保存48画像は前commitとbyte一致、Debug/Release24組もbyte一致しました。commandと既存capture変数は身体接触節と同じで、追加GKCORE_VERIFY_SKIN_POINTS=Skirtを指定しました。非表示windowを使っています。ログはpose-cache-{Release,Debug}-{start,loop}-capture.log、比較はpose-cache-image-contact-comparison.jsonです。
+
+実skin点の最大参照誤差は3.365e-8 model unit。start区間は22〜65点、loop区間は17〜64点が身体形状に侵入し、両区間120frame全てに残ります。最大深さはstart .0393693 / loop .0394331 model unitです。これは設定した概算身体形状への侵入で、実身体meshとの距離ではありません。三角形内部・隣接鎖・布の面接触やcloth補正は未実装です。骨線分の非侵入と布の品質を区別し、次の補正に必要な厳密位置の測定までを今回の範囲とします。
+
+通常Release1280×720、標準効果、VSync無し、3000frame/warmup300は226.342FPS、p95 4.939msで完走しました。DrawModel平均.421ms、Present2.243ms、IK設定.509ms、secondary1.189msです。前回188.537FPS/Draw .852msからの差には計測時負荷も含まれます。重複sampleの削減は契約で確認し、300FPSは引き続き未達です。probe/reference比較を行うcaptureはこの速度計測に含めません。記録はpose-cache-benchmark.logです。
+
+ゲーム構築用339ファイルをprepare_game_repository.pyのallowlist/変換処理で既存公開treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。Runtime SDK55ファイルがallowlistに一致し、別consumerのGPU Init→Present→Shutdownも成功しました。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はpose-cache-game-{build,install,consumer-build,consumer-run}.log、公開treeのhashはpose-cache-game-manifest.jsonです。

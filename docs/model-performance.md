@@ -30,7 +30,9 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 
 複数の鎖の向きを一括で合わせる変更後は188.537FPS、p95 5.827msでした。DrawModel平均0.852ms、Present2.255ms、IK設定0.515ms、揺れもの更新1.199msです。13鎖がそれぞれ行っていた全骨格のFKと全pose複製を一度にまとめました。基準姿勢を作るFKと接触検算のFKは残し、physics solver・半径・角度・反復設定は同じです。前回172.024FPSからの変化には計測時の負荷も含まれますが、揺れ更新の重複計算は契約テストで削減を確認しています。300FPSは未達です。
 
-通常Release 1280×720、3000frame / warmup300で完走し、変更前後の固定時刻48画像はbyte一致しました。最新記録は`build/native-validation/secondary-batch-benchmark.log`です。
+通常Release 1280×720、3000frame / warmup300で完走しました。記録は`build/native-validation/secondary-batch-benchmark.log`です。
+
+instanceごとの基準姿勢cacheを加えた身体形状8個・13鎖の測定は226.342FPS、p95 4.939msでした。DrawModel平均0.421ms、Present 2.243ms、IK設定0.509ms、揺れもの更新1.189msです。通常Release DLL、VSync無効、1280×720、標準効果、YUMEKAとSilly Dancing / Capoeiraのブレンド＋右腕IK、3000frame / warmup300で完走しました。前回188.537FPSからの差には計測時の負荷も含まれるため、cacheによるFPS改善率や他環境での再現を保証しません。300FPSは未達です。ログは`build/native-validation/pose-cache-benchmark.log`です。
 
 ## 再計測
 
