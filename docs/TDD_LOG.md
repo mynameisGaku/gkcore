@@ -1169,3 +1169,11 @@ Unreal由来のモーションを別人型へ移す確認は、ClownMonsterWalk�
 CPU Debug56/56件（4.47秒）、Release56/56件（5.36秒）成功。実モデルはCesium Man GLBの19役割を骨階層と関節位置から明示し、GLB motion→Trooper FBX、Trooper Idle FBX→Cesium GLB、Cesium GLBとClown Walk FBXの混在ブレンド→Clown FBXを各6姿勢でDebug/Release確認しました。8脚役割は全例で対応。FBX targetはGPU readbackで位置差0・法線最大差約1.79e-7、GLB targetは既存のCPU skinningを描画しています。GLB側でGPU-only readbackを要求した初回はdispatchなしで失敗したため、検証設定を正しく切り替えました。GPU処理が行われたという誤った記録にはしません。ログはhumanoid-map-*とhumanoid-profile-{debug,release}-*.log、画像はbuild/real-model-captures/{Debug,Release}/humanoid-profilesです。
 
 対応表の追加後も、公開用のtestsなし305ファイルからRuntimeと5サンプルをビルドし、install済みSDKだけを使うconsumerのGPU起動・描画・終了が成功しました。関連ログはhumanoid-map-game-{config,build,install}.logとhumanoid-map-game-consumer-*.logです。3組の各6画像もDebug/Releaseで全画素一致しています。
+
+## 補助骨を含む腰移動の体格補正
+
+腰のlocal rest位置だけから倍率を求める旧方式では、腰の高さを親の補助骨へ移してlocal位置を0にすると倍率1のままになりました。補助骨あり/なしの同じ体格を用意し、source脚0.5+0.5、target脚1+1、source腰移動0.25に対してtarget移動0.5になる独立契約を先にREDにしました。完全に役割対応した脚のrest model原点間距離から倍率をbind時に保持し、cacheなし評価も同じ計算へ修正しました。片脚しかない場合はその脚を使い、完全な役割対応がない場合は従来の腰位置比へ戻します。
+
+修正後は補助骨の有無、target骨長の維持、cache/fallback一致が成功。追加した試験のfoot期待値も、親高さ2+腰移動0.5-すね長1-足首長1=0.5という独立式へ訂正しました。初回の2という期待値は試験側の誤りでした。CPU Debug56/56（5.59秒）、Release56/56（4.43秒）が成功しています。ログはhips-body-scale-{red,green}-*とhips-scale-cpu-{debug,release}-*です。
+
+実モデルはYUMEKAの外部ブレンド、GLB→FBX、FBX→GLB、GLB/FBX混在ブレンドの4組を各6姿勢、Debug/Releaseで確認しました。24画像は構成間で全画素一致。FBX targetの全位置・法線readbackも位置差0・法線最大差約1.79e-7で通過しています。公開用testsなし構成のRuntime・5サンプルのビルド、install済みSDKのGPU consumer起動・描画・終了も成功。ログはhips-scale-{debug,release}-*.log、hips-scale-game-{config,build,install,consumer-run}.logです。

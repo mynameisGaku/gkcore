@@ -185,6 +185,7 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     destination.targetRestModelMatrices.MoveFrom(candidate.targetRestModelMatrices);
     destination.sourceRestWorldRotations.MoveFrom(candidate.sourceRestWorldRotations);
     destination.targetRestWorldRotations.MoveFrom(candidate.targetRestWorldRotations);
+    destination.humanoidTranslationScale = candidate.humanoidTranslationScale;
     if (slot == 0)
     {
         if (playback->clips[1].asset)
@@ -197,6 +198,7 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
         playback->clips[1].targetRestModelMatrices.Clear();
         playback->clips[1].sourceRestWorldRotations.Clear();
         playback->clips[1].targetRestWorldRotations.Clear();
+        playback->clips[1].humanoidTranslationScale = 0.0;
         playback->blendWeight = 0.0f;
     }
     else
@@ -449,6 +451,7 @@ int StopModelAnimation(ModelHandle handle)
             state.targetRestModelMatrices.Clear();
             state.sourceRestWorldRotations.Clear();
             state.targetRestWorldRotations.Clear();
+            state.humanoidTranslationScale = 0.0;
         }
         transform->playback->blendWeight = 0.0f;
     }

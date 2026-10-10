@@ -553,9 +553,147 @@ bool TestScaledSourceParentTranslation()
     return true;
 }
 
+/**
+ * 腰の移動を腰より上の補助骨の有無に左右されず体格比で転送する。
+ */
+bool EvaluateHumanoidHipsTranslationScale(bool withHelper, float& hipsDelta)
+{
+    // 任意の骨名を持つsourceと、脚の長さが2倍のtarget。
+    FBindingTestSource source;
+    FBindingTestSource target;
+    // 補助骨ありは5骨、なしは腰から始まる4骨。
+    const uint32_t boneCount = withHelper ? 5u : 4u;
+    source.boneCount = boneCount;
+    target.boneCount = boneCount;
+    const char* sourceNames[5] = { "amber root", "source pelvis", "source thigh", "source shin", "source foot" };
+    const char* targetNames[5] = { "violet root", "destination waist", "destination upper", "destination lower", "destination end" };
+    for (uint32_t i = 0; i < boneCount; ++i)
+    {
+        source.names[i] = sourceNames[i];
+        target.names[i] = targetNames[i];
+    }
+    // 腰より上の補助骨がある場合だけ骨番号を1つずらす。
+    const int32_t helperParents[5] = { -1, 0, 1, 2, 3 };
+    const int32_t directParents[4] = { -1, 0, 1, 2 };
+    const int32_t* parents = withHelper ? helperParents : directParents;
+    animation::FModelBoneTransform sourceRest[5]{};
+    animation::FModelBoneTransform sourceAnimated[5]{};
+    animation::FModelBoneTransform targetRest[5]{};
+    const uint32_t hips = withHelper ? 1u : 0u;
+    const uint32_t upperLeg = hips + 1u;
+    const uint32_t lowerLeg = hips + 2u;
+    const uint32_t foot = hips + 3u;
+    if (withHelper)
+    {
+        sourceRest[0].position[1] = 1.0f;
+        targetRest[0].position[1] = 2.0f;
+    }
+    else
+    {
+        sourceRest[hips].position[1] = 1.0f;
+        targetRest[hips].position[1] = 2.0f;
+    }
+    sourceRest[lowerLeg].position[1] = -0.5f;
+    sourceRest[foot].position[1] = -0.5f;
+    targetRest[lowerLeg].position[1] = -1.0f;
+    targetRest[foot].position[1] = -1.0f;
+    memcpy(sourceAnimated, sourceRest, sizeof(sourceRest));
+    sourceAnimated[hips].position[1] += 0.25f;
+    if (!source.skeleton.parents.AppendRange(parents, boneCount) || !source.skeleton.restLocalTransforms.AppendRange(sourceRest, boneCount) || !source.sampled.localTransforms.AppendRange(sourceAnimated, boneCount) || !target.skeleton.parents.AppendRange(parents, boneCount) || !target.skeleton.restLocalTransforms.AppendRange(targetRest, boneCount))
+    {
+        fprintf(stderr, "hips-scale fixture allocation failed\n");
+        return false;
+    }
+    // role対応を使い、sourceとtargetの骨名は一致させない。
+    FModelAnimationAsset sourceAsset, targetAsset;
+    sourceAsset.source = &source;
+    targetAsset.source = &target;
+    using Bone = gk::EHumanoidBone;
+    const uint16_t helperRoles[5] = { 0, static_cast<uint16_t>(Bone::Hips), static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::LeftFoot) };
+    const uint16_t directRoles[4] = { static_cast<uint16_t>(Bone::Hips), static_cast<uint16_t>(Bone::LeftUpperLeg), static_cast<uint16_t>(Bone::LeftLowerLeg), static_cast<uint16_t>(Bone::LeftFoot) };
+    const uint16_t* roles = withHelper ? helperRoles : directRoles;
+    gk::Array<uint16_t> targetRoles;
+    if (!sourceAsset.roles.AppendRange(roles, boneCount) || !targetRoles.AppendRange(roles, boneCount))
+    {
+        fprintf(stderr, "hips-scale role allocation failed\n");
+        return false;
+    }
+    // cache付きbindingを作り、同じ対応表からcacheなし状態も用意する。
+    FModelClipState cachedState;
+    gk::String error;
+    if (!BuildClipBinding(sourceAsset, 0, &targetAsset, targetRoles, cachedState, error))
+    {
+        fprintf(stderr, "hips-scale binding failed: %s\n", error.CStr());
+        return false;
+    }
+    FModelClipState fallbackState;
+    fallbackState.asset = &sourceAsset;
+    fallbackState.clip = 0;
+    if (!fallbackState.bones.AppendRange(cachedState.bones.Data(), cachedState.bones.Count()) || !fallbackState.mappedRoles.AppendRange(cachedState.mappedRoles.Data(), cachedState.mappedRoles.Count()) || !fallbackState.morphs.AppendRange(cachedState.morphs.Data(), cachedState.morphs.Count()))
+    {
+        fprintf(stderr, "hips-scale fallback mapping allocation failed\n");
+        return false;
+    }
+    animation::FModelPose cachedOutput, fallbackOutput;
+    const bool sampledCached = SampleBoundClip(cachedState, targetAsset, cachedOutput, error);
+    const bool sampledFallback = sampledCached && SampleBoundClip(fallbackState, targetAsset, fallbackOutput, error);
+    Release(&sourceAsset.reference);
+    if (!sampledCached || !sampledFallback)
+    {
+        fprintf(stderr, "hips-scale sample failed: %s\n", error.CStr());
+        return false;
+    }
+    hipsDelta = cachedOutput.localTransforms.At(hips).position[1] - targetRest[hips].position[1];
+    if (fabsf(hipsDelta - 0.5f) > 0.0001f)
+    {
+        fprintf(stderr, "hips translation did not scale by the source-to-target body height ratio\n");
+        return false;
+    }
+    for (uint32_t i = upperLeg; i <= foot; ++i)
+        if (fabsf(cachedOutput.localTransforms.At(i).position[1] - targetRest[i].position[1]) > 0.0001f)
+        {
+            fprintf(stderr, "hips-scale retarget changed an independently sized target leg offset\n");
+            return false;
+        }
+    for (uint32_t i = 0; i < boneCount; ++i)
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            if (fabsf(cachedOutput.localTransforms.At(i).position[axis] - fallbackOutput.localTransforms.At(i).position[axis]) > 0.0001f)
+            {
+                fprintf(stderr, "cached and fallback rest-pose paths disagreed for hips translation\n");
+                return false;
+            }
+    // target脚先のモデル位置は、target restの脚長と転送した腰移動から独立に求める。
+    gk::Array<float> matrices;
+    const float expectedFootY = 2.0f + 0.5f - 1.0f - 1.0f;
+    if (!animation::EvaluateModelPose(target.skeleton, cachedOutput, matrices, error) || fabsf(matrices.At(foot * 16u + 13u) - expectedFootY) > 0.0001f)
+    {
+        fprintf(stderr, "hips-scale target foot position disagreed with its rest offsets and hips motion\n");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 腰の親に補助骨がある場合もない場合も同じ体格比で移動する。
+ */
+bool TestHumanoidHipsTranslationScale()
+{
+    // 2種類の階層で得た腰移動量。
+    float helperHipsDelta = 0.0f;
+    float directHipsDelta = 0.0f;
+    if (!EvaluateHumanoidHipsTranslationScale(true, helperHipsDelta) || !EvaluateHumanoidHipsTranslationScale(false, directHipsDelta))
+        return false;
+    if (fabsf(helperHipsDelta - directHipsDelta) > 0.0001f)
+    {
+        fprintf(stderr, "adding a helper bone changed the retargeted hips motion\n");
+        return false;
+    }
+    return true;
+}
+
 }
 
 int main()
 {
-    return TestRestRelativeRetargetWithDifferentParents() && TestHumanoidRolePreservesTargetLimbLength() && TestRoleBindingAndMorphNameOrder() && TestGenericHumanoidRoleRetarget() && TestDuplicateRolesPreserveCandidate() && TestDuplicateTargetNamesAreRejected() && TestScaledSourceParentTranslation() ? 0 : 1;
+    return TestRestRelativeRetargetWithDifferentParents() && TestHumanoidRolePreservesTargetLimbLength() && TestRoleBindingAndMorphNameOrder() && TestGenericHumanoidRoleRetarget() && TestDuplicateRolesPreserveCandidate() && TestDuplicateTargetNamesAreRejected() && TestScaledSourceParentTranslation() && TestHumanoidHipsTranslationScale() ? 0 : 1;
 }
