@@ -14,9 +14,10 @@ model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--m
 - `animate`はモデル内の最初のclip、`blend`は2つ以上の埋め込みclipを再生・合成します。
 - `external <animation-file>`は別のGLB/FBXから最初のclipを読み、名前と人型役割からモデルへ対応付けます。対応に失敗した場合は診断を表示します。
 - `external-blend <animation-file-1> <animation-file-2>`は2つの外部motionを適用します。`B`キーで2本目の寄与を切り替えます。
+- `external-ik <animation-file>`と`external-blend-ik <animation-file-1> <animation-file-2>`は、外部motionを更新した後の姿勢から右腕の2ボーンIK目標を毎frame作ります。右上腕・右前腕・右手に加えて、左上腕・腰、および脊椎・胸・上胸のいずれかの役割が必要です。目標は現在のmotionの手先を起点に、体幹の前方へ腕長の最大5%だけ補正し、届く範囲に合わせて補正量を縮めます。肘のpoleはmotionの曲げ面を可能な範囲で保ちます。前frameのIK姿勢は次の目標に引き継ぎません。2本目のmotionは`B`キーで切り替えられ、`M`キーでmotionを一時停止できます。
 - `ik`と`chain`は右上腕・右前腕・右手の役割から、それぞれ2ボーンIKと連続chain IKを設定します。`--model-bones`の対応表、または骨名の自動推定を使います。腕と胴体の役割から肩より外側の目標を作り、オレンジ色のマーカーで示します。両modeは同じ目標を使います。必要な役割がない場合や、3本が直接の親子として連続しない場合は起動時に失敗します。
 
-マーカーは確認用の位置表示です。IKに体・衣服との衝突回避機能はないため、ゲームで使う目標の安全性は呼び出し側で判断してください。回転時は指定した中心を画面中央に保ちます。
+マーカーは確認用の位置表示です。大きな目標による肩の変形やtwist用補助ボーンへの回転配分、体・衣服との衝突回避、関節角度の制限は扱いません。回転時は指定した中心を画面中央に保ちます。
 
 modeを省略すると`static`になります。`M`は再生を一時停止・再開し、`←`と`→`はモデルを回転します。`R`で回転を戻し、`Space`でBloomを切り替え、`Escape`で終了します。
 
@@ -44,7 +45,7 @@ viewerは`SetVSyncEnabled(false)`で画面更新の待機を外し、実際の�
 
 ## アニメーション確認と検証素材
 
-GLB/FBX内のclipは`animate`または`blend`で、別ファイルのmotionは`external`または`external-blend`で確認できます。異なる骨名の人型モデルでは、一般的な名前から役割を推定しますが、未知・曖昧な骨名がある場合は自動対応できないことがあります。APIで手動の役割設定と対応結果の照会ができます。詳細は[モデルアニメーション](model-animation.md)を参照してください。
+GLB/FBX内のclipは`animate`または`blend`で、別ファイルのmotionは`external`または`external-blend`で確認できます。`external-ik`と`external-blend-ik`では、motion更新後にIKを再計算し、前frameのIK姿勢が次の目標へ影響しないことを確認できます。capture検証では`GKCORE_TEST_ANIMATION_FRAMES`で描画回数を2〜120frameに指定し、既定の12frameでclip長に沿った姿勢とloopへの折り返しを確認します。保存する画像枚数は別の`GKCORE_TEST_CAPTURE_FRAMES`で1〜16枚を指定します。animated IK captureだけに使う`GKCORE_TEST_ANIMATION_START_SECONDS`は開始秒（既定0）、`GKCORE_TEST_ANIMATION_STEP_SECONDS`はframeごとの秒数（省略時は主motionのdurationをcapture全体へ割り当て）です。blend時は同じ秒数を両motionへ設定し、それぞれのdurationでloopします。実時間のloop境界を追うcaptureでは開始秒とstepを指定してください。異なる骨名の人型モデルでは、一般的な名前から役割を推定しますが、未知・曖昧な骨名がある場合は自動対応できないことがあります。APIで手動の役割設定と対応結果の照会ができます。詳細は[モデルアニメーション](model-animation.md)を参照してください。
 
 317骨のYUMEKA FBXと、66骨のMixamo `Silly Dancing.fbx`・`Capoeira.fbx`を組み合わせた実動作確認を行っています。自動推定で役割が付いた骨はそれぞれ53本と52本、共通して対応した骨は51本でした。左右の太もも・すね・足首・つま先を含め、単独再生とブレンドで確認しました。未対応の役割は初期姿勢のまま残り、必要に応じてAPIで手動設定します。この結果は該当モデルとmotionでの確認であり、モデルの見た目や衣服の重なりを含む画質改善を保証しません。
 

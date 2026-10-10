@@ -7,6 +7,7 @@
 #include "model/animation/ModelPose.h"
 #include "resources/ResourceIO.h"
 #include "foundation/Memory.h"
+#include "ufbx.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,7 +55,22 @@ void PrintJsonString(const char* text)
 void PrintJsonNumber(float value)
 {
     if (isfinite(value))
+    {
         printf("%.9g", static_cast<double>(value));
+    }
+    else
+        fputs("null", stdout);
+}
+
+/**
+ * 有限な倍精度値だけをJSON数値として出力する。
+ */
+void PrintJsonDouble(double value)
+{
+    if (isfinite(value))
+    {
+        printf("%.17g", value);
+    }
     else
         fputs("null", stdout);
 }
@@ -65,9 +81,13 @@ void PrintJsonNumber(float value)
 const char* FormatName(gk::model::EModelAnimationFormat format)
 {
     if (format == gk::model::EModelAnimationFormat::Glb)
+    {
         return "glb";
+    }
     if (format == gk::model::EModelAnimationFormat::Fbx)
+    {
         return "fbx";
+    }
     return "obj-sequence";
 }
 
@@ -94,9 +114,13 @@ bool Inspect(const char* path)
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
             if (value.position[axis] < minimum[axis])
+            {
                 minimum[axis] = value.position[axis];
+            }
             if (value.position[axis] > maximum[axis])
+            {
                 maximum[axis] = value.position[axis];
+            }
         }
     }
 
@@ -106,13 +130,17 @@ bool Inspect(const char* path)
     const gk::model::animation::FModelSkeleton* skeleton = source ? &source->Skeleton() : nullptr;
     bool haveWorldPose = false;
     if (skeleton)
+    {
         haveWorldPose = gk::model::animation::InitializeModelPose(*skeleton, restPose, error) && gk::model::animation::EvaluateModelPose(*skeleton, restPose, worldMatrices, error);
+    }
 
     printf("{\"path\":");
     PrintJsonString(path);
     printf(",\"animationFormat\":");
     if (source)
+    {
         PrintJsonString(FormatName(source->Format()));
+    }
     else
         fputs("null", stdout);
     printf(",\"vertexCount\":%u,\"indexCount\":%u,\"primitiveCount\":%u,\"materialCount\":%u,\"textureCount\":%u,\"animationClipCount\":%u,\"bounds\":", model->vertices.Count(), model->indices.Count(), model->primitives.Count(), model->materials.Count(), model->textures.Count(), source ? source->ClipCount() : 0u);
@@ -139,10 +167,14 @@ bool Inspect(const char* path)
     for (uint32_t texture = 0; texture < model->textures.Count(); ++texture)
     {
         if (texture)
+        {
             putchar(',');
+        }
         const gk::detail::ImageResource* image = model->textures.At(texture);
         if (!image)
+        {
             fputs("null", stdout);
+        }
         else
             printf("{\"width\":%u,\"height\":%u,\"rgbaBytes\":%u}", image->width, image->height, image->rgba.Count());
     }
@@ -150,7 +182,9 @@ bool Inspect(const char* path)
     for (uint32_t materialIndex = 0; materialIndex < model->materials.Count(); ++materialIndex)
     {
         if (materialIndex)
+        {
             putchar(',');
+        }
         const gk::detail::ModelMaterial& material = model->materials.At(materialIndex);
         printf("{\"baseColor\":[%.9g,%.9g,%.9g,%.9g],\"alphaMask\":%s,\"alphaBlend\":%s,\"alphaCutoff\":%.9g,\"baseTexture\":%d,\"metallicRoughnessTexture\":%d,\"normalTexture\":%d,\"emissiveTexture\":%d,\"occlusionTexture\":%d}", material.baseColorFactor[0], material.baseColorFactor[1], material.baseColorFactor[2], material.baseColorFactor[3], material.alphaMask ? "true" : "false", material.alphaBlend ? "true" : "false", material.alphaCutoff, material.baseColorTextureIndex, material.metallicRoughnessTextureIndex, material.normalTextureIndex, material.emissiveTextureIndex, material.occlusionTextureIndex);
     }
@@ -160,7 +194,9 @@ bool Inspect(const char* path)
         for (uint32_t bone = 0; bone < skeleton->parents.Count(); ++bone)
         {
             if (bone)
+            {
                 putchar(',');
+            }
             const char* name = source->BoneName(bone);
             const int32_t parent = skeleton->parents.At(bone);
             printf("{\"index\":%u,\"name\":", bone);
@@ -170,14 +206,18 @@ bool Inspect(const char* path)
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
                 if (axis)
+                {
                     putchar(',');
+                }
                 PrintJsonNumber(local.position[axis]);
             }
             fputs("],\"restScale\":[", stdout);
             for (uint32_t axis = 0; axis < 3; ++axis)
             {
                 if (axis)
+                {
                     putchar(',');
+                }
                 PrintJsonNumber(local.scale[axis]);
             }
             fputs("],\"restWorld\":[", stdout);
@@ -201,7 +241,9 @@ bool Inspect(const char* path)
         for (uint32_t morph = 0; morph < skeleton->restMorphWeights.Count(); ++morph)
         {
             if (morph)
+            {
                 putchar(',');
+            }
             printf("{\"index\":%u,\"name\":", morph);
             PrintJsonString(source->MorphName(morph));
             fputs(",\"restWeight\":", stdout);
@@ -215,7 +257,9 @@ bool Inspect(const char* path)
         for (uint32_t clip = 0; clip < source->ClipCount(); ++clip)
         {
             if (clip)
+            {
                 putchar(',');
+            }
             printf("{\"index\":%u,\"name\":", clip);
             PrintJsonString(source->ClipName(clip));
             printf(",\"duration\":%.9g}", source->ClipDuration(clip));
@@ -259,7 +303,9 @@ bool InspectAnimation(const char* path)
         PrintJsonString(error.CStr());
         fputs("}\n", stdout);
         if (asset)
+        {
             gk::Release(&asset->reference);
+        }
         return false;
     }
 
@@ -282,7 +328,9 @@ bool InspectAnimation(const char* path)
     for (uint32_t bone = 0; bone < skeleton.parents.Count(); ++bone)
     {
         if (bone)
+        {
             putchar(',');
+        }
         printf("{\"index\":%u,\"name\":", bone);
         PrintJsonString(source.BoneName(bone));
         printf(",\"parent\":%d,\"writable\":%s,\"restLocal\":[", skeleton.parents.At(bone), source.BoneWritable(bone) ? "true" : "false");
@@ -292,7 +340,9 @@ bool InspectAnimation(const char* path)
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
             if (axis)
+            {
                 putchar(',');
+            }
             PrintJsonNumber(local.position[axis]);
         }
         fputs("],\"restScale\":[", stdout);
@@ -300,7 +350,9 @@ bool InspectAnimation(const char* path)
         for (uint32_t axis = 0; axis < 3; ++axis)
         {
             if (axis)
+            {
                 putchar(',');
+            }
             PrintJsonNumber(local.scale[axis]);
         }
         fputs("],\"restWorld\":[", stdout);
@@ -323,7 +375,9 @@ bool InspectAnimation(const char* path)
     for (uint32_t morph = 0; morph < skeleton.restMorphWeights.Count(); ++morph)
     {
         if (morph)
+        {
             putchar(',');
+        }
         printf("{\"index\":%u,\"name\":", morph);
         PrintJsonString(source.MorphName(morph));
         fputs(",\"restWeight\":", stdout);
@@ -335,7 +389,9 @@ bool InspectAnimation(const char* path)
     for (uint32_t clip = 0; clip < source.ClipCount(); ++clip)
     {
         if (clip)
+        {
             putchar(',');
+        }
         printf("{\"index\":%u,\"name\":", clip);
         PrintJsonString(source.ClipName(clip));
         printf(",\"duration\":%.9g}", source.ClipDuration(clip));
@@ -350,6 +406,166 @@ bool InspectAnimation(const char* path)
     fputs("}\n", stdout);
     gk::Release(&asset->reference);
     return haveWorldPose;
+}
+
+/**
+ * 指定した人型ボーンへ割り当てられたraw skin weightをcluster単位で集計する。
+ */
+bool InspectSkinWeights(const char* path)
+{
+    // 腕のねじり骨も含めて集計する対象名。
+    const char* targetNames[] = { "UpperArm_R", "LowerArm_R", "Hand_R", "UpperArm_twist_R", "LowerArm_twist_R", "UpperArm_L", "LowerArm_L", "Hand_L", "UpperArm_twist_L", "LowerArm_twist_L", "upperarm_r", "lowerarm_r", "hand_r", "upperarm_twist_01_r", "lowerarm_twist_01_r", "upperarm_l", "lowerarm_l", "hand_l", "upperarm_twist_01_l", "lowerarm_twist_01_l", "r_upperarm_Muscle", "r_forearm_Muscle", "l_upperarm_Muscle", "l_forearm_Muscle" };
+    bool targetFound[24]{};
+    // ResourceIOからraw FBX bytesを読み、weightを正規化しない状態で調べる。
+    gk::String readError;
+    uint8_t* rawBytes = nullptr;
+    uint32_t rawSize = 0;
+    if (!gk::detail::ReadResourceFile(path, 512u * 1024u * 1024u, rawBytes, rawSize, readError))
+    {
+        fputs("{\"error\":", stdout);
+        PrintJsonString(readError.CStr());
+        fputs("}\n", stdout);
+        return false;
+    }
+    ufbx_load_opts options{};
+    ufbx_error loadError{};
+    ufbx_scene* scene = ufbx_load_memory(rawBytes, rawSize, &options, &loadError);
+    gk::Deallocate(rawBytes);
+    if (!scene)
+    {
+        char message[512]{};
+        ufbx_format_error(message, sizeof(message), &loadError);
+        fputs("{\"error\":", stdout);
+        PrintJsonString(message);
+        fputs("}\n", stdout);
+        return false;
+    }
+
+    // 対象clusterのJSON行数と元sceneのdeformer数。
+    uint32_t outputCount = 0;
+    uint32_t deformerCount = 0;
+    fputs("{\"mode\":\"skin-weights\",\"path\":", stdout);
+    PrintJsonString(path);
+    printf(",\"meshCount\":%zu,\"skinDeformerCount\":%zu,\"clusters\":[", scene->meshes.count, scene->skin_deformers.count);
+    for (size_t meshIndex = 0; meshIndex < scene->meshes.count; ++meshIndex)
+    {
+        // 集計対象meshと、そのmeshへ接続されたskin deformer。
+        const ufbx_mesh* mesh = scene->meshes.data[meshIndex];
+        for (size_t deformerIndex = 0; deformerIndex < mesh->skin_deformers.count; ++deformerIndex)
+        {
+            const ufbx_skin_deformer* deformer = mesh->skin_deformers.data[deformerIndex];
+            ++deformerCount;
+            for (size_t clusterIndex = 0; clusterIndex < deformer->clusters.count; ++clusterIndex)
+            {
+                // clusterが指す骨名を対象一覧から検索する。
+                const ufbx_skin_cluster* cluster = deformer->clusters.data[clusterIndex];
+                const char* boneName = cluster->bone_node ? cluster->bone_node->name.data : nullptr;
+                int32_t targetIndex = -1;
+                for (uint32_t nameIndex = 0; nameIndex < 24; ++nameIndex)
+                {
+                    if (boneName && strcmp(boneName, targetNames[nameIndex]) == 0)
+                    {
+                        targetIndex = static_cast<int32_t>(nameIndex);
+                        break;
+                    }
+                }
+                if (targetIndex < 0)
+                {
+                    continue;
+                }
+                targetFound[targetIndex] = true;
+
+                // clusterへのweightをvertexごとに合計し、非ゼロvertex数と最大値を得る。
+                uint64_t weightedVertexCount = 0;
+                uint64_t influenceCount = 0;
+                uint64_t nonFiniteWeightCount = 0;
+                double weightSum = 0.0;
+                double maxVertexWeight = 0.0;
+                for (size_t vertexIndex = 0; vertexIndex < deformer->vertices.count; ++vertexIndex)
+                {
+                    const ufbx_skin_vertex& vertex = deformer->vertices.data[vertexIndex];
+                    double vertexWeight = 0.0;
+                    for (uint32_t weightIndex = 0; weightIndex < vertex.num_weights; ++weightIndex)
+                    {
+                        const size_t sourceIndex = static_cast<size_t>(vertex.weight_begin) + weightIndex;
+                        if (sourceIndex >= deformer->weights.count)
+                        {
+                            break;
+                        }
+                        const ufbx_skin_weight& weight = deformer->weights.data[sourceIndex];
+                        if (weight.cluster_index != clusterIndex)
+                        {
+                            continue;
+                        }
+                        ++influenceCount;
+                        if (!isfinite(static_cast<double>(weight.weight)))
+                        {
+                            ++nonFiniteWeightCount;
+                            continue;
+                        }
+                        vertexWeight += static_cast<double>(weight.weight);
+                    }
+                    if (vertexWeight != 0.0)
+                    {
+                        ++weightedVertexCount;
+                        weightSum += vertexWeight;
+                        if (vertexWeight > maxVertexWeight)
+                        {
+                            maxVertexWeight = vertexWeight;
+                        }
+                    }
+                }
+                if (outputCount++)
+                {
+                    putchar(',');
+                }
+                printf("{\"mesh\":");
+                PrintJsonString(mesh->element.name.data);
+                printf(",\"skinDeformer\":");
+                PrintJsonString(deformer->element.name.data);
+                printf(",\"clusterIndex\":%zu,\"cluster\":", clusterIndex);
+                PrintJsonString(cluster->element.name.data);
+                printf(",\"bone\":");
+                PrintJsonString(boneName);
+                printf(",\"vertexCount\":%zu,\"weightedVertexCount\":%llu,\"influenceCount\":%llu,\"weightSum\":", deformer->vertices.count, static_cast<unsigned long long>(weightedVertexCount), static_cast<unsigned long long>(influenceCount));
+                PrintJsonDouble(weightSum);
+                fputs(",\"maxVertexWeight\":", stdout);
+                PrintJsonDouble(maxVertexWeight);
+                printf(",\"nonFiniteWeightCount\":%llu}", static_cast<unsigned long long>(nonFiniteWeightCount));
+            }
+        }
+    }
+    fputs("],\"matchedTargetNames\":[", stdout);
+    uint32_t matchedCount = 0;
+    for (uint32_t targetIndex = 0; targetIndex < 24; ++targetIndex)
+    {
+        if (!targetFound[targetIndex])
+        {
+            continue;
+        }
+        if (matchedCount++)
+        {
+            putchar(',');
+        }
+        PrintJsonString(targetNames[targetIndex]);
+    }
+    fputs("],\"missingTargetNames\":[", stdout);
+    uint32_t missingCount = 0;
+    for (uint32_t targetIndex = 0; targetIndex < 24; ++targetIndex)
+    {
+        if (targetFound[targetIndex])
+        {
+            continue;
+        }
+        if (missingCount++)
+        {
+            putchar(',');
+        }
+        PrintJsonString(targetNames[targetIndex]);
+    }
+    printf("],\"reportedClusterCount\":%u,\"visitedDeformerCount\":%u}\n", outputCount, deformerCount);
+    ufbx_free_scene(scene);
+    return true;
 }
 
 /**
@@ -697,10 +913,16 @@ int main(int argc, char** argv)
         return BenchmarkDeform(argv[1], frameCount, strcmp(argv[2], "--benchmark-deform-legacy") == 0, strcmp(argv[2], "--benchmark-deform-sparse") == 0) ? 0 : 1;
     }
     if (argc == 3 && strcmp(argv[2], "--animation") == 0)
+    {
         return InspectAnimation(argv[1]) ? 0 : 1;
+    }
+    if (argc == 3 && strcmp(argv[2], "--skin-weights") == 0)
+    {
+        return InspectSkinWeights(argv[1]) ? 0 : 1;
+    }
     if (argc != 2)
     {
-        fprintf(stderr, "usage: local_model_inspect <model-file> [--animation|--benchmark-deform [frames]|--benchmark-deform-sparse [frames]|--benchmark-deform-legacy [frames]]\n");
+        fprintf(stderr, "usage: local_model_inspect <model-file> [--animation|--skin-weights|--benchmark-deform [frames]|--benchmark-deform-sparse [frames]|--benchmark-deform-legacy [frames]]\n");
         return 2;
     }
     return Inspect(argv[1]) ? 0 : 1;

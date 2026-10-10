@@ -39,7 +39,9 @@ detail::ModelTransform* Transform(ModelHandle model)
 {
     auto* transform = detail::FindModel(model) ? detail::FindModelTransform(model) : nullptr;
     if (!transform)
+    {
         detail::SetError("invalid model handle or missing instance state");
+    }
     return transform;
 }
 
@@ -64,7 +66,9 @@ model::FModelPlayback* Playback(ModelHandle handle, bool create)
 {
     auto* transform = Transform(handle);
     if (!transform)
+    {
         return nullptr;
+    }
     if (!transform->playback && create)
     {
         try
@@ -110,13 +114,19 @@ ModelHandle AdoptModel(detail::ModelResource* resource, String& error)
 bool Clock(const model::FModelClipState& state, double seconds, double& output)
 {
     if (!isfinite(seconds) || !state.asset || !state.asset->source)
+    {
         return false;
+    }
     const double duration = state.asset->source->ClipDuration(state.clip);
     if (!isfinite(duration) || duration < 0.0)
+    {
         return false;
+    }
     output = duration == 0.0 ? 0.0 : state.loop ? fmod(seconds, duration) : fmax(0.0, fmin(duration, seconds));
     if (output < 0.0)
+    {
         output += duration;
+    }
     return true;
 }
 
@@ -141,20 +151,32 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
 {
     auto* target = detail::FindModel(handle);
     if (!target || !Transform(handle))
+    {
         return detail::SetError("invalid model handle");
+    }
     if (!asset || !asset->source || slot > 1 || !isfinite(weight) || weight < 0.0f || weight > 1.0f)
+    {
         return detail::SetError("invalid animation source, slot, or blend weight");
+    }
     auto* playback = Playback(handle, true);
     if (!playback)
+    {
         return -1;
+    }
     if (slot == 1 && !playback->clips[0].asset)
+    {
         return detail::SetError("play a primary animation before blending");
+    }
     if (slot == 1 && playback->clips[0].asset->source->Format() == model::EModelAnimationFormat::ObjSequence && asset->source->Format() != model::EModelAnimationFormat::ObjSequence)
+    {
         return detail::SetError("cannot blend a sequence and skeletal clip");
+    }
     model::FModelClipState candidate;
     String error;
     if (!model::BuildClipBinding(*asset, clip, target->animation, playback->roles, candidate, error))
+    {
         return Failure(error);
+    }
     candidate.loop = loop;
     // 実際の頂点対応まで検査してから再生枠を置き換える。
     model::animation::FModelPose pose;
@@ -162,9 +184,13 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     const bool sequence = asset->source->Format() == model::EModelAnimationFormat::ObjSequence;
     bool valid = validation && (sequence ? asset->source->Sample(clip, 0.0, pose, error) : model::SampleBoundClip(candidate, *target->animation, pose, error));
     if (valid)
+    {
         valid = (sequence ? asset->source : target->animation->source)->Deform(pose, *validation, error);
+    }
     if (validation)
+    {
         Release(&validation->reference);
+    }
     if (!valid)
     {
         Release(&candidate.asset->reference);
@@ -172,7 +198,9 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     }
     auto& destination = playback->clips[slot];
     if (destination.asset)
+    {
         Release(&destination.asset->reference);
+    }
     destination.asset = candidate.asset;
     destination.clip = candidate.clip;
     destination.seconds = 0.0;
@@ -190,7 +218,9 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     if (slot == 0)
     {
         if (playback->clips[1].asset)
+        {
             Release(&playback->clips[1].asset->reference);
+        }
         playback->clips[1].asset = nullptr;
         playback->clips[1].bones.Clear();
         playback->clips[1].requestedRoles.Clear();
@@ -238,7 +268,9 @@ bool SetRole(Array<uint16_t>& roles, uint32_t count, uint32_t bone, EHumanoidBon
             return false;
         }
         for (uint32_t i = 0; i < count; ++i)
+        {
             roles.Append(0);
+        }
     }
     if (roles.Count() != count)
     {
@@ -256,25 +288,35 @@ int StoreIk(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 targ
 {
     auto* asset = Embedded(handle);
     if (!asset || !asset->source || !bones || count < 2 || count > 1024 || !detail::IsFinite(target) || !detail::IsFinite(pole) || !isfinite(weight) || weight < 0.0f || weight > 1.0f)
+    {
         return detail::SetError("invalid IK skeleton, chain, target, or weight");
+    }
     model::animation::FModelPose rest, solved;
     String error;
     const auto& skeleton = asset->source->Skeleton();
     for (uint32_t i = 0; i + 1 < count; ++i)
     {
         if (!asset->source->BoneWritable(bones[i]))
+        {
             return detail::SetError("IK chain includes a fixed format transform");
+        }
     }
     const float point[3] = { target.x, target.y, target.z };
     const float bend[3] = { pole.x, pole.y, pole.z };
     if (!model::animation::InitializeModelPose(skeleton, rest, error))
+    {
         return Failure(error);
+    }
     const bool valid = twoBone ? model::animation::SolveTwoBoneIk(skeleton, rest, bones[0], bones[1], bones[2], point, bend, weight, solved, error) : model::animation::SolveFabrikIk(skeleton, rest, bones, count, point, weight, 0.0001f, 64, solved, error);
     if (!valid)
+    {
         return Failure(error);
+    }
     auto* playback = Playback(handle, true);
     if (!playback)
+    {
         return -1;
+    }
     Array<model::FModelIkCommand> commands;
     Array<uint32_t> chain;
     for (uint32_t i = 0; i < playback->ik.Count(); ++i)
@@ -282,13 +324,19 @@ int StoreIk(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 targ
         auto command = playback->ik.At(i);
         const auto* old = playback->ikBones.Data() + command.offset;
         if (old[0] == bones[0])
+        {
             continue;
+        }
         command.offset = chain.Count();
         if (!chain.AppendRange(old, command.count) || !commands.Append(command))
+        {
             return detail::SetError("IK command allocation failed");
+        }
     }
     if (commands.Count() >= 64 || chain.Count() > 65536u - count)
+    {
         return detail::SetError("IK command count exceeds its limit");
+    }
     model::FModelIkCommand command{};
     command.offset = chain.Count();
     command.count = count;
@@ -297,7 +345,9 @@ int StoreIk(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 targ
     memcpy(command.target, point, sizeof(point));
     memcpy(command.pole, bend, sizeof(bend));
     if (!chain.AppendRange(bones, count) || !commands.Append(command))
+    {
         return detail::SetError("IK command allocation failed");
+    }
     playback->ik.MoveFrom(commands);
     playback->ikBones.MoveFrom(chain);
     detail::ClearError();
@@ -345,7 +395,9 @@ ModelAnimationHandle LoadModelAnimation(const char* path)
     Deallocate(bytes);
     const auto handle = model::RegisterAnimation(asset, error);
     if (!handle.IsValid())
+    {
         Failure(error);
+    }
     else
         detail::ClearError();
     return handle;
@@ -357,10 +409,14 @@ ModelAnimationHandle LoadModelSequenceAnimation(const char* const* paths, uint32
     detail::ModelResource* base = nullptr;
     auto* asset = model::LoadObjSequence(paths, count, fps, base, error);
     if (base)
+    {
         Release(&base->reference);
+    }
     const auto handle = model::RegisterAnimation(asset, error);
     if (!handle.IsValid())
+    {
         Failure(error);
+    }
     else
         detail::ClearError();
     return handle;
@@ -370,7 +426,9 @@ int DeleteModelAnimation(ModelAnimationHandle handle)
 {
     String error;
     if (!model::DeleteAnimation(handle, error))
+    {
         return Failure(error);
+    }
     detail::ClearError();
     return 0;
 }
@@ -427,7 +485,9 @@ int SetModelAnimationBlendWeight(ModelHandle handle, float weight)
 {
     auto* playback = Playback(handle, false);
     if (!playback || !playback->clips[0].asset || !playback->clips[1].asset || !isfinite(weight) || weight < 0.0f || weight > 1.0f)
+    {
         return detail::SetError("blend slots are not configured or weight is invalid");
+    }
     playback->blendWeight = weight;
     detail::ClearError();
     return 0;
@@ -437,14 +497,18 @@ int StopModelAnimation(ModelHandle handle)
 {
     auto* transform = Transform(handle);
     if (!transform)
+    {
         return -1;
+    }
     if (transform->playback)
     {
         for (uint32_t i = 0; i < 2; ++i)
         {
             auto& state = transform->playback->clips[i];
             if (state.asset)
+            {
                 Release(&state.asset->reference);
+            }
             state.asset = nullptr;
             state.bones.Clear();
             state.requestedRoles.Clear();
@@ -467,9 +531,13 @@ int SetModelAnimationTime(ModelHandle handle, double seconds, uint32_t slot)
     auto* state = Clip(handle, slot);
     double time = 0.0;
     if (!state)
+    {
         return -1;
+    }
     if (!Clock(*state, seconds, time))
+    {
         return detail::SetError("invalid animation time or duration");
+    }
     state->seconds = time;
     detail::ClearError();
     return 0;
@@ -485,9 +553,13 @@ int SetModelAnimationSpeed(ModelHandle handle, double speed, uint32_t slot)
 {
     auto* state = Clip(handle, slot);
     if (!state)
+    {
         return -1;
+    }
     if (!isfinite(speed))
+    {
         return detail::SetError("animation speed must be finite");
+    }
     state->speed = speed;
     detail::ClearError();
     return 0;
@@ -497,11 +569,15 @@ int SetModelAnimationLoop(ModelHandle handle, bool loop, uint32_t slot)
 {
     auto* state = Clip(handle, slot);
     if (!state)
+    {
         return -1;
+    }
     state->loop = loop;
     double time = 0.0;
     if (!Clock(*state, state->seconds, time))
+    {
         return detail::SetError("invalid animation duration");
+    }
     state->seconds = time;
     detail::ClearError();
     return 0;
@@ -511,17 +587,23 @@ int UpdateModelAnimation(ModelHandle handle, double delta)
 {
     auto* playback = Playback(handle, false);
     if (!playback || !playback->clips[0].asset || !isfinite(delta) || delta < 0.0)
+    {
         return detail::SetError("animation is not playing or delta time is invalid");
+    }
     double times[2]{};
     for (uint32_t i = 0; i < 2; ++i)
     {
         const auto& state = playback->clips[i];
         if (state.asset && !Clock(state, state.seconds + delta * state.speed, times[i]))
+        {
             return detail::SetError("animation clock exceeds its finite range");
+        }
     }
     for (uint32_t i = 0; i < 2; ++i)
         if (playback->clips[i].asset)
+        {
             playback->clips[i].seconds = times[i];
+        }
     detail::ClearError();
     return 0;
 }
@@ -539,32 +621,52 @@ const char* GetModelBoneName(ModelHandle handle, uint32_t bone)
 
 int GetModelBonePosition(ModelHandle handle, uint32_t bone, Vec3& output)
 {
+    return GetModelBonePositions(handle, &bone, 1, &output);
+}
+
+int GetModelBonePositions(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3* output)
+{
     // 所有元の骨格とこのinstanceの状態を借り、照会では状態を作らない。
     auto* resource = detail::FindModel(handle);
     auto* transform = Transform(handle);
     auto* asset = resource ? resource->animation : nullptr;
-    if (!transform || !asset || !asset->source || bone >= asset->source->Skeleton().parents.Count())
+    if (!transform || !asset || !asset->source || !bones || !output || count == 0 || count > asset->source->Skeleton().parents.Count())
     {
-        return detail::SetError("invalid model bone or missing skeleton");
+        return detail::SetError("invalid model bone position batch or missing skeleton");
     }
-    // 描画と共通の順序で姿勢を評価し、頂点変形を省いて骨の原点だけを読む。
+    const auto& skeleton = asset->source->Skeleton();
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        if (bones[index] >= skeleton.parents.Count())
+        {
+            return detail::SetError("invalid model bone index");
+        }
+    }
+    // 描画と共通の順序で姿勢を一度だけ評価し、頂点変形を省いて骨の原点を読む。
     model::animation::FModelPose pose;
     String error;
-    const auto& skeleton = asset->source->Skeleton();
     const bool evaluated = transform->playback ? model::EvaluateModelPlaybackPose(*resource, *transform->playback, pose, error) : model::animation::InitializeModelPose(skeleton, pose, error);
     Array<float> matrices;
     if (!evaluated || !model::animation::EvaluateModelPose(skeleton, pose, matrices, error))
     {
         return Failure(error);
     }
-    // 全処理の成功後に、呼び出し側の出力位置を置き換える。
-    const uint32_t offset = bone * 16u + 12u;
-    const Vec3 candidate{ matrices.At(offset), matrices.At(offset + 1u), matrices.At(offset + 2u) };
-    if (!detail::IsFinite(candidate))
+    // 全結果を候補へ保存してから、呼び出し側の配列を一括で更新する。
+    Array<Vec3> positions;
+    if (!positions.Reserve(count))
     {
-        return detail::SetError("model bone position is not finite");
+        return detail::SetError("model bone position allocation failed");
     }
-    output = candidate;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        const uint32_t offset = bones[index] * 16u + 12u;
+        const Vec3 position{ matrices.At(offset), matrices.At(offset + 1u), matrices.At(offset + 2u) };
+        if (!detail::IsFinite(position) || !positions.Append(position))
+        {
+            return detail::SetError("model bone position is not finite or allocation failed");
+        }
+    }
+    memcpy(output, positions.Data(), static_cast<size_t>(count) * sizeof(Vec3));
     detail::ClearError();
     return 0;
 }
@@ -591,7 +693,9 @@ int32_t FindModelBone(ModelHandle handle, const char* name)
         }
     }
     if (found < 0)
+    {
         detail::SetError("bone name was not found");
+    }
     else
         detail::ClearError();
     return found;
@@ -612,10 +716,14 @@ int SetModelBoneRole(ModelHandle handle, uint32_t bone, EHumanoidBone role)
 {
     auto* playback = Playback(handle, true);
     if (!playback)
+    {
         return -1;
+    }
     String error;
     if (!SetRole(playback->roles, GetModelBoneCount(handle), bone, role, error))
+    {
         return Failure(error);
+    }
     detail::ClearError();
     return 0;
 }
@@ -624,10 +732,14 @@ int SetAnimationBoneRole(ModelAnimationHandle handle, uint32_t bone, EHumanoidBo
 {
     auto* asset = model::FindAnimation(handle);
     if (!asset)
+    {
         return detail::SetError("invalid animation handle");
+    }
     String error;
     if (!SetRole(asset->roles, GetAnimationBoneCount(handle), bone, role, error))
+    {
         return Failure(error);
+    }
     detail::ClearError();
     return 0;
 }
@@ -732,13 +844,19 @@ static int InferRoles(const model::AModelAnimationSource& source, Array<uint16_t
     String error;
     Array<uint16_t> candidate;
     if (!model::InferHumanoidBoneRoles(source, roles, candidate, error))
+    {
         return Failure(error);
+    }
     uint32_t recognized = 0;
     for (uint32_t i = 0; i < candidate.Count(); ++i)
         if (candidate.At(i) != 0)
+        {
             ++recognized;
+        }
     if (recognized == 0)
+    {
         return detail::SetError("no recognized humanoid bone names; set bone roles manually");
+    }
     roles.MoveFrom(candidate);
     detail::ClearError();
     return 0;
@@ -748,10 +866,14 @@ int AutoMapModelHumanoidBones(ModelHandle handle)
 {
     auto* asset = Embedded(handle);
     if (!asset || !asset->source)
+    {
         return detail::SetError("model has no skeleton");
+    }
     auto* playback = Playback(handle, true);
     if (!playback)
+    {
         return -1;
+    }
     return InferRoles(*asset->source, playback->roles);
 }
 
@@ -759,7 +881,9 @@ int AutoMapAnimationHumanoidBones(ModelAnimationHandle handle)
 {
     auto* asset = model::FindAnimation(handle);
     if (!asset || !asset->source)
+    {
         return detail::SetError("invalid animation handle");
+    }
     return InferRoles(*asset->source, asset->roles);
 }
 
@@ -854,7 +978,9 @@ int ClearModelIk(ModelHandle handle)
 {
     auto* transform = Transform(handle);
     if (!transform)
+    {
         return -1;
+    }
     if (transform->playback)
     {
         transform->playback->ik.Clear();

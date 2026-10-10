@@ -12,7 +12,7 @@ namespace gk::examples
 {
 
 /**
- * 右腕の現在位置から作った、確認用の二骨IK値。
+ * 右腕の現在位置から作った、確認用の2ボーンIK値。
  */
 struct FModelArmIkPreview
 {
@@ -20,9 +20,13 @@ struct FModelArmIkPreview
     uint32_t bones[3]{};
     // 上腕、肘、手首の現在位置。
     gk::Vec3 joints[3]{};
+    // 胴体から右肩へ向かう単位方向。
+    gk::Vec3 outward{};
+    // 胴体の下側から上側へ向かう単位方向。
+    gk::Vec3 up{};
     // 腕の長さの範囲内に置く手先目標。
     gk::Vec3 target{};
-    // 肘を胴体の前へ向けるための補助点。
+    // 肘の曲げる方向を決める補助点。
     gk::Vec3 pole{};
     // 上腕と前腕の長さの合計。
     float armLength = 0.0f;
@@ -39,6 +43,19 @@ bool MakeModelArmIkPreview(gk::Vec3 torso, const gk::Vec3 joints[3], FModelArmIk
  * 必要な人型役割またはボーン位置を取得できない場合はfalseを返し、outputを保つ。
  */
 bool BuildModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& output);
+
+/**
+ * 元motionの手先と曲げ面を保ち、体の前方へ小さな確認用補正を加える。
+ * offsetRatioは腕長に対する0から1の比率。届く範囲まで補正を縮める。
+ * 無効入力はfalseでoutputを保つ。0なら手先の目標位置は変えない。
+ */
+bool MakeMotionFollowingArmIkPreview(gk::Vec3 hips, gk::Vec3 torso, gk::Vec3 leftShoulder, const gk::Vec3 joints[3], FModelArmIkPreview& output, float offsetRatio = 0.05f);
+
+/**
+ * 現在のアニメーションから胴体と腕の位置をまとめて取得し、動く確認用目標を作る。
+ * 右腕・左上腕・腰・胸の役割が必要。失敗時はoutputを保つ。
+ */
+bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& output);
 
 /**
  * モデル座標の手先目標を表示座標へ変換し、UIレイヤー上にオレンジ色の中抜き菱形を描く。

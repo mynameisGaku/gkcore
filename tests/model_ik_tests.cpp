@@ -49,10 +49,14 @@ bool EndPosition(const FModelSkeleton& skeleton, const FModelPose& pose, float o
     gk::Array<float> matrices;
     gk::String error;
     if (!EvaluateModelPose(skeleton, pose, matrices, error) || matrices.Count() != 48)
+    {
         return false;
+    }
     for (uint32_t index = 0; index < matrices.Count(); ++index)
         if (!isfinite(matrices.At(index)))
+        {
             return false;
+        }
     output[0] = matrices.At(44);
     output[1] = matrices.At(45);
     output[2] = matrices.At(46);
@@ -67,7 +71,9 @@ bool CheckSolvedChain(const FModelSkeleton& skeleton, const FModelPose& pose, co
     gk::Array<float> matrices;
     gk::String error;
     if (!EvaluateModelPose(skeleton, pose, matrices, error) || matrices.Count() != 48)
+    {
         return false;
+    }
     // FK出力からchainの3点を取り出す。
     const float root[3] = { matrices.At(12), matrices.At(13), matrices.At(14) };
     const float middle[3] = { matrices.At(28), matrices.At(29), matrices.At(30) };
@@ -99,7 +105,9 @@ bool CheckNearlyUniformScaleResult(const FModelSkeleton& skeleton, const FModelP
     gk::Array<float> matrices;
     gk::String error;
     if (!EvaluateModelPose(skeleton, pose, matrices, error) || matrices.Count() != 48)
+    {
         return false;
+    }
     // 位置だけでなく姿勢行列の全成分が有限であることを確認する。
     for (uint32_t index = 0; index < matrices.Count(); ++index)
     {
@@ -120,7 +128,9 @@ bool CheckNearlyUniformScaleResult(const FModelSkeleton& skeleton, const FModelP
         firstSquared += firstDelta * firstDelta;
         secondSquared += secondDelta * secondDelta;
         if (!isfinite(end[axis]) || fabsf(end[axis] - target[axis]) > 2.0e-5f)
+        {
             return false;
+        }
     }
     // 中間boneのX scaleは子boneの長さに反映される。
     return fabs(sqrt(firstSquared) - expectedFirst) <= 2.0e-5 && fabs(sqrt(secondSquared) - expectedSecond) <= 2.0e-5;
@@ -138,14 +148,33 @@ bool TestNearlyUniformScaleCase(float rootScale, float middleScale, double expec
     const float pole[3] = { 0.0f, 1.0f, 0.0f };
     const uint32_t chain[3] = { 0, 1, 2 };
     if (!MakeChain(skeleton) || !MakePose(source))
+    {
         return Fail("nearly uniform-scale fixture allocation failed");
+    }
     source.localTransforms.At(0).scale[0] = rootScale;
     source.localTransforms.At(1).scale[0] = middleScale;
     if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, twoBone, error) || !SolveFabrikIk(skeleton, source, chain, 3, target, 1.0f, 1.0e-6f, 256, fabrik, error) || !SolveCcdIk(skeleton, source, chain, 3, target, 1.0f, 1.0e-6f, 256, ccd, error))
+    {
         return Fail(error.CStr());
+    }
     if (!CheckNearlyUniformScaleResult(skeleton, twoBone, target, expectedFirst, expectedSecond) || !CheckNearlyUniformScaleResult(skeleton, fabrik, target, expectedFirst, expectedSecond) || !CheckNearlyUniformScaleResult(skeleton, ccd, target, expectedFirst, expectedSecond))
+    {
         return Fail("nearly uniform-scale IK changed bone lengths, produced non-finite output, or missed its target");
+    }
     return true;
+}
+
+/**
+ * quaternionの符号違いを許して同じ回転か比較する。
+ */
+bool SameRotation(const float first[4], const float second[4], double tolerance)
+{
+    double dot = 0.0;
+    for (uint32_t component = 0; component < 4; ++component)
+    {
+        dot += static_cast<double>(first[component]) * second[component];
+    }
+    return fabs(fabs(dot) - 1.0) <= tolerance;
 }
 
 /**
@@ -186,27 +215,39 @@ bool TestScaledAndRotatedChains()
         const float target[3] = { 3.0f * unit + 0.9f * unit, 4.0f * unit + 1.5f * unit, 0.0f };
         const float pole[3] = { 3.0f * unit, 5.0f * unit, 0.0f };
         if (!skeleton.parents.AppendRange(parents, 3) || !skeleton.restLocalTransforms.AppendRange(transforms, 3) || !source.localTransforms.AppendRange(transforms, 3))
+        {
             return Fail("scaled rotated-chain fixture allocation failed");
+        }
         if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, output, error))
+        {
             return Fail(error.CStr());
+        }
         if (!CheckSolvedChain(skeleton, output, target, 0.003f))
+        {
             return Fail("scaled or rotated unequal-length chain missed its target or changed bone lengths");
+        }
     }
     // 最大到達距離の反平行目標。
     FModelSkeleton antiParallelSkeleton;
     FModelPose antiParallelSource, antiParallelOutput;
     gk::String error;
     if (!MakeChain(antiParallelSkeleton) || !MakePose(antiParallelSource))
+    {
         return Fail("anti-parallel chain fixture allocation failed");
+    }
     // 目標はchainの逆方向、poleは直交方向。
     const float antiParallelTarget[3] = { -4.0f, 0.0f, 0.0f };
     const float antiParallelPole[3] = { 0.0f, 1.0f, 0.0f };
     if (!SolveTwoBoneIk(antiParallelSkeleton, antiParallelSource, 0, 1, 2, antiParallelTarget, antiParallelPole, 1.0f, antiParallelOutput, error))
+    {
         return Fail(error.CStr());
+    }
     // 解いた先端位置。
     float end[3]{};
     if (!EndPosition(antiParallelSkeleton, antiParallelOutput, end) || fabsf(end[0] + 2.0f) > 0.002f || fabsf(end[1]) > 0.002f)
+    {
         return Fail("anti-parallel target did not preserve maximum reach");
+    }
     return true;
 }
 
@@ -223,18 +264,26 @@ bool TestCollinearPoleFallback()
     const float target[3] = { 1.0f, 0.0f, 0.0f };
     const float pole[3] = { 8.0f, 0.0f, 0.0f };
     if (!MakeChain(skeleton) || !MakePose(source) || !SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, first, error) || !SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, second, error))
+    {
         return Fail(error.CStr());
+    }
     if (first.localTransforms.Count() != second.localTransforms.Count())
+    {
         return Fail("collinear-pole fallback changed output size");
+    }
     for (uint32_t bone = 0; bone < first.localTransforms.Count(); ++bone)
         for (uint32_t component = 0; component < 4; ++component)
             if (first.localTransforms.At(bone).rotation[component] != second.localTransforms.At(bone).rotation[component])
+            {
                 return Fail("collinear-pole fallback was not deterministic");
+            }
     // 出力の先端と中間jointを検査する。
     float end[3]{};
     gk::Array<float> matrices;
     if (!EndPosition(skeleton, first, end) || !EvaluateModelPose(skeleton, first, matrices, error) || fabsf(end[0] - target[0]) > 0.002f || fabsf(end[1] - target[1]) > 0.002f || fabsf(matrices.At(30)) < 0.1f)
+    {
         return Fail("collinear pole did not produce a stable bent pose");
+    }
     return true;
 }
 
@@ -247,17 +296,98 @@ bool TestTranslatedRootTarget()
     FModelPose source, output;
     gk::String error;
     if (!MakeChain(skeleton) || !MakePose(source))
+    {
         return Fail("translated-root fixture allocation failed");
+    }
     source.localTransforms.At(0).position[0] = 1.0f;
     const float target[3] = { 0.0f, 1.0f, 0.0f };
     const float pole[3] = { 0.0f, 1.0f, 0.0f };
     if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, output, error))
+    {
         return Fail(error.CStr());
+    }
     float end[3]{};
     if (!EndPosition(skeleton, output, end) || fabsf(end[0] - target[0]) > 0.002f || fabsf(end[1] - target[1]) > 0.002f)
     {
         fprintf(stderr, "translated-root IK result was (%.3f,%.3f)\n", end[0], end[1]);
         return Fail("translated-root IK did not reach its model-space target");
+    }
+    return true;
+}
+
+/**
+ * 回転・平行移動と不均衡なリンクでも元のchain回転を保つ。
+ */
+bool TestUnchangedTargetPreservesRotatedUnequalChain()
+{
+    // 任意軸のroot回転、平行移動、不均衡リンクを持つsource姿勢。
+    FModelSkeleton skeleton;
+    FModelPose source;
+    FModelPose solved;
+    gk::String error;
+    const int32_t parents[3] = { -1, 0, 1 };
+    FModelBoneTransform transforms[3]{};
+    const double axisLength = sqrt(14.0);
+    const double rootSine = sin(0.35) / axisLength;
+    transforms[0].position[0] = 2.0f;
+    transforms[0].position[1] = -3.0f;
+    transforms[0].position[2] = 4.0f;
+    transforms[0].rotation[0] = static_cast<float>(rootSine);
+    transforms[0].rotation[1] = static_cast<float>(2.0 * rootSine);
+    transforms[0].rotation[2] = static_cast<float>(3.0 * rootSine);
+    transforms[0].rotation[3] = static_cast<float>(cos(0.35));
+    transforms[1].position[0] = 1.5f;
+    transforms[1].rotation[2] = sinf(0.65f * 0.5f);
+    transforms[1].rotation[3] = cosf(0.65f * 0.5f);
+    transforms[2].position[0] = 0.7f;
+    transforms[2].rotation[0] = sinf(0.22f * 0.5f);
+    transforms[2].rotation[3] = cosf(0.22f * 0.5f);
+    if (!skeleton.parents.AppendRange(parents, 3) || !skeleton.restLocalTransforms.AppendRange(transforms, 3) || !source.localTransforms.AppendRange(transforms, 3))
+    {
+        return Fail("rotated unequal-chain fixture allocation failed");
+    }
+
+    // 元の3点位置と曲げ面からpoleを作る。
+    gk::Array<float> sourceMatrices;
+    if (!EvaluateModelPose(skeleton, source, sourceMatrices, error) || sourceMatrices.Count() != 48)
+    {
+        return Fail(error.CStr());
+    }
+    const double root[3] = { sourceMatrices.At(12), sourceMatrices.At(13), sourceMatrices.At(14) };
+    const double middle[3] = { sourceMatrices.At(28), sourceMatrices.At(29), sourceMatrices.At(30) };
+    const double end[3] = { sourceMatrices.At(44), sourceMatrices.At(45), sourceMatrices.At(46) };
+    const double first[3] = { middle[0] - root[0], middle[1] - root[1], middle[2] - root[2] };
+    const double second[3] = { end[0] - middle[0], end[1] - middle[1], end[2] - middle[2] };
+    const double normal[3] = { first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0] };
+    const double targetDirection[3] = { end[0] - root[0], end[1] - root[1], end[2] - root[2] };
+    const double targetLength = sqrt(targetDirection[0] * targetDirection[0] + targetDirection[1] * targetDirection[1] + targetDirection[2] * targetDirection[2]);
+    double direction[3] = { targetDirection[0] / targetLength, targetDirection[1] / targetLength, targetDirection[2] / targetLength };
+    const double normalProjection = normal[0] * direction[0] + normal[1] * direction[1] + normal[2] * direction[2];
+    double planeNormal[3] = { normal[0] - normalProjection * direction[0], normal[1] - normalProjection * direction[1], normal[2] - normalProjection * direction[2] };
+    const double planeLength = sqrt(planeNormal[0] * planeNormal[0] + planeNormal[1] * planeNormal[1] + planeNormal[2] * planeNormal[2]);
+    if (!(planeLength > 0.0))
+    {
+        return Fail("rotated unequal-chain bend plane was degenerate");
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        planeNormal[axis] /= planeLength;
+    }
+    const double bend[3] = { direction[1] * planeNormal[2] - direction[2] * planeNormal[1], direction[2] * planeNormal[0] - direction[0] * planeNormal[2], direction[0] * planeNormal[1] - direction[1] * planeNormal[0] };
+    const float target[3] = { static_cast<float>(end[0]), static_cast<float>(end[1]), static_cast<float>(end[2]) };
+    const float pole[3] = { static_cast<float>(root[0] + 2.2 * bend[0]), static_cast<float>(root[1] + 2.2 * bend[1]), static_cast<float>(root[2] + 2.2 * bend[2]) };
+    if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, solved, error))
+    {
+        return Fail(error.CStr());
+    }
+
+    // root、hinge、endすべての回転を符号違いを許して照合する。
+    for (uint32_t bone = 0; bone < 3; ++bone)
+    {
+        if (!SameRotation(source.localTransforms.At(bone).rotation, solved.localTransforms.At(bone).rotation, 2.0e-5))
+        {
+            return Fail("unchanged target or source pole altered a rotated unequal-chain quaternion");
+        }
     }
     return true;
 }
@@ -274,16 +404,26 @@ bool TestTwoBonePoleAndWeight()
     const float target[3] = { 1.0f, 1.0f, 0.0f };
     const float pole[3] = { 0.0f, 1.0f, 0.0f };
     if (!MakeChain(skeleton) || !MakePose(source))
+    {
         return Fail("two-bone fixture allocation failed");
+    }
     if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, output, error))
+    {
         return Fail(error.CStr());
+    }
     if (!CheckSolvedChain(skeleton, output, target, 0.002f))
+    {
         return Fail("two-bone IK missed a reachable target or changed bone lengths");
+    }
     FModelPose unchanged;
     if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 0.0f, unchanged, error))
+    {
         return Fail(error.CStr());
+    }
     if (unchanged.localTransforms.Count() != source.localTransforms.Count() || unchanged.localTransforms.At(0).rotation[3] != source.localTransforms.At(0).rotation[3] || unchanged.localTransforms.At(1).rotation[3] != source.localTransforms.At(1).rotation[3])
+    {
         return Fail("zero IK weight changed the source pose");
+    }
     return true;
 }
 
@@ -302,12 +442,18 @@ bool TestUnreachableTargetAndChainSolvers()
     const float pole[3] = { 0.0f, 1.0f, 0.0f };
     const uint32_t chain[3] = { 0, 1, 2 };
     if (!MakeChain(skeleton) || !MakePose(source))
+    {
         return Fail("chain IK fixture allocation failed");
+    }
     if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, twoBone, error) || !SolveFabrikIk(skeleton, source, chain, 3, target, 1.0f, 0.0001f, 16, fabrik, error) || !SolveCcdIk(skeleton, source, chain, 3, target, 1.0f, 0.0001f, 16, ccd, error))
+    {
         return Fail(error.CStr());
+    }
     float point[3]{};
     if (!EndPosition(skeleton, twoBone, point) || fabsf(point[0] - 2.0f) > 0.002f || fabsf(point[1]) > 0.002f || !EndPosition(skeleton, fabrik, point) || fabsf(point[0] - 2.0f) > 0.002f || fabsf(point[1]) > 0.002f || !EndPosition(skeleton, ccd, point) || fabsf(point[0] - 2.0f) > 0.002f || fabsf(point[1]) > 0.002f)
+    {
         return Fail("unreachable IK target did not clamp to maximum chain reach");
+    }
     return true;
 }
 
@@ -324,53 +470,77 @@ bool TestInvalidIkInputsAreAtomic()
     const float pole[3] = { 0.0f, 0.0f, 1.0f };
     const uint32_t chain[3] = { 0, 1, 2 };
     if (!MakeChain(skeleton) || !MakePose(source) || !MakePose(output))
+    {
         return Fail("invalid IK fixture allocation failed");
+    }
     output.localTransforms.At(0).position[0] = 9.0f;
     FModelPose zeroLength;
     FModelPose singularScale;
     if (!MakePose(zeroLength) || !MakePose(singularScale))
+    {
         return Fail("invalid IK variants allocation failed");
+    }
     zeroLength.localTransforms.At(1).position[0] = 0.0f;
     if (SolveTwoBoneIk(skeleton, zeroLength, 0, 1, 2, target, pole, 1.0f, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("zero-length IK bone was accepted or changed output");
+    }
     singularScale.localTransforms.At(0).scale[0] = 0.0f;
     error.Clear();
     if (SolveFabrikIk(skeleton, singularScale, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("singular IK scale changed output or omitted its diagnostic");
+    }
 
     const float nonFiniteTarget[3] = { NAN, 1.0f, 0.0f };
     error.Clear();
     if (SolveTwoBoneIk(skeleton, source, 0, 1, 2, nonFiniteTarget, pole, 1.0f, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("non-finite IK target changed output or omitted its diagnostic");
+    }
 
     const uint32_t disconnectedChain[3] = { 0, 2, 1 };
     error.Clear();
     if (SolveFabrikIk(skeleton, source, disconnectedChain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("disconnected IK chain changed output or omitted its diagnostic");
+    }
 
     FModelPose negativeScale;
     FModelPose nonUniformScale;
     FModelPose outsideRoundingBudget;
     if (!MakePose(negativeScale) || !MakePose(nonUniformScale) || !MakePose(outsideRoundingBudget))
+    {
         return Fail("scale validation fixture allocation failed");
+    }
     negativeScale.localTransforms.At(0).scale[0] = -1.0f;
     nonUniformScale.localTransforms.At(0).scale[1] = 2.0f;
     outsideRoundingBudget.localTransforms.At(1).scale[0] = 0.999992f;
     error.Clear();
     if (SolveCcdIk(skeleton, negativeScale, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("negative IK scale changed output or omitted its diagnostic");
+    }
     error.Clear();
     if (SolveCcdIk(skeleton, nonUniformScale, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("non-uniform IK scale changed output or omitted its diagnostic");
+    }
     error.Clear();
     if (SolveTwoBoneIk(skeleton, outsideRoundingBudget, 0, 1, 2, target, pole, 1.0f, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("scale outside the float-rounding budget changed output or was accepted");
+    }
     error.Clear();
     if (SolveFabrikIk(skeleton, outsideRoundingBudget, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("FABRIK accepted scale outside the float-rounding budget");
+    }
     error.Clear();
     if (SolveCcdIk(skeleton, outsideRoundingBudget, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+    {
         return Fail("CCD accepted scale outside the float-rounding budget");
+    }
     return true;
 }
 
@@ -378,5 +548,5 @@ bool TestInvalidIkInputsAreAtomic()
 
 int main()
 {
-    return TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() ? 0 : 1;
+    return TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() && TestUnchangedTargetPreservesRotatedUnequalChain() ? 0 : 1;
 }

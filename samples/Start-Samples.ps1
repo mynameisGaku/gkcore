@@ -168,9 +168,9 @@ function Invoke-Viewer([string]$label, [string[]]$arguments)
         return $false
     }
     $pathsToCheck = @($arguments[0])
-    if ($arguments.Count -ge 7 -and ($arguments[5] -eq 'external' -or $arguments[5] -eq 'external-blend'))
+    if ($arguments.Count -ge 7 -and ($arguments[5] -in @('external', 'external-blend', 'external-ik', 'external-blend-ik')))
     {
-        $motionCount = if ($arguments[5] -eq 'external') { 1 } else { 2 }
+        $motionCount = if ($arguments[5] -in @('external', 'external-ik')) { 1 } else { 2 }
         $pathsToCheck += $arguments[6..(5 + $motionCount)]
     }
     $materialsOptionIndex = [Array]::IndexOf($arguments, '--materials')
@@ -209,6 +209,7 @@ Write-Host '  3. monkey.objを正面表示'
 Write-Host '  4. Cesium Manを静止表示（ローカル検証素材）'
 Write-Host '  5. Sci-Fi TrooperでMixamo motionをblend（ローカル検証素材）'
 Write-Host '  6. Clown MonsterでMixamo motionをblend（ローカル検証素材）'
+Write-Host '  7. YUMEKAで外部blend + 右腕IK（オレンジの目標を表示）'
 Write-Host '  0. 終了'
 if (-not (Test-RequiredFile 'Visual Studio solution' $solutionPath))
 {
@@ -223,6 +224,7 @@ if ($CheckOnly)
     if ($sillyPath -and $capoeiraPath)
     {
         $allChecksPassed = (Invoke-Viewer 'YUMEKA 外部motion blend' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend', $sillyPath, $capoeiraPath, '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA 外部motion blend + IK' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $sillyPath, $capoeiraPath, '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
     }
     else
     {
@@ -294,6 +296,16 @@ switch ($selection)
         {
             $blendArguments = $yumekaArguments + @('external-blend', $sillyPath, $capoeiraPath, '--materials', $yumekaMaterialsPath)
             $result = Invoke-Viewer 'YUMEKA 外部motion blend' $blendArguments
+        }
+    }
+    '7'
+    {
+        $sillyPath = Get-MotionPath 'Silly Dancing.fbx'
+        $capoeiraPath = Get-MotionPath 'Capoeira.fbx'
+        if ($sillyPath -and $capoeiraPath)
+        {
+            $blendArguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA 外部motion blend + IK' $blendArguments
         }
     }
     '3'

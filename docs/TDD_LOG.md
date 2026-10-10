@@ -1217,3 +1217,19 @@ FModelArmIkPreviewは肩と胴体のXZ方向、上腕と前腕の長さから肩
 実行環境はWindows11 build26200、RTX4070 SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621.0。gkcore_real_model_capture_testsの既存model/scale/center/modeと材質/役割表引数、GKCORE_TEST_VIEW_ROTATION=0/0.7853981634/1.5707963268を指定。FBXのIK/chainはGKCORE_VERIFY_GPU_SKINNING=1、拡大像はGKCORE_TEST_CAPTURE_HIGH_RES=1。capture専用windowは非表示です。画像はbuild/real-model-captures/{Release,Debug}/ik-outside-body、数値はik-target-comparison.json、ログはik-target-*です。
 
 公開用310ファイルの構成からRuntime・5sampleをbuild/installし、新API宣言のinstallと既存consumerのGPU起動・描画・終了を確認しました。fallback修正後のhelperは公開用sourceへ同期し、再build/installしています。tests・検証記録・私有モデルはmainへ含めません。関連ログはik-target-final-game-*、ik-target-game-consumer-run.logです。
+
+## 動作中の腕IKと袖の変形の確認
+
+ユーザーの腕が潰れて見える指摘を受け、同じ主・副モーション時刻1.0409090909秒でIKなし、従来の固定目標、修正後を比較しました。動く腕を肩基準の一定形状へ強く移すsampleの目標が、元の腕振りと肘の曲げ方向を壊していました。external-ik / external-blend-ikは元の手首から胴体の前方へ腕長の最大5%だけ補正し、到達範囲へ制限します。poleは元の曲げ面から作り、直線姿勢では胴体の基底へ退避します。前方と腕が平行な有効姿勢を拒否する契約をREDにしてから、横・縦方向の第2fallbackを追加してGREENにしました。
+
+GetModelBonePositionsはclip/blend/IKと骨原点の評価を一度ずつ行い、候補配列の全件成功後にcaller出力を一括更新します。重複番号、全失敗出力保持、時刻と表示SRTの不変、各clipの評価回数、IK後の座標をCPU契約で確認しました。単体照会も同じ処理へ委譲します。sampleは毎frame、時刻更新→IK解除→現在位置取得→IK設定→描画の順で、前frameの補正を目標へ戻しません。
+
+試したrootの曲げ面回転補正は、一般のpole変更で肘角を保つ契約を満たした一方、従来のYUMEKA静止IKに肩の裂けを追加しました。ほぼ直線の法線閾値前後でも約55.8度の回転差を観測したため、core補正と専用契約は採用せず元のsolverへ戻しました。最終静止IKの2560x1920画像は前commitの全画素と一致しました。新しいsource-goal/source-poleの3D任意軸回転・平行移動・1.5/0.7不均衡chainでは全3関節のlocal quaternionが保持されます。未利用の固定goal helperとUnitypackageのstdin解析分岐も除去しました。twist補助骨のweight調査だけを開発用inspectorに残しています。
+
+最終CPUはDebug/Release各56件成功（4.87秒/4.96秒）。実モデルはYUMEKA+2motion blend、Trooper+Idle、Clown+Walk、Cesium GLB+Capoeiraを各12姿勢・両構成で描画し、96frameすべてで手先到達・骨長・pole側と5%補正範囲を確認しました。48画像ペアはDebug/Releaseで全画素一致。FBXの72frameはGPU位置・法線readback成功、CesiumはCPU skinningの描画を確認しています。YUMEKAは同時刻の正面・側面拡大像と、3.35秒開始・1/60秒刻みの120frame連続再生でも成功し、loop境界付近の16枚を保存しました。新目標で元の腕振りと袖口の手が残ることを画像で確認しました。大目標の肩品質、関節制限、twist補助骨の自動回転配分、体や衣服の衝突回避は未対応です。
+
+環境はWindows11 build26200、RTX4070 SUPER driver617.42、Runtime v142/MSVC19.29・SDK10.0.22621.0。CPUはMSVC19.51。cmake --build build/dev-windows --config Debug/Release、ctest --test-dir build/dev-windows -C Debug/Release --output-on-failureを実行しました。nativeはgkcore_real_model_capture_testsへmodel/scale/center/external-ikまたはexternal-blend-ik、motion pathsと材質または役割表を渡し、GKCORE_VERIFY_GPU_SKINNING=1（GLBは0）を使用しました。capture専用windowは非表示。記録はbuild/native-validation/arm-final-*とarm-quality-motion-following*、画像はbuild/real-model-captures/{Release,Debug}/motion-followingとRelease/arm-qualityです。
+
+通常Runtimeの表示あり1280x720、GPU検証OFF、warmup300・計測3000frameの最新sampleは269.801FPS、p95 4.038ms、DrawModel平均0.825ms、Present平均2.307msでした。300FPSの要求はこのmodeでは未達です。START.batの7番で修正後のYUMEKA blend+IKを起動でき、CheckOnlyによる必要file/引数検査も成功しました。未計測GPUや全骨格の自然さは保証しません。
+
+ゲーム構築用310fileのallowlistは変えず、Runtime・5sampleを既存の配布検証buildでRelease build/installしました。インストール先の新API宣言を確認し、install済みDLL/shaderを既存consumerへ渡したGPUのInit→Present→Shutdownも成功しました。mainへtests・検証tool・私有asset・開発記録は含めません。

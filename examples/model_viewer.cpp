@@ -30,7 +30,9 @@ namespace
 bool Check(int result, const char* operation)
 {
     if (result == 0)
+    {
         return true;
+    }
     fprintf(stderr, "%s: %s\n", operation, gk::GetLastErrorMessage());
     return false;
 }
@@ -41,12 +43,16 @@ bool Check(int result, const char* operation)
 bool ParseFloat(const char* text, float& value)
 {
     if (!text || !text[0])
+    {
         return false;
+    }
     errno = 0;
     char* end = nullptr;
     const float parsed = strtof(text, &end);
     if (errno == ERANGE || end == text || *end != '\0' || !isfinite(parsed))
+    {
         return false;
+    }
     value = parsed;
     return true;
 }
@@ -57,7 +63,9 @@ bool ParseFloat(const char* text, float& value)
 bool ParseAlphaMode(const char* text, gk::EModelAlphaMode& mode)
 {
     if (strcmp(text, "0") == 0 || strcmp(text, "opaque") == 0 || strcmp(text, "OPAQUE") == 0)
+    {
         mode = gk::EModelAlphaMode::Opaque;
+    }
     else if (strcmp(text, "1") == 0 || strcmp(text, "mask") == 0 || strcmp(text, "MASK") == 0)
         mode = gk::EModelAlphaMode::Mask;
     else if (strcmp(text, "2") == 0 || strcmp(text, "blend") == 0 || strcmp(text, "BLEND") == 0)
@@ -94,9 +102,13 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
         // 空行とコメント行は設定として扱わない。
         char* cursor = line;
         while (*cursor == ' ' || *cursor == '\t')
+        {
             ++cursor;
+        }
         if (!*cursor || *cursor == '\r' || *cursor == '\n' || *cursor == '#')
+        {
             continue;
+        }
         // 設定対象と色係数を読み取る変数。
         unsigned int materialIndex = 0;
         float red = 0.0f;
@@ -115,10 +127,14 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
         }
         char* imagePath = cursor + pathOffset;
         while (*imagePath == ' ' || *imagePath == '\t')
+        {
             ++imagePath;
+        }
         size_t pathLength = strlen(imagePath);
         while (pathLength && (imagePath[pathLength - 1] == '\r' || imagePath[pathLength - 1] == '\n' || imagePath[pathLength - 1] == ' ' || imagePath[pathLength - 1] == '\t'))
+        {
             imagePath[--pathLength] = '\0';
+        }
         gk::FModelMaterialSettings settings{};
         settings.baseColorFactor[0] = red;
         settings.baseColorFactor[1] = green;
@@ -165,7 +181,7 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
  */
 bool IsKnownMode(const char* mode)
 {
-    return strcmp(mode, "static") == 0 || strcmp(mode, "front") == 0 || strcmp(mode, "rotate") == 0 || strcmp(mode, "animate") == 0 || strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0 || strcmp(mode, "blend") == 0 || strcmp(mode, "external") == 0 || strcmp(mode, "external-blend") == 0;
+    return strcmp(mode, "static") == 0 || strcmp(mode, "front") == 0 || strcmp(mode, "rotate") == 0 || strcmp(mode, "animate") == 0 || strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0 || strcmp(mode, "blend") == 0 || strcmp(mode, "external") == 0 || strcmp(mode, "external-blend") == 0 || strcmp(mode, "external-ik") == 0 || strcmp(mode, "external-blend-ik") == 0;
 }
 
 #if defined(GKCORE_MODEL_BENCHMARK)
@@ -187,7 +203,9 @@ bool ReadFrameCount(const char* name, uint32_t fallback, uint32_t maximum, bool 
     // 範囲検査前の整数値。
     const unsigned long parsed = strtoul(text, &end, 10);
     if (errno == ERANGE || end == text || *end != '\0' || (!allowZero && parsed == 0) || parsed > maximum)
+    {
         return false;
+    }
     value = static_cast<uint32_t>(parsed);
     return true;
 }
@@ -240,11 +258,12 @@ int main(int argc, char** argv)
     // 指定された表示mode。
     const char* mode = effectiveArgc >= 7 ? argv[6] : "static";
     // 外部motionを1本読むmodeかを示す。
-    const bool externalMode = strcmp(mode, "external") == 0;
+    const bool externalIkMode = strcmp(mode, "external-ik") == 0 || strcmp(mode, "external-blend-ik") == 0;
+    const bool externalMode = strcmp(mode, "external") == 0 || strcmp(mode, "external-ik") == 0;
     // 外部motionを2本blendするmodeかを示す。
-    const bool externalBlendMode = strcmp(mode, "external-blend") == 0;
+    const bool externalBlendMode = strcmp(mode, "external-blend") == 0 || strcmp(mode, "external-blend-ik") == 0;
     // modeに必要な引数が揃っているかを示す。
-    const bool modeArgumentsValid = (externalMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
+    const bool modeArgumentsValid = (externalMode && !externalBlendMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
     if (!IsKnownMode(mode) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
     {
         fprintf(stderr, "invalid viewer mode or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : mode);
@@ -258,20 +277,30 @@ int main(int argc, char** argv)
     const gk::ModelHandle model = gk::LoadModel(argv[1]);
     bool failed = !model.IsValid();
     if (failed)
+    {
         fprintf(stderr, "LoadModel: %s\n", gk::GetLastErrorMessage());
+    }
     const gk::Vec3 cameraPosition{ 0.0f, 0.0f, 3.0f };
     const gk::Vec3 cameraTarget{ 0.0f, 0.0f, 0.0f };
     const gk::Vec3 modelPosition{ -scale * center[0], -scale * center[1], -scale * center[2] };
     if (!failed && (!Check(gk::SetCamera(cameraPosition, cameraTarget), "SetCamera") || !Check(gk::SetModelPosition(model, modelPosition), "SetModelPosition") || !Check(gk::SetModelScale(model, gk::Vec3{ scale, scale, scale }), "SetModelScale") || !Check(gk::SetAmbientLight(0.22f), "SetAmbientLight")))
+    {
         failed = true;
+    }
     if (!failed && hasMaterialConfig && !ApplyMaterialConfig(model, materialConfigPath))
+    {
         failed = true;
+    }
     if (!failed && humanoidMapOptions.modelPath && !Check(gk::SetModelHumanoidBoneMap(model, humanoidMapOptions.modelPath), "SetModelHumanoidBoneMap"))
+    {
         failed = true;
+    }
     // IKとchainも役割対応を使うため、手動表または自動判定を適用する。
-    const bool humanoidIkMode = strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0;
+    const bool humanoidIkMode = strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0 || externalIkMode;
     if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode || humanoidIkMode) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
+    {
         failed = true;
+    }
 
     // 適用後に解放する主motionのhandle。
     gk::ModelAnimationHandle externalAnimation{};
@@ -315,23 +344,31 @@ int main(int argc, char** argv)
         {
             printf("%s\n", primaryMappingReport.summary);
             if (primaryMappingReport.hasMissingRoles)
+            {
                 printf("%s\n", primaryMappingReport.missingRoles);
+            }
             if (externalBlendMode)
             {
                 printf("%s\n", secondaryMappingReport.summary);
                 if (secondaryMappingReport.hasMissingRoles)
+                {
                     printf("%s\n", secondaryMappingReport.missingRoles);
+                }
             }
         }
         if (externalAnimation.IsValid() && !Check(gk::DeleteModelAnimation(externalAnimation), "DeleteModelAnimation(primary after apply)"))
+        {
             failed = true;
+        }
         if (secondaryAnimation.IsValid() && !Check(gk::DeleteModelAnimation(secondaryAnimation), "DeleteModelAnimation(secondary after blend)"))
+        {
             failed = true;
+        }
     }
 
     // 腕の長さと肩の側から、肩より外側のsample目標を作る。
     gk::examples::FModelArmIkPreview armIkPreview{};
-    if (!failed && humanoidIkMode)
+    if (!failed && humanoidIkMode && !externalIkMode)
     {
         if (!gk::examples::BuildModelArmIkPreview(model, armIkPreview))
         {
@@ -429,12 +466,16 @@ int main(int argc, char** argv)
     }
 #endif
     if (!failed && (!Check(gk::SetBloomEnabled(bloomEnabled), "SetBloomEnabled") || !Check(gk::SetBloomIntensity(0.35f), "SetBloomIntensity")))
+    {
         failed = true;
+    }
     while (!failed)
     {
 #if defined(GKCORE_MODEL_BENCHMARK)
         if (benchmarkFrame >= benchmarkTotalFrames)
+        {
             break;
+        }
 #endif
         // frame全体と実時間差の基準にする開始tick。
         LARGE_INTEGER frameStart{};
@@ -450,16 +491,26 @@ int main(int argc, char** argv)
 #if defined(GKCORE_MODEL_BENCHMARK)
         // 可視計測のrotateは、入力操作に依存せず実際に回転を更新する。
         if (strcmp(mode, "rotate") == 0)
+        {
             rotationY += static_cast<float>(2.1 * deltaSeconds);
+        }
 #endif
         if (!gk::ProcessEvents() || gk::WasKeyPressed(gk::Key::Escape))
+        {
             break;
+        }
         if (gk::IsKeyDown(gk::Key::ArrowLeft))
+        {
             rotationY -= static_cast<float>(2.1 * deltaSeconds);
+        }
         if (gk::IsKeyDown(gk::Key::ArrowRight))
+        {
             rotationY += static_cast<float>(2.1 * deltaSeconds);
+        }
         if (gk::WasKeyPressed(gk::Key::R))
+        {
             rotationY = 0.0f;
+        }
         if (gk::WasKeyPressed(gk::Key::Space))
         {
             bloomEnabled = !bloomEnabled;
@@ -493,6 +544,28 @@ int main(int argc, char** argv)
         {
             failed = true;
             break;
+        }
+        if (externalIkMode)
+        {
+            // 毎frameの目標は、直前のIK姿勢を消したアニメーション姿勢から作る。
+            gk::examples::FModelArmIkPreview currentArmIkPreview{};
+            if (!Check(gk::ClearModelIk(model), "ClearModelIk(animated external IK)"))
+            {
+                failed = true;
+                break;
+            }
+            if (!gk::examples::BuildAnimatedModelArmIkPreview(model, currentArmIkPreview))
+            {
+                fprintf(stderr, "animated external IK preview requires arm and torso roles with valid joint positions: %s\n", gk::GetLastErrorMessage());
+                failed = true;
+                break;
+            }
+            if (!Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, currentArmIkPreview.target, currentArmIkPreview.pole), "SetModelHumanoidTwoBoneIk(animated external)"))
+            {
+                failed = true;
+                break;
+            }
+            armIkPreview = currentArmIkPreview;
         }
         // 指定中心を画面中央に保ったまま、modelと目標を一緒に回転する。
         const float rotationCosine = cosf(rotationY);
@@ -618,7 +691,9 @@ int main(int argc, char** argv)
     }
 #endif
     if (model.IsValid() && !Check(gk::DeleteModel(model), "DeleteModel"))
+    {
         failed = true;
+    }
     gk::Shutdown();
     return failed ? 1 : 0;
 }
