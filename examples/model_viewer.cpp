@@ -160,18 +160,15 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
 }
 
 /**
- * 右腕の一般的な別名から一意なbone番号を探す。
+ * 人型役割から対応するmodel bone番号を探す。
  */
-int32_t FindArmBone(gk::ModelHandle model, const char* japanese, const char* english, const char* alternate, const char* imported, const char* imported2)
+int32_t FindModelRoleBone(gk::ModelHandle model, gk::EHumanoidBone role)
 {
-    // モデルや変換器ごとに異なる同じ役割の候補名。
-    const char* const names[5] = { japanese, english, alternate, imported, imported2 };
-    // 順に照会する候補名の位置。
-    for (uint32_t i = 0; i < 5; ++i)
+    // 役割を確認するmodel bone番号。
+    for (uint32_t bone = 0; bone < gk::GetModelBoneCount(model); ++bone)
     {
-        const int32_t bone = gk::FindModelBone(model, names[i]);
-        if (bone >= 0)
-            return bone;
+        if (gk::GetModelBoneRole(model, bone) == role)
+            return static_cast<int32_t>(bone);
     }
     return -1;
 }
@@ -284,7 +281,9 @@ int main(int argc, char** argv)
         failed = true;
     if (!failed && humanoidMapOptions.modelPath && !Check(gk::SetModelHumanoidBoneMap(model, humanoidMapOptions.modelPath), "SetModelHumanoidBoneMap"))
         failed = true;
-    if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
+    // IKとchainも役割対応を使うため、手動表または自動判定を適用する。
+    const bool humanoidIkMode = strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0;
+    if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode || humanoidIkMode) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
         failed = true;
 
     // 適用後に解放する主motionのhandle。
@@ -345,12 +344,12 @@ int main(int argc, char** argv)
 
     if (!failed && strcmp(mode, "ik") == 0)
     {
-        const int32_t root = FindArmBone(model, "右腕", "RightArm", "右肩", "Skeleton_arm_joint_R", "UpperArm_R");
-        const int32_t middle = FindArmBone(model, "右ひじ", "RightForeArm", "RightElbow", "Skeleton_arm_joint_R__2_", "LowerArm_R");
-        const int32_t end = FindArmBone(model, "右手首", "RightHand", "RightWrist", "Skeleton_arm_joint_R__3_", "Hand_R");
+        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
+        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
+        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
         if (root < 0 || middle < 0 || end < 0)
         {
-            fprintf(stderr, u8"IK mode\u306b\u306f\u53f3\u8155/\u53f3\u3072\u3058/\u53f3\u624b\u9996\u306ebone\u304c\u5fc5\u8981\u3067\u3059\n");
+            fprintf(stderr, u8"IK modeにはRightUpperArm/RightLowerArm/RightHand役割の対応が必要です\n");
             failed = true;
         }
         else
@@ -358,18 +357,18 @@ int main(int argc, char** argv)
             const float inverseScale = 1.0f / scale;
             const gk::Vec3 target{ center[0] + 0.15f * inverseScale, center[1] + 0.08f * inverseScale, center[2] };
             const gk::Vec3 pole{ center[0], center[1], center[2] + 0.25f * inverseScale };
-            if (!Check(gk::SetModelTwoBoneIk(model, static_cast<uint32_t>(root), static_cast<uint32_t>(middle), static_cast<uint32_t>(end), target, pole), "SetModelTwoBoneIk"))
+            if (!Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, target, pole), "SetModelHumanoidTwoBoneIk"))
                 failed = true;
         }
     }
     if (!failed && strcmp(mode, "chain") == 0)
     {
-        const int32_t root = FindArmBone(model, "右腕", "RightArm", "右肩", "Skeleton_arm_joint_R", "UpperArm_R");
-        const int32_t middle = FindArmBone(model, "右ひじ", "RightForeArm", "RightElbow", "Skeleton_arm_joint_R__2_", "LowerArm_R");
-        const int32_t end = FindArmBone(model, "右手首", "RightHand", "RightWrist", "Skeleton_arm_joint_R__3_", "Hand_R");
+        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
+        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
+        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
         if (root < 0 || middle < 0 || end < 0)
         {
-            fprintf(stderr, u8"chain mode\u306b\u306f\u53f3\u8155/\u53f3\u3072\u3058/\u53f3\u624b\u9996\u306ebone\u304c\u5fc5\u8981\u3067\u3059\n");
+            fprintf(stderr, u8"chain modeにはRightUpperArm/RightLowerArm/RightHand役割の対応が必要です\n");
             failed = true;
         }
         else

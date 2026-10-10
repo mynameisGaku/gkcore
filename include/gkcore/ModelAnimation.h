@@ -178,6 +178,12 @@ GKCORE_API EHumanoidBone GetModelAnimationMissingHumanoidRole(ModelHandle model,
  */
 GKCORE_API int SetModelTwoBoneIk(ModelHandle model, uint32_t root, uint32_t middle, uint32_t end, Vec3 target, Vec3 pole, float weight = 1.0f);
 /**
+ * 現在のモデルの人型役割から、直接親子で連続する3ボーンのIKを設定する。
+ * targetとpoleはモデル空間、weightは0から1。成功は0、未設定・重複・無効な役割や階層は-1。
+ * 失敗時は既存IKを保ち、成功時に骨番号を確定する。役割変更後の再設定は呼び出し側で行う。
+ */
+GKCORE_API int SetModelHumanoidTwoBoneIk(ModelHandle model, EHumanoidBone root, EHumanoidBone middle, EHumanoidBone end, Vec3 target, Vec3 pole, float weight = 1.0f);
+/**
  * 親子が連続した2本以上のボーン列へFABRIKのIKを設定する。
  * targetはモデル空間、weightは0から1。配列は呼び出し中にコピーする。
  */
