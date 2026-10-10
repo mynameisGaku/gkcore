@@ -179,6 +179,7 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     destination.speed = 1.0;
     destination.loop = loop;
     destination.bones.MoveFrom(candidate.bones);
+    destination.requestedRoles.MoveFrom(candidate.requestedRoles);
     destination.mappedRoles.MoveFrom(candidate.mappedRoles);
     destination.morphs.MoveFrom(candidate.morphs);
     destination.sourceRestModelMatrices.MoveFrom(candidate.sourceRestModelMatrices);
@@ -192,6 +193,7 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
             Release(&playback->clips[1].asset->reference);
         playback->clips[1].asset = nullptr;
         playback->clips[1].bones.Clear();
+        playback->clips[1].requestedRoles.Clear();
         playback->clips[1].mappedRoles.Clear();
         playback->clips[1].morphs.Clear();
         playback->clips[1].sourceRestModelMatrices.Clear();
@@ -445,6 +447,7 @@ int StopModelAnimation(ModelHandle handle)
                 Release(&state.asset->reference);
             state.asset = nullptr;
             state.bones.Clear();
+            state.requestedRoles.Clear();
             state.mappedRoles.Clear();
             state.morphs.Clear();
             state.sourceRestModelMatrices.Clear();
@@ -701,6 +704,70 @@ int32_t GetModelAnimationSourceBone(ModelHandle handle, uint32_t targetBone, uin
 {
     auto* state = Clip(handle, slot);
     return state && targetBone < state->bones.Count() ? state->bones.At(targetBone) : -1;
+}
+
+int GetModelAnimationMappingInfo(ModelHandle handle, FModelAnimationMappingInfo& output, uint32_t slot)
+{
+    auto* state = Clip(handle, slot);
+    if (!state || !state->asset || !state->asset->source)
+    {
+        return detail::SetError("animation is not playing or slot is invalid");
+    }
+    if (state->requestedRoles.Count() != state->bones.Count() || state->mappedRoles.Count() != state->bones.Count())
+    {
+        return detail::SetError("animation mapping snapshot count mismatch");
+    }
+    // 保存した対応だけを数え、照会失敗時には呼び出し側の値を保つ。
+    FModelAnimationMappingInfo candidate;
+    candidate.targetBoneCount = state->bones.Count();
+    const uint32_t sourceBoneCount = state->asset->source->Skeleton().parents.Count();
+    for (uint32_t bone = 0; bone < candidate.targetBoneCount; ++bone)
+    {
+        const int32_t sourceBone = state->bones.At(bone);
+        const uint16_t requested = state->requestedRoles.At(bone);
+        if (sourceBone < -1 || (sourceBone >= 0 && static_cast<uint32_t>(sourceBone) >= sourceBoneCount) || requested >= static_cast<uint16_t>(EHumanoidBone::Count))
+        {
+            return detail::SetError("animation mapping snapshot is invalid");
+        }
+        if (sourceBone >= 0)
+        {
+            ++candidate.mappedBoneCount;
+        }
+        if (requested != 0)
+        {
+            ++candidate.humanoidBoneCount;
+            if (sourceBone >= 0 && state->mappedRoles.At(bone) == requested)
+            {
+                ++candidate.mappedHumanoidBoneCount;
+            }
+        }
+    }
+    output = candidate;
+    detail::ClearError();
+    return 0;
+}
+
+EHumanoidBone GetModelAnimationMissingHumanoidRole(ModelHandle handle, uint32_t index, uint32_t slot)
+{
+    FModelAnimationMappingInfo info;
+    if (GetModelAnimationMappingInfo(handle, info, slot) != 0)
+    {
+        return EHumanoidBone::None;
+    }
+    auto* state = Clip(handle, slot);
+    for (uint32_t bone = 0; bone < info.targetBoneCount; ++bone)
+    {
+        const uint16_t requested = state->requestedRoles.At(bone);
+        if (requested != 0 && (state->bones.At(bone) < 0 || state->mappedRoles.At(bone) != requested))
+        {
+            if (index == 0)
+            {
+                return static_cast<EHumanoidBone>(requested);
+            }
+            --index;
+        }
+    }
+    return EHumanoidBone::None;
 }
 
 int SetModelIkChain(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 target, float weight)

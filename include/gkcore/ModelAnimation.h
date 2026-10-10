@@ -4,6 +4,7 @@
 
 #include <gkcore.h>
 #include <gkcore/EHumanoidBone.h>
+#include <gkcore/FModelAnimationMappingInfo.h>
 
 /**
  * 公開model animation API。
@@ -160,6 +161,17 @@ GKCORE_API EHumanoidBone GetAnimationBoneRole(ModelAnimationHandle animation, ui
  * 適用先ボーンに対応するsource番号を返す。未対応・未再生・無効指定は-1。
  */
 GKCORE_API int32_t GetModelAnimationSourceBone(ModelHandle model, uint32_t targetBone, uint32_t slot = 0);
+/**
+ * 再生枠に登録した骨の対応件数を取得する。成功は0、無効handle・slot・未再生は-1。
+ * 失敗時はoutputを保つ。現在の役割を変更しても登録済みの対応状況は変えない。
+ */
+GKCORE_API int GetModelAnimationMappingInfo(ModelHandle model, FModelAnimationMappingInfo& output, uint32_t slot = 0);
+/**
+ * 登録時の人型役割が同じsource役割と結び付かなかったものを骨番号順に返す。
+ * 名前だけで骨が結び付いた場合も、人型役割としては未対応になる。
+ * indexは未対応役割の0始まり番号。範囲外・無効指定はNone。
+ */
+GKCORE_API EHumanoidBone GetModelAnimationMissingHumanoidRole(ModelHandle model, uint32_t index, uint32_t slot = 0);
 /**
  * 連続した3ボーンのIKを設定する。targetとpoleはモデル空間、weightは0から1。
  * 同じrootへの指定は上書きする。ブレンド後の姿勢へ適用する。

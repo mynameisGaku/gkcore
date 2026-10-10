@@ -2,6 +2,7 @@
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
 #include "examples/support/FHumanoidMapOptions.h"
+#include "examples/support/ModelMappingReport.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -290,6 +291,9 @@ int main(int argc, char** argv)
     gk::ModelAnimationHandle externalAnimation{};
     // blend枠へ適用後に解放するmotion handle。
     gk::ModelAnimationHandle secondaryAnimation{};
+    // 各枠へ登録した骨対応の表示情報を保持する。
+    gk::examples::FModelMappingReport primaryMappingReport{};
+    gk::examples::FModelMappingReport secondaryMappingReport{};
     if (!failed && (externalMode || externalBlendMode))
     {
         externalAnimation = gk::LoadModelAnimation(argv[7]);
@@ -310,6 +314,28 @@ int main(int argc, char** argv)
             }
             else if (!(humanoidMapOptions.blendPath ? Check(gk::SetAnimationHumanoidBoneMap(secondaryAnimation, humanoidMapOptions.blendPath), "SetAnimationHumanoidBoneMap(secondary)") : Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)")) || !Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)"))
                 failed = true;
+        }
+        if (!failed && !gk::examples::BuildModelMappingReport(model, 0, u8"主モーション", primaryMappingReport))
+        {
+            fprintf(stderr, "GetModelAnimationMappingInfo(primary): %s\n", gk::GetLastErrorMessage());
+            failed = true;
+        }
+        if (!failed && externalBlendMode && !gk::examples::BuildModelMappingReport(model, 1, u8"副モーション", secondaryMappingReport))
+        {
+            fprintf(stderr, "GetModelAnimationMappingInfo(secondary): %s\n", gk::GetLastErrorMessage());
+            failed = true;
+        }
+        if (!failed)
+        {
+            printf("%s\n", primaryMappingReport.summary);
+            if (primaryMappingReport.hasMissingRoles)
+                printf("%s\n", primaryMappingReport.missingRoles);
+            if (externalBlendMode)
+            {
+                printf("%s\n", secondaryMappingReport.summary);
+                if (secondaryMappingReport.hasMissingRoles)
+                    printf("%s\n", secondaryMappingReport.missingRoles);
+            }
         }
         if (externalAnimation.IsValid() && !Check(gk::DeleteModelAnimation(externalAnimation), "DeleteModelAnimation(primary after apply)"))
             failed = true;
@@ -529,6 +555,16 @@ int main(int argc, char** argv)
         {
             failed = true;
             break;
+        }
+#endif
+#if !defined(GKCORE_MODEL_BENCHMARK)
+        if (externalMode || externalBlendMode)
+        {
+            if (!Check(gk::DrawString(24.0f, 126.0f, primaryMappingReport.summary, primaryMappingReport.hasMissingRoles ? gk::ColorRGB(255, 170, 120) : gk::ColorRGB(215, 225, 240)), "DrawString(primary mapping)") || (externalBlendMode && !Check(gk::DrawString(24.0f, 160.0f, secondaryMappingReport.summary, secondaryMappingReport.hasMissingRoles ? gk::ColorRGB(255, 170, 120) : gk::ColorRGB(215, 225, 240)), "DrawString(secondary mapping)")))
+            {
+                failed = true;
+                break;
+            }
         }
 #endif
         // Present APIのCPU処理開始tick。

@@ -2,6 +2,7 @@
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
 #include "examples/support/FHumanoidMapOptions.h"
+#include "examples/support/ModelMappingReport.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -209,7 +210,7 @@ uint32_t CountAnimationRoles(gk::ModelAnimationHandle animation)
 /**
  * 適用先と外部motionで実際に対応した骨の数を表示する。
  */
-void ReportAnimationMapping(gk::ModelHandle model, uint32_t slot, const char* label)
+bool ReportAnimationMapping(gk::ModelHandle model, uint32_t slot, const char* label)
 {
     // 適用先とmotionの間で解決した骨の数。
     uint32_t count = 0;
@@ -219,7 +220,14 @@ void ReportAnimationMapping(gk::ModelHandle model, uint32_t slot, const char* la
         if (gk::GetModelAnimationSourceBone(model, bone, slot) >= 0)
             ++count;
     }
-    printf("animation-map %s: modelRoles=%u mappedBones=%u\n", label, CountModelRoles(model), count);
+    gk::examples::FModelMappingReport report{};
+    if (!gk::examples::BuildModelMappingReport(model, slot, label, report))
+    {
+        fprintf(stderr, "GetModelAnimationMappingInfo(%s): %s\n", label, gk::GetLastErrorMessage());
+        return false;
+    }
+    gk::examples::PrintModelMappingReport(label, CountModelRoles(model), count, report);
+    return true;
 }
 
 /**
@@ -393,7 +401,7 @@ int main(int argc, char** argv)
                 printf("animation-map primary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(externalAnimation), externalDuration);
             passed = passed && Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)");
             if (passed)
-                ReportAnimationMapping(model, 0, "primary");
+                passed = ReportAnimationMapping(model, 0, "primary");
             if (passed && requireHumanoidLegMappings)
                 passed = RequireHumanoidLegMappings(model, externalAnimation, 0, "primary") && passed;
         }
@@ -413,7 +421,7 @@ int main(int argc, char** argv)
                     printf("animation-map secondary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(secondaryAnimation), secondaryDuration);
                 passed = passed && Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)");
                 if (passed)
-                    ReportAnimationMapping(model, 1, "secondary");
+                    passed = ReportAnimationMapping(model, 1, "secondary");
                 if (passed && requireHumanoidLegMappings)
                     passed = RequireHumanoidLegMappings(model, secondaryAnimation, 1, "secondary") && passed;
             }

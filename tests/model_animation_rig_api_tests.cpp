@@ -64,6 +64,8 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
   public:
     // IK検査用の親順3節骨格。
     gk::model::animation::FModelSkeleton skeleton;
+    // 対応表検査ではtargetと異なる名前を使う。
+    const char* boneNames[3] = { "root", "middle", "end" };
 
     gk::model::EModelAnimationFormat Format() const override
     {
@@ -75,8 +77,7 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     }
     const char* BoneName(uint32_t bone) const override
     {
-        static const char* names[3] = { "root", "middle", "end" };
-        return bone < 3 ? names[bone] : nullptr;
+        return bone < 3 ? boneNames[bone] : nullptr;
     }
     const char* MorphName(uint32_t) const override
     {
@@ -131,9 +132,14 @@ bool Near(float left, float right)
 /**
  * 公開profile API用に、既存fixtureと同じ3骨motionを登録する。
  */
-gk::ModelAnimationHandle CreateRigAnimation()
+gk::ModelAnimationHandle CreateRigAnimation(const char* const* boneNames = nullptr)
 {
     auto* source = new AAnimationRigTestSource;
+    if (boneNames)
+    {
+        for (uint32_t bone = 0; bone < 3; ++bone)
+            source->boneNames[bone] = boneNames[bone];
+    }
     const int32_t parents[3] = { -1, 0, 1 };
     gk::model::animation::FModelBoneTransform rest[3]{};
     rest[1].position[0] = 1.0f;
@@ -154,6 +160,87 @@ gk::ModelAnimationHandle CreateRigAnimation()
 /**
  * UTF-8 profileを指定先へ書き、APIへ渡すUTF-8パスを返す。
  */
+bool WriteHumanoidProfile(const std::filesystem::path& path, const char* contents, std::string& utf8Path);
+
+/**
+ * 適用時の対応状況、再生枠ごとの独立性、無効時の出力保持を確認する。
+ */
+bool TestMappingDiagnostics(gk::ModelHandle model)
+{
+    namespace fs = std::filesystem;
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory = fs::temp_directory_path() / ("gkcore-animation-mapping-" + std::to_string(suffix));
+    fs::create_directories(directory);
+    const auto targetPath = directory / "target.txt";
+    const auto partialPath = directory / "partial.txt";
+    const auto fullPath = directory / "full.txt";
+    std::string target, partial, full;
+    const bool fixturesReady = WriteHumanoidProfile(targetPath, "Hips\troot\nLeftUpperLeg\tmiddle\nLeftLowerLeg\tend\n", target) && WriteHumanoidProfile(partialPath, "Hips\tsource_a\n", partial) && WriteHumanoidProfile(fullPath, "Hips\tsource_a\nLeftUpperLeg\tsource_b\nLeftLowerLeg\tsource_c\n", full);
+    if (!fixturesReady)
+    {
+        fs::remove_all(directory);
+        fprintf(stderr, "animation mapping fixtures could not be written\n");
+        return false;
+    }
+    const char* sourceNames[3] = { "source_a", "source_b", "source_c" };
+    const auto animation = CreateRigAnimation(sourceNames);
+    if (!animation.IsValid())
+    {
+        fs::remove_all(directory);
+        return false;
+    }
+    bool passed = true;
+    passed = gk::SetModelHumanoidBoneMap(model, target.c_str()) == 0 && gk::SetAnimationHumanoidBoneMap(animation, partial.c_str()) == 0 && passed;
+    passed = gk::PlayModelAnimation(model, 0, false) == 0 && passed;
+    gk::FModelAnimationMappingInfo identityInfo{};
+    passed = gk::GetModelAnimationMappingInfo(model, identityInfo, 0) == 0 && identityInfo.targetBoneCount == 3 && identityInfo.mappedBoneCount == 3 && identityInfo.humanoidBoneCount == 3 && identityInfo.mappedHumanoidBoneCount == 3 && passed;
+    passed = gk::StopModelAnimation(model) == 0 && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == 0 && passed;
+    gk::FModelAnimationMappingInfo partialInfo{};
+    passed = gk::GetModelAnimationMappingInfo(model, partialInfo, 0) == 0 && partialInfo.targetBoneCount == 3 && partialInfo.mappedBoneCount == 1 && partialInfo.humanoidBoneCount == 3 && partialInfo.mappedHumanoidBoneCount == 1 && passed;
+    passed = gk::GetModelAnimationMissingHumanoidRole(model, 0, 0) == gk::EHumanoidBone::LeftUpperLeg && gk::GetModelAnimationMissingHumanoidRole(model, 1, 0) == gk::EHumanoidBone::LeftLowerLeg && gk::GetModelAnimationMissingHumanoidRole(model, 2, 0) == gk::EHumanoidBone::None && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, full.c_str()) == 0 && gk::SetModelAnimationBlend(model, animation, 0, 0.5f) == 0 && passed;
+    gk::FModelAnimationMappingInfo fullInfo{};
+    passed = gk::GetModelAnimationMappingInfo(model, fullInfo, 1) == 0 && fullInfo.targetBoneCount == 3 && fullInfo.mappedBoneCount == 3 && fullInfo.humanoidBoneCount == 3 && fullInfo.mappedHumanoidBoneCount == 3 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, partialInfo, 0) == 0 && partialInfo.mappedBoneCount == 1 && partialInfo.mappedHumanoidBoneCount == 1 && passed;
+    passed = gk::GetModelAnimationMissingHumanoidRole(model, 3, 0) == gk::EHumanoidBone::None && passed;
+    passed = gk::SetModelBoneRole(model, 0, gk::EHumanoidBone::None) == 0 && gk::SetModelBoneRole(model, 1, gk::EHumanoidBone::None) == 0 && gk::SetModelBoneRole(model, 2, gk::EHumanoidBone::None) == 0 && passed;
+    gk::FModelAnimationMappingInfo snapshotInfo{};
+    passed = gk::GetModelAnimationMappingInfo(model, snapshotInfo, 1) == 0 && snapshotInfo.humanoidBoneCount == 3 && snapshotInfo.mappedHumanoidBoneCount == 3 && passed;
+    passed = gk::GetModelAnimationMissingHumanoidRole(model, 0, 1) == gk::EHumanoidBone::None && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == -1 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, partialInfo, 0) == 0 && partialInfo.humanoidBoneCount == 3 && partialInfo.mappedHumanoidBoneCount == 1 && passed;
+    passed = gk::DeleteModelAnimation(animation) == 0 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, snapshotInfo, 1) == 0 && snapshotInfo.mappedBoneCount == 3 && passed;
+    const auto nameAnimation = CreateRigAnimation();
+    if (!nameAnimation.IsValid())
+    {
+        fs::remove_all(directory);
+        return false;
+    }
+    passed = gk::ApplyModelAnimation(model, nameAnimation, 0, false) == 0 && passed;
+    gk::FModelAnimationMappingInfo reboundInfo{};
+    passed = gk::GetModelAnimationMappingInfo(model, reboundInfo, 0) == 0 && reboundInfo.targetBoneCount == 3 && reboundInfo.mappedBoneCount == 3 && reboundInfo.humanoidBoneCount == 0 && reboundInfo.mappedHumanoidBoneCount == 0 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, snapshotInfo, 1) == -1 && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, target.c_str()) == 0 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, reboundInfo, 0) == 0 && reboundInfo.humanoidBoneCount == 0 && passed;
+    passed = gk::ApplyModelAnimation(model, nameAnimation, 0, false) == 0 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, reboundInfo, 0) == 0 && reboundInfo.targetBoneCount == 3 && reboundInfo.mappedBoneCount == 3 && reboundInfo.humanoidBoneCount == 3 && reboundInfo.mappedHumanoidBoneCount == 0 && passed;
+    passed = gk::GetModelAnimationMissingHumanoidRole(model, 0, 0) == gk::EHumanoidBone::Hips && gk::GetModelAnimationMissingHumanoidRole(model, 1, 0) == gk::EHumanoidBone::LeftUpperLeg && gk::GetModelAnimationMissingHumanoidRole(model, 2, 0) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, snapshotInfo, 1) == -1 && passed;
+    passed = gk::DeleteModelAnimation(nameAnimation) == 0 && passed;
+    passed = gk::StopModelAnimation(model) == 0 && passed;
+    gk::FModelAnimationMappingInfo unchanged{ 11, 12, 13, 14 };
+    passed = gk::GetModelAnimationMappingInfo(model, unchanged, 0) == -1 && unchanged.targetBoneCount == 11 && unchanged.mappedBoneCount == 12 && unchanged.humanoidBoneCount == 13 && unchanged.mappedHumanoidBoneCount == 14 && passed;
+    passed = gk::GetModelAnimationMissingHumanoidRole(model, 0, 0) == gk::EHumanoidBone::None && passed;
+    passed = gk::GetModelAnimationMappingInfo({}, unchanged, 0) == -1 && unchanged.targetBoneCount == 11 && unchanged.mappedBoneCount == 12 && unchanged.humanoidBoneCount == 13 && unchanged.mappedHumanoidBoneCount == 14 && passed;
+    passed = gk::GetModelAnimationMappingInfo(model, unchanged, 2) == -1 && unchanged.targetBoneCount == 11 && unchanged.mappedBoneCount == 12 && unchanged.humanoidBoneCount == 13 && unchanged.mappedHumanoidBoneCount == 14 && passed;
+    fs::remove_all(directory);
+    if (!passed)
+        fprintf(stderr, "animation mapping diagnostics snapshot or invalid-query contract failed: %s\n", gk::GetLastErrorMessage());
+    return passed;
+}
+
 bool WriteHumanoidProfile(const std::filesystem::path& path, const char* contents, std::string& utf8Path)
 {
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
@@ -289,7 +376,7 @@ bool TestBlendThenIkSnapshot()
     baseTransform.scale = { 1.0f, 1.0f, 1.0f };
     const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
     const auto instance = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
-    if (!transformAdded || !instance.IsValid() || !TestHumanoidProfiles(model, instance) || gk::PlayModelAnimation(instance, 0, false) != 0 || gk::SetModelAnimationBlend(instance, 1, 0.5f) != 0)
+    if (!transformAdded || !instance.IsValid() || !TestHumanoidProfiles(model, instance) || !TestMappingDiagnostics(model) || gk::PlayModelAnimation(instance, 0, false) != 0 || gk::SetModelAnimationBlend(instance, 1, 0.5f) != 0)
     {
         fprintf(stderr, "animation rig playback setup failed: %s\n", gk::GetLastErrorMessage());
         if (instance.IsValid())

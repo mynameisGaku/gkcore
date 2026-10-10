@@ -27,6 +27,8 @@ struct FModelClipState
     bool loop = true;
     // 対象ボーンごとのsourceボーン番号。未対応は-1。
     Array<int32_t> bones;
+    // 登録時に適用先へ指定されていた役割。未対応の役割も保持する。
+    Array<uint16_t> requestedRoles;
     // 役割で対応付けたボーンの役割値。名前による対応は0。
     Array<uint16_t> mappedRoles;
     // 対象morphごとのsource番号。未対応は-1。

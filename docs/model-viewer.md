@@ -49,3 +49,5 @@ GLB/FBX内のclipは`animate`または`blend`で、別ファイルのmotionは`e
 検証に使ったCesium Manはローカル検証専用です。元データと付属するCC-BY-4.0 / Cesium LegalMarkの条件は[Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)で確認できます。ユーザー提供のモデル・motionを含め、権利確認のない私有assetをSDKや他の配布物へ含めないでください。
 
 --model-bones、--motion-bones、--blend-bonesで人型の対応表を指定できます。既知の骨名に依存しない適用方法は[人型ボーンの対応表](humanoid-bone-map.md)を参照してください。
+
+外部モーションを適用した後、主・副それぞれの人型対応数を画面へ表示します。未対応役割がある表示はオレンジ色です。起動時の出力には不足した役割を列挙します。指などを含む全役割の件数なので、部分モーションでは不足があっても再生できます。名前だけでの骨対応と、人型役割による対応は別に数えます。

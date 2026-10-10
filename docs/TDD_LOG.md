@@ -1177,3 +1177,13 @@ CPU Debug56/56件（4.47秒）、Release56/56件（5.36秒）成功。実モデ�
 修正後は補助骨の有無、target骨長の維持、cache/fallback一致が成功。追加した試験のfoot期待値も、親高さ2+腰移動0.5-すね長1-足首長1=0.5という独立式へ訂正しました。初回の2という期待値は試験側の誤りでした。CPU Debug56/56（5.59秒）、Release56/56（4.43秒）が成功しています。ログはhips-body-scale-{red,green}-*とhips-scale-cpu-{debug,release}-*です。
 
 実モデルはYUMEKAの外部ブレンド、GLB→FBX、FBX→GLB、GLB/FBX混在ブレンドの4組を各6姿勢、Debug/Releaseで確認しました。24画像は構成間で全画素一致。FBX targetの全位置・法線readbackも位置差0・法線最大差約1.79e-7で通過しています。公開用testsなし構成のRuntime・5サンプルのビルド、install済みSDKのGPU consumer起動・描画・終了も成功。ログはhips-scale-{debug,release}-*.log、hips-scale-game-{config,build,install,consumer-run}.logです。
+
+## 登録済みアニメーションの対応診断
+
+未対応の人型役割を見逃さないため、GetModelAnimationMappingInfo・GetModelAnimationMissingHumanoidRoleと公開FModelAnimationMappingInfoを追加しました。bind時のrequested roleを保存し、設定変更・source handle解放後も診断が同じ値になるようにしました。件数はbone/morphを区別し、名前だけの骨対応と同じ人型役割での対応も区別します。self/identity再生は設定した人型役割を対応済みとして数えます。
+
+公開APIのstubで契約REDを記録してから、全対応・部分対応・名前fallback・identity・枠独立・再bind/Stop・無効照会の出力維持をGREENへ修正しました。試験側の空profile成功という誤った前提は、既存契約どおりSetModelBoneRole(None)での解除に修正。primary再bindでsecondaryが解除される条件、全一致なし再bindの失敗・既存状態保持も試験に合わせています。CPU Debug56/56（5.18秒）、Release56/56（5.45秒）が成功しました。
+
+viewerは登録直後に診断を一度取得して表示文字列を保持し、毎frameの骨走査は増やしません。起動時に不足役割を表示します。UI追加の括弧不足をnativeビルドで修正し、日本語文字列はUTF-8で明示しました。
+
+実モデルの完全対応52/52、GLB由来の部分対応19/52、腰だけ1/52を各6姿勢でDebug/Release確認し、18画像が構成間一致しました。未対応役割の照会と全位置・法線のGPU/CPU一致も成功。testsなし308ファイルの公開構成をビルドし、新headerを含むinstall済みSDKと既存consumerのGPU起動・描画・終了が通りました。関連ログはmapping-report-{debug,release}-*.log、mapping-report-game-*.logです。

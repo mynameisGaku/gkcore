@@ -121,3 +121,24 @@ spine_01/02/03、neck_01、ball_l/r、thumb/index/middle/ring/pinky_01/02/03_l/r
 人型モーションの適用は特定の提供元に限定しません。GLB/FBXの骨格を共通の人型役割へ対応付け、初期姿勢と骨長の違いを補正します。自動推定できない名前はSetModelBoneRoleとSetAnimationBoneRoleで指定してください。元の名前が異なっても同じ役割で結び付きます。今回のUnreal由来のWalkをTrooperへ、IdleをClownへ移す両方向も確認しました。骨格を持たないOBJへ骨モーションを適用することはできません。
 
 骨名を毎回手動指定する代わりに、SetModelHumanoidBoneMap・SetAnimationHumanoidBoneMapで保存した対応表を読み込めます。対応の全置換、失敗時の保持、再適用の手順は[人型ボーンの対応表](humanoid-bone-map.md)を参照してください。
+
+## 適用したボーンの対応を確認する
+
+GetModelAnimationMappingInfoで、再生枠の全ボーン対応数と人型役割の対応数を取得できます。GetModelAnimationMissingHumanoidRoleは、人型役割として対応できなかったものを適用先の骨番号順で返します。
+
+```cpp
+gk::FModelAnimationMappingInfo info;
+if (gk::GetModelAnimationMappingInfo(character, info) == 0)
+{
+    // 同じ人型役割で結び付かなかった数を調べる。
+    const uint32_t missing = info.humanoidBoneCount - info.mappedHumanoidBoneCount;
+    for (uint32_t index = 0; index < missing; ++index)
+    {
+        const auto role = gk::GetModelAnimationMissingHumanoidRole(character, index);
+    }
+}
+```
+
+全ボーン数には補助骨を含みます。人型対応数は同じ役割で結び付いた骨だけを数え、名前だけの対応は含めません。再生枠0は主モーション、1はブレンド側です。対応表や役割を変更しても、登録済みの診断値は次の再適用まで保持します。元のanimation handleを解放した後も照会できます。未再生・無効handle・slotでは件数取得が失敗し、出力値は変えません。
+
+対応した骨に、そのclipで実際の動きがあるとは限りません。部分的な表情・腕だけのモーションも利用できるので、不足があっても自動で再生を止めません。必要な役割が揃っているかをゲーム側で確認してください。

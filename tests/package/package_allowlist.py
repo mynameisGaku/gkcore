@@ -43,6 +43,7 @@ _FIXED = {
     "include/gkcore.h",
     "include/gkcore/Handle.h",
     "include/gkcore/ModelAnimation.h",
+    "include/gkcore/FModelAnimationMappingInfo.h",
     "include/gkcore/EHumanoidBone.h",
     "include/gkcore/ModelMaterial.h",
     "include/gkcore/FModelMaterialSettings.h",

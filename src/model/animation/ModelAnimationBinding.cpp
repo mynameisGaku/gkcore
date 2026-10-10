@@ -278,7 +278,7 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
             error.Assign("animation mapping allocation failed");
             return false;
         }
-        if (!usedBones.Reserve(source.source->Skeleton().parents.Count()))
+        if (!staged.bones.Reserve(destination.Skeleton().parents.Count()) || !staged.requestedRoles.Reserve(destination.Skeleton().parents.Count()) || !staged.mappedRoles.Reserve(destination.Skeleton().parents.Count()) || !usedBones.Reserve(source.source->Skeleton().parents.Count()))
         {
             error.Assign("animation mapping allocation failed");
             return false;
@@ -291,6 +291,10 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
             int32_t found = &source == target ? static_cast<int32_t>(i) : -1;
             uint16_t mappedRole = 0;
             const uint16_t role = i < targetRoles.Count() ? targetRoles.At(i) : 0;
+            if (&source == target)
+            {
+                mappedRole = role;
+            }
             if (found < 0 && role != 0)
             {
                 for (uint32_t j = 0; j < source.roles.Count(); ++j)
@@ -323,7 +327,7 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
                 }
                 usedBones.At(static_cast<uint32_t>(found)) = 1;
             }
-            if (!staged.bones.Append(found) || !staged.mappedRoles.Append(mappedRole))
+            if (!staged.bones.Append(found) || !staged.requestedRoles.Append(role) || !staged.mappedRoles.Append(mappedRole))
             {
                 error.Assign("animation bone mapping allocation failed");
                 return false;
@@ -367,6 +371,7 @@ bool BuildClipBinding(FModelAnimationAsset& source, uint32_t clip, const FModelA
     if (candidate.asset)
         Release(&candidate.asset->reference);
     candidate.bones.MoveFrom(staged.bones);
+    candidate.requestedRoles.MoveFrom(staged.requestedRoles);
     candidate.mappedRoles.MoveFrom(staged.mappedRoles);
     candidate.morphs.MoveFrom(staged.morphs);
     candidate.sourceRestModelMatrices.MoveFrom(staged.sourceRestModelMatrices);
