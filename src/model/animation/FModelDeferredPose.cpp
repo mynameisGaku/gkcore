@@ -398,7 +398,7 @@ FModelDeferredPose* EvaluateDeferredModelPose(const detail::ModelResource& sourc
         error.Assign("model animation blend weight must be finite and in [0, 1]");
         return nullptr;
     }
-    if (!playback->clips[0].asset && playback->ik.Count() == 0)
+    if (!playback->clips[0].asset && playback->ik.Count() == 0 && !playback->secondaryMotion)
         return UnsupportedPose(error);
     if (!source.animation || !source.animation->source || (playback->clips[0].asset && !playback->clips[0].asset->source) || (playback->clips[1].asset && !playback->clips[1].asset->source))
     {
@@ -487,7 +487,7 @@ FModelDeferredPose* EvaluateGpuDeferredModelPose(const detail::ModelResource& so
         error.Assign("model animation blend weight must be finite and in [0, 1]");
         return nullptr;
     }
-    if (!playback->clips[0].asset && playback->ik.Count() == 0)
+    if (!playback->clips[0].asset && playback->ik.Count() == 0 && !playback->secondaryMotion)
         return UnsupportedPose(error);
     if (!source.animation || !source.animation->source || (playback->clips[0].asset && !playback->clips[0].asset->source) || (playback->clips[1].asset && !playback->clips[1].asset->source))
     {

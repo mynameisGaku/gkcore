@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelSecondaryMotion.h"
 #include "model/animation/ModelAnimationBinding.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelIk.h"
@@ -241,7 +242,7 @@ static bool EvaluateClip(const detail::ModelResource& source, const FModelClipSt
 /**
  * 通常の骨格姿勢を共通順序で評価し、失敗時は出力を保つ。
  */
-static bool EvaluateModelPlaybackPoseCore(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& output, String& error, FSnapshotProfileCall* profile)
+static bool EvaluateModelPlaybackPoseCore(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& output, String& error, FSnapshotProfileCall* profile, bool includeSecondary = true)
 {
     if (!source.animation || !source.animation->source)
     {
@@ -297,6 +298,10 @@ static bool EvaluateModelPlaybackPoseCore(const detail::ModelResource& source, c
         }
         StopSnapshotProfile(profile, 4);
     }
+    if (success && includeSecondary && playback.secondaryMotion)
+    {
+        success = ApplyModelSecondaryMotion(*playback.secondaryMotion, candidate, error);
+    }
     if (!success)
         return false;
     output.localTransforms.MoveFrom(candidate.localTransforms);
@@ -308,6 +313,11 @@ static bool EvaluateModelPlaybackPoseCore(const detail::ModelResource& source, c
 bool EvaluateModelPlaybackPose(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& pose, String& error)
 {
     return EvaluateModelPlaybackPoseCore(source, playback, pose, error, nullptr);
+}
+
+bool EvaluateModelPlaybackBasePose(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& pose, String& error)
+{
+    return EvaluateModelPlaybackPoseCore(source, playback, pose, error, nullptr, false);
 }
 
 detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source, const FModelPlayback* playback, String& error)
@@ -323,7 +333,7 @@ detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source
         return nullptr;
     }
     // 再生・IKがないモデルは、既存の静的形状をそのまま保持する。
-    if (!playback || (!playback->clips[0].asset && playback->ik.Count() == 0))
+    if (!playback || (!playback->clips[0].asset && playback->ik.Count() == 0 && !playback->secondaryMotion))
     {
         auto* result = const_cast<detail::ModelResource*>(&source);
         if (!Retain(&result->reference))
@@ -342,6 +352,11 @@ detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source
     const auto* primary = playback->clips[0].asset;
     const bool secondarySequenceActive = playback->clips[1].asset && playback->blendWeight > 0.0f && playback->clips[1].asset->source->Format() == EModelAnimationFormat::ObjSequence;
     const bool skeletalPath = (!primary || primary->source->Format() != EModelAnimationFormat::ObjSequence) && !secondarySequenceActive;
+    if (!skeletalPath && playback->secondaryMotion)
+    {
+        error.Assign("secondary motion cannot be combined with an OBJ sequence pose");
+        return nullptr;
+    }
     if (skeletalPath)
     {
         auto* result = CloneModelSnapshot(source, error);

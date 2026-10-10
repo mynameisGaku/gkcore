@@ -3,11 +3,17 @@
 
 #include <float.h>
 #include <math.h>
+#include <stdio.h>
 
 namespace gk::model::animation
 {
 namespace
 {
+#if defined(GKCORE_TESTING)
+// このthreadのIKで実際に積算したworld回転数。
+thread_local uint64_t worldRotationCountForTesting = 0;
+#endif
+
 
 /**
  * IK計算に使うmodel空間の倍精度位置。
@@ -19,7 +25,7 @@ struct FVector3
 };
 
 /**
- * 回転計算に使うXYWZ順の倍精度quaternion。
+ * 回転計算に使うXYZW順の倍精度quaternion。
  */
 struct FQuaternion
 {
@@ -255,29 +261,60 @@ bool PrepareIk(const FModelSkeleton& skeleton, const FModelPose& source, const u
 }
 
 /**
- * skeleton親順で各ボーンのworld回転を作る。
+ * 対象ボーンの親からrootまでの回転だけを、従来と同じ親順で積算する。
+ * 呼び出し前の全骨格検査は省かない。失敗時はoutputを保つ。
  */
-bool BuildWorldRotations(const FModelSkeleton& skeleton, const FModelPose& pose, gk::Array<FQuaternion>& rotations, gk::String& error)
+bool EvaluateParentWorldRotation(const FModelSkeleton& skeleton, const FModelPose& pose, uint32_t bone, FQuaternion& output, gk::String& error)
 {
-    if (!rotations.Reserve(pose.localTransforms.Count()))
+    if (bone >= skeleton.parents.Count() || pose.localTransforms.Count() != skeleton.parents.Count())
     {
-        error.Assign("Model IK rotation allocation failed");
+        error.Assign("Model IK parent rotation input is invalid");
         return false;
     }
-    for (uint32_t bone = 0; bone < pose.localTransforms.Count(); ++bone)
+    // 祖先の番号だけを一時保存し、子孫や他の枝の回転配列を作らない。
+    gk::Array<uint32_t> ancestors;
+    int32_t parent = skeleton.parents.At(bone);
+    while (parent >= 0)
     {
-        FQuaternion local{};
-        for (uint32_t component = 0; component < 4; ++component)
-            local.value[component] = pose.localTransforms.At(bone).rotation[component];
-        NormalizeQuaternion(local);
-        const int32_t parent = skeleton.parents.At(bone);
-        FQuaternion world = parent < 0 ? local : MultiplyQuaternion(rotations.At(static_cast<uint32_t>(parent)), local);
-        if (!NormalizeQuaternion(world) || !rotations.Append(world))
+        if (static_cast<uint32_t>(parent) >= skeleton.parents.Count() || ancestors.Count() >= skeleton.parents.Count())
         {
-            error.Assign("Model IK world rotation is invalid or could not be stored");
+            error.Assign("Model IK parent rotation hierarchy is invalid");
             return false;
         }
+        if (!ancestors.Append(static_cast<uint32_t>(parent)))
+        {
+            error.Assign("Model IK ancestor allocation failed");
+            return false;
+        }
+        parent = skeleton.parents.At(static_cast<uint32_t>(parent));
     }
+    FQuaternion parentWorld{ { 0.0, 0.0, 0.0, 1.0 } };
+    for (uint32_t remaining = ancestors.Count(); remaining > 0; --remaining)
+    {
+        const uint32_t ancestor = ancestors.At(remaining - 1);
+#if defined(GKCORE_TESTING)
+        ++worldRotationCountForTesting;
+#endif
+        FQuaternion local{};
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            local.value[component] = pose.localTransforms.At(ancestor).rotation[component];
+        }
+        if (!NormalizeQuaternion(local))
+        {
+            error.Assign("Model IK ancestor rotation is invalid");
+            return false;
+        }
+        // rootも2回正規化し、既存の積算順とquaternionの符号を維持する。
+        FQuaternion world = skeleton.parents.At(ancestor) < 0 ? local : MultiplyQuaternion(parentWorld, local);
+        if (!NormalizeQuaternion(world))
+        {
+            error.Assign("Model IK parent world rotation is invalid");
+            return false;
+        }
+        parentWorld = world;
+    }
+    output = parentWorld;
     return true;
 }
 
@@ -328,11 +365,11 @@ bool ApplyWorldDelta(const FModelSkeleton& skeleton, FModelPose& pose, uint32_t 
         error.Assign("Model IK cannot orient a zero-length bone");
         return false;
     }
-    gk::Array<FQuaternion> worldRotations;
-    if (!BuildWorldRotations(skeleton, pose, worldRotations, error))
+    FQuaternion parentWorld{};
+    if (!EvaluateParentWorldRotation(skeleton, pose, bone, parentWorld, error))
+    {
         return false;
-    const int32_t parent = skeleton.parents.At(bone);
-    const FQuaternion parentWorld = parent < 0 ? FQuaternion{ { 0.0, 0.0, 0.0, 1.0 } } : worldRotations.At(static_cast<uint32_t>(parent));
+    }
     FQuaternion local{};
     for (uint32_t component = 0; component < 4; ++component)
         local.value[component] = pose.localTransforms.At(bone).rotation[component];
@@ -416,6 +453,18 @@ bool ValidateTwoBoneChain(const FModelSkeleton& skeleton, uint32_t root, uint32_
 }
 
 }
+
+#if defined(GKCORE_TESTING)
+void ResetModelIkWorkForTesting()
+{
+    worldRotationCountForTesting = 0;
+}
+
+uint64_t GetModelIkWorldRotationCountForTesting()
+{
+    return worldRotationCountForTesting;
+}
+#endif
 
 /**
  * 連続したroot、middle、endボーンをpoleで曲げる2ボーンIKを解く。失敗時はoutputを保つ。
@@ -681,6 +730,132 @@ bool SolveCcdIk(const FModelSkeleton& skeleton, const FModelPose& source, const 
         return false;
     }
     return BlendIkResult(skeleton, source, solved, weight, output, error);
+}
+
+bool OrientModelPoseChain(const FModelSkeleton& skeleton, const FModelPose& source, const uint32_t* bones, uint32_t count, gk::Vec3 endOffset, const gk::Vec3* points, FModelPose& output, gk::String& error)
+{
+    if (!bones || !points || count == 0 || count > skeleton.parents.Count() || !isfinite(endOffset.x) || !isfinite(endOffset.y) || !isfinite(endOffset.z))
+    {
+        error.Assign("secondary chain orientation input is invalid");
+        return false;
+    }
+    gk::Array<float> matrices;
+    if (!EvaluateModelPose(skeleton, source, matrices, error))
+    {
+        return false;
+    }
+    for (uint32_t item = 0; item < count; ++item)
+    {
+        const uint32_t bone = bones[item];
+        if (bone >= skeleton.parents.Count() || (item > 0 && skeleton.parents.At(bone) != static_cast<int32_t>(bones[item - 1])))
+        {
+            error.Assign("secondary bones must form a continuous parent-child chain");
+            return false;
+        }
+        for (int32_t ancestor = static_cast<int32_t>(bone); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
+        {
+            const auto& transform = source.localTransforms.At(static_cast<uint32_t>(ancestor));
+            const float largest = fmaxf(transform.scale[0], fmaxf(transform.scale[1], transform.scale[2]));
+            const float smallest = fminf(transform.scale[0], fminf(transform.scale[1], transform.scale[2]));
+            // 小さな入力軸差だけを許し、非一様scaleによる変形誤差を抑える。
+            if (!(smallest > 0.0f) || largest - smallest > largest * (128.0f * FLT_EPSILON))
+            {
+                char diagnosis[192]{};
+                snprintf(diagnosis, sizeof(diagnosis), "secondary motion requires positive near-uniform ancestor scale: bone=%d scale=(%.9g,%.9g,%.9g)", ancestor, transform.scale[0], transform.scale[1], transform.scale[2]);
+                error.Assign(diagnosis);
+                return false;
+            }
+        }
+    }
+    for (uint32_t item = 0; item <= count; ++item)
+    {
+        if (!isfinite(points[item].x) || !isfinite(points[item].y) || !isfinite(points[item].z))
+        {
+            error.Assign("secondary point is not finite");
+            return false;
+        }
+    }
+    FModelPose candidate;
+    if (!CopyPose(source, candidate, error))
+    {
+        return false;
+    }
+    // 先頭の祖先だけを積算し、連続した鎖は前の節のworld回転を引き継ぐ。
+    FQuaternion baseParent{};
+    if (!EvaluateParentWorldRotation(skeleton, source, bones[0], baseParent, error))
+    {
+        return false;
+    }
+    FQuaternion updatedParent = baseParent;
+    for (uint32_t item = 0; item < count; ++item)
+    {
+        const uint32_t offset = bones[item] * 16u;
+        const FVector3 origin{ { matrices.At(offset + 12), matrices.At(offset + 13), matrices.At(offset + 14) } };
+        FVector3 currentDirection{};
+        if (item + 1 < count)
+        {
+            const uint32_t childOffset = bones[item + 1] * 16u;
+            currentDirection = Subtract(FVector3{ { matrices.At(childOffset + 12), matrices.At(childOffset + 13), matrices.At(childOffset + 14) } }, origin);
+        }
+        else
+        {
+            currentDirection = { { matrices.At(offset) * static_cast<double>(endOffset.x) + matrices.At(offset + 4) * static_cast<double>(endOffset.y) + matrices.At(offset + 8) * static_cast<double>(endOffset.z), matrices.At(offset + 1) * static_cast<double>(endOffset.x) + matrices.At(offset + 5) * static_cast<double>(endOffset.y) + matrices.At(offset + 9) * static_cast<double>(endOffset.z), matrices.At(offset + 2) * static_cast<double>(endOffset.x) + matrices.At(offset + 6) * static_cast<double>(endOffset.y) + matrices.At(offset + 10) * static_cast<double>(endOffset.z) } };
+        }
+        const FVector3 desiredDirection{ { static_cast<double>(points[item + 1].x) - points[item].x, static_cast<double>(points[item + 1].y) - points[item].y, static_cast<double>(points[item + 1].z) - points[item].z } };
+        // ねじれは元の姿勢から保ち、節の向きを結ぶ最小回転だけを加える。
+        const FVector3 fallback{ { matrices.At(offset + 4), matrices.At(offset + 5), matrices.At(offset + 6) } };
+        FQuaternion delta{}, local{};
+        if (!RotationBetween(currentDirection, desiredDirection, fallback, delta))
+        {
+            if (error.Empty())
+            {
+                error.Assign("secondary motion cannot orient a zero-length segment");
+            }
+            return false;
+        }
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            local.value[component] = source.localTransforms.At(bones[item]).rotation[component];
+        }
+        if (!NormalizeQuaternion(local))
+        {
+            error.Assign("secondary motion source rotation is invalid");
+            return false;
+        }
+        // 元のworld回転を最小回転で曲げ、新しい親に対するlocal回転へ戻す。
+        FQuaternion rotation = MultiplyQuaternion(Conjugate(updatedParent), MultiplyQuaternion(delta, MultiplyQuaternion(baseParent, local)));
+        if (!NormalizeQuaternion(rotation))
+        {
+            error.Assign("secondary motion produced an invalid rotation");
+            return false;
+        }
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            candidate.localTransforms.At(bones[item]).rotation[component] = static_cast<float>(rotation.value[component]);
+        }
+        // 次の節では、floatへ保存した実際のlocal回転を親の積算に使う。
+        FQuaternion storedLocal{};
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            storedLocal.value[component] = candidate.localTransforms.At(bones[item]).rotation[component];
+        }
+        if (!NormalizeQuaternion(storedLocal))
+        {
+            error.Assign("secondary motion stored rotation is invalid");
+            return false;
+        }
+        baseParent = skeleton.parents.At(bones[item]) < 0 ? local : MultiplyQuaternion(baseParent, local);
+        updatedParent = skeleton.parents.At(bones[item]) < 0 ? storedLocal : MultiplyQuaternion(updatedParent, storedLocal);
+        if (!NormalizeQuaternion(baseParent) || !NormalizeQuaternion(updatedParent))
+        {
+            error.Assign("secondary motion chain world rotation is invalid");
+            return false;
+        }
+    }
+    output.localTransforms.MoveFrom(candidate.localTransforms);
+    output.morphWeights.MoveFrom(candidate.morphWeights);
+    error.Clear();
+    return true;
 }
 
 }

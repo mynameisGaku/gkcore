@@ -24,6 +24,11 @@ detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source
  * OBJ連番以外のclip・ブレンド・IKを共有姿勢へ評価する。失敗時はposeを変更しない。
  */
 bool EvaluateModelPlaybackPose(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& pose, String& error);
+/**
+ * 揺れものを除くclip・ブレンド・IK姿勢を評価する。物理更新の入力に使う。
+ */
+bool EvaluateModelPlaybackBasePose(const detail::ModelResource& source, const FModelPlayback& playback, animation::FModelPose& pose, String& error);
+
 }
 
 #endif

@@ -402,5 +402,6 @@ GKCORE_API int SetShaderFloat4(ShaderHandle shader, uint32_t slot, Float4 value)
 
 #include <gkcore/ModelAnimation.h>
 #include <gkcore/ModelMaterial.h>
+#include <gkcore/ModelSecondaryMotion.h>
 
 #endif
