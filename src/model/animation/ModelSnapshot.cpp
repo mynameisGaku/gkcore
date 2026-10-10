@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelPoseCache.h"
 #include "model/animation/ModelSecondaryMotion.h"
 #include "model/animation/ModelAnimationBinding.h"
 #include "model/animation/ModelPose.h"
@@ -267,6 +268,23 @@ static bool EvaluateModelPlaybackPoseCore(const detail::ModelResource& source, c
         return false;
     }
     animation::FModelPose candidate;
+    // 揺れ更新で確定した基準姿勢を借りずに複製し、予約描画を独立して保持する。
+    bool cacheHit = false;
+    if (!CopyCurrentModelPoseCache(source, playback, candidate, cacheHit, error))
+    {
+        return false;
+    }
+    if (cacheHit)
+    {
+        if (includeSecondary && playback.secondaryMotion && !ApplyModelSecondaryMotion(*playback.secondaryMotion, candidate, error))
+        {
+            return false;
+        }
+        output.localTransforms.MoveFrom(candidate.localTransforms);
+        output.morphWeights.MoveFrom(candidate.morphWeights);
+        error.Clear();
+        return true;
+    }
     StartSnapshotProfile(profile, 1);
     bool success = primary ? EvaluateClip(source, playback.clips[0], candidate, error) : animation::InitializeModelPose(source.animation->source->Skeleton(), candidate, error);
     StopSnapshotProfile(profile, 1);

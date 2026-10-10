@@ -4,6 +4,7 @@
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/ModelSecondaryMotionColliders.h"
 #include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelPoseCache.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/FModelPoseChain.h"
 #include "model/animation/AModelAnimationSource.h"
@@ -392,10 +393,19 @@ int Update(ModelHandle handle, double delta, bool reset)
         }
     }
     candidate.previousCollisionShapes.MoveFrom(currentShapes);
-    if (!Commit(*transform, candidate, error))
+    // cacheも先に候補を完成させ、鎖の確定後には失敗する処理を残さない。
+    auto* poseCache = model::CreateModelPoseCache(*resource, *transform->playback, base, error);
+    if (!poseCache)
     {
         return Failure(error);
     }
+    if (!Commit(*transform, candidate, error))
+    {
+        delete poseCache;
+        return Failure(error);
+    }
+    delete transform->playback->basePoseCache;
+    transform->playback->basePoseCache = poseCache;
     detail::ClearError();
     return 0;
 }

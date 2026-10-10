@@ -64,6 +64,8 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/FModelPlayback.cpp
     src/model/animation/ModelAnimationBinding.cpp
     src/model/animation/ModelSnapshot.cpp
+    src/model/animation/ModelPoseCache.cpp
+    src/model/animation/ModelSkinPoints.cpp
     src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
     src/model/animation/HumanoidMapping.cpp

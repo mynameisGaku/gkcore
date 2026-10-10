@@ -11,6 +11,7 @@
 namespace gk::model
 {
 struct FModelSecondaryMotionState;
+struct FModelPoseCache;
 /**
  * 1モデルinstanceの再生枠、ブレンド、ボーンの役割、IKを所有する。
  */
@@ -28,6 +29,10 @@ struct FModelPlayback
     Array<uint32_t> ikBones;
     // このinstanceだけが所有する揺れもの設定と状態。
     FModelSecondaryMotionState* secondaryMotion = nullptr;
+    // 再生・IK条件が変わったことを識別する世代番号。
+    uint64_t poseRevision = 1;
+    // 揺れ更新で確定した基準姿勢。このinstanceだけが所有する。
+    FModelPoseCache* basePoseCache = nullptr;
 
     /**
      * 再生枠が保持する元データを解放する。

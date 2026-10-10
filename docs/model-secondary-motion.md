@@ -30,6 +30,11 @@
 `DrawModel`、`GetModelBonePosition(s)`、描画済みpacketの表示は保存済み姿勢を使い、再度積分しません。
 更新後に同じframeで何度描画しても結果は変わりません。
 
+成功した`UpdateModelSecondaryMotion`は、clip・blend・IKを反映し、揺れを重ねる前の基準姿勢をmodel instanceごとに保存します。
+再生条件が同じ間は、`DrawModel`と骨位置のqueryがこの姿勢を再利用するため、clipを再sampleしません。
+再生時刻・speed・loop・blend・clip登録・IK・model bone roleの変更でcacheを無効にし、失敗したsetterや揺れ更新は直前の有効な状態を保ちます。
+描画snapshotは毎回独立して作られ、queryとdrawはsimulationやanimation clockを進めません。
+
 ```cpp
 uint32_t hairBones[] = { rootBone, middleBone, tipBone };
 gk::FModelSecondaryMotionSettings settings{};
@@ -143,6 +148,8 @@ OBJ連番など非skeletal animationには適用できません。
 実装はばね、減衰、重力、風、bone長、基準方向からの最大曲げ角を扱います。
 比較画像では13鎖の変化を確認し、明確な発散や裂けは見つかっていません。
 接近時の揺れと角度制約を含む見た目の品質判定は継続中です。
+skin weightを調べる補助処理は内部向けで、zero-morph FBXに限られます。
+cloth meshを補正する処理はなく、衣服が身体へ埋まらないことは保証しません。
 
 身体の球・カプセルとの離散接触を実装しています。
 更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。

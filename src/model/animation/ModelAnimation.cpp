@@ -7,6 +7,7 @@
 #include "model/animation/HumanoidBoneMap.h"
 #include "model/animation/ModelAnimationResources.h"
 #include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelPoseCache.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/ObjSequence.h"
 #include "model/animation/GlbAnimation.h"
@@ -235,6 +236,7 @@ int Bind(ModelHandle handle, model::FModelAnimationAsset* asset, uint32_t clip, 
     }
     else
         playback->blendWeight = weight;
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -350,6 +352,7 @@ int StoreIk(ModelHandle handle, const uint32_t* bones, uint32_t count, Vec3 targ
     }
     playback->ik.MoveFrom(commands);
     playback->ikBones.MoveFrom(chain);
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -489,6 +492,7 @@ int SetModelAnimationBlendWeight(ModelHandle handle, float weight)
         return detail::SetError("blend slots are not configured or weight is invalid");
     }
     playback->blendWeight = weight;
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -521,6 +525,7 @@ int StopModelAnimation(ModelHandle handle)
             state.humanoidTranslationScale = 0.0;
         }
         transform->playback->blendWeight = 0.0f;
+        model::InvalidateModelPoseCache(*transform->playback);
     }
     detail::ClearError();
     return 0;
@@ -539,6 +544,7 @@ int SetModelAnimationTime(ModelHandle handle, double seconds, uint32_t slot)
         return detail::SetError("invalid animation time or duration");
     }
     state->seconds = time;
+    model::InvalidateModelPoseCache(*Playback(handle, false));
     detail::ClearError();
     return 0;
 }
@@ -561,6 +567,7 @@ int SetModelAnimationSpeed(ModelHandle handle, double speed, uint32_t slot)
         return detail::SetError("animation speed must be finite");
     }
     state->speed = speed;
+    model::InvalidateModelPoseCache(*Playback(handle, false));
     detail::ClearError();
     return 0;
 }
@@ -572,13 +579,19 @@ int SetModelAnimationLoop(ModelHandle handle, bool loop, uint32_t slot)
     {
         return -1;
     }
-    state->loop = loop;
+    // 先に時計を検証し、失敗時はloop設定と旧cacheを保つ。
+    model::FModelClipState clockCandidate;
+    clockCandidate.asset = state->asset;
+    clockCandidate.clip = state->clip;
+    clockCandidate.loop = loop;
     double time = 0.0;
-    if (!Clock(*state, state->seconds, time))
+    if (!Clock(clockCandidate, state->seconds, time))
     {
         return detail::SetError("invalid animation duration");
     }
     state->seconds = time;
+    state->loop = loop;
+    model::InvalidateModelPoseCache(*Playback(handle, false));
     detail::ClearError();
     return 0;
 }
@@ -604,6 +617,7 @@ int UpdateModelAnimation(ModelHandle handle, double delta)
         {
             playback->clips[i].seconds = times[i];
         }
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -724,6 +738,7 @@ int SetModelBoneRole(ModelHandle handle, uint32_t bone, EHumanoidBone role)
     {
         return Failure(error);
     }
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -764,6 +779,7 @@ int SetModelHumanoidBoneMap(ModelHandle handle, const char* path)
         return -1;
     }
     playback->roles.MoveFrom(candidate);
+    model::InvalidateModelPoseCache(*playback);
     detail::ClearError();
     return 0;
 }
@@ -874,7 +890,12 @@ int AutoMapModelHumanoidBones(ModelHandle handle)
     {
         return -1;
     }
-    return InferRoles(*asset->source, playback->roles);
+    const int result = InferRoles(*asset->source, playback->roles);
+    if (result == 0)
+    {
+        model::InvalidateModelPoseCache(*playback);
+    }
+    return result;
 }
 
 int AutoMapAnimationHumanoidBones(ModelAnimationHandle handle)
@@ -985,6 +1006,7 @@ int ClearModelIk(ModelHandle handle)
     {
         transform->playback->ik.Clear();
         transform->playback->ikBones.Clear();
+        model::InvalidateModelPoseCache(*transform->playback);
     }
     detail::ClearError();
     return 0;
