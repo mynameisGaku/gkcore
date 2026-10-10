@@ -16,6 +16,14 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 
 動作中の右腕IKを加えたSilly Dancing / Capoeiraの測定は、前回269.801FPS、骨番号を起動時に解決する変更後の今回210.209FPS（p95 5.588ms、DrawModel平均1.100ms、Present平均3.059ms）でした。両方とも3000frame/warmup300ですが、同時刻の有効な変更前対照はありません。今回の変更によるFPS改善や300FPS達成を確認した結果とは扱いません。骨番号検索は毎frameから初期化時へ移し、元の12姿勢画像は全画素一致しました。最新ログはik-perf-binding-benchmark.log、途中で閉じた計測はik-perf-baseline.logで完了していません。追従表示の処理時間はこの測定へ含めていません。
 
+## IKと揺れものの測定
+
+同じ実モデルのブレンド＋右腕IKで、祖先の回転積算を必要な部分へ絞った前後を測定しました。変更前214.655FPS、変更後272.239FPS、入力検査で不要なquaternion正規化を省いた後273.666FPSでした。いずれも3000frame / warmup300です。入力の受入条件と実際の姿勢正規化は保ち、固定時刻の画像は全画素一致しました。旧測定との差には実行時の負荷も含まれるため、全環境で同じ改善率が出ることは保証しません。
+
+髪2鎖・スカート10鎖・尻尾1鎖と追従表示を加えた最新計測は、188.150FPS、p95 5.610msでした。DrawModelは平均0.848ms、Presentは2.428ms、IK目標の設定は0.512ms、揺れもの更新は1.045msです。通常Release DLL、1280×720、標準効果、Silly Dancing / Capoeiraのブレンド＋右腕IK、3000frame / warmup300で完走しました。初回183.064FPS、更新1.094msの測定も完走していますが、この差だけで追加の速度改善を断定しません。揺れものを含む300FPSは未達です。
+
+最新ログは`build/native-validation/secondary-motion-final-benchmark.log`、初回は`secondary-motion-benchmark.log`です。途中で閉じた630frameの測定は完了結果に含めません。追加処理の計測はbenchmarkだけで行い、通常viewerへ計測用配列は含めません。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

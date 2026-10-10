@@ -59,6 +59,9 @@ set(GKCORE_CORE_SOURCES
     src/model/Ufbx.cpp
     ${GKCORE_MODEL_ANIMATION_LOADER_SOURCES}
     src/model/animation/ModelIk.cpp
+    src/model/animation/ModelSecondaryMotionSolver.cpp
+    src/model/animation/ModelSecondaryMotion.cpp
+    src/model/animation/FModelSecondaryMotionState.cpp
     src/model/animation/ObjSequence.cpp
     src/model/animation/FModelPlayback.cpp
     src/model/animation/ModelAnimationBinding.cpp
@@ -117,6 +120,15 @@ if(GKCORE_BUILD_TESTS)
         gkcore_enable_warnings(gkcore_model_${_animation_test}_tests)
         add_test(NAME gkcore.model_${_animation_test} COMMAND gkcore_model_${_animation_test}_tests)
     endforeach()
+    target_compile_definitions(gkcore_model_ik_tests PRIVATE GKCORE_TESTING=1)
+    target_compile_definitions(gkcore_model_pose_tests PRIVATE GKCORE_TESTING=1)
+    add_executable(gkcore_model_secondary_motion_tests tests/model_secondary_motion_tests.cpp
+        src/model/animation/ModelSecondaryMotionSolver.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_secondary_motion_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_secondary_motion_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_secondary_motion_tests)
+    add_test(NAME gkcore.model_secondary_motion COMMAND gkcore_model_secondary_motion_tests)
     add_executable(gkcore_model_animation_binding_tests tests/model_animation_binding_tests.cpp
         src/model/animation/ModelAnimationBinding.cpp src/model/animation/FModelAnimationAsset.cpp
         src/model/animation/ModelPose.cpp src/foundation/RefCount.cpp
@@ -898,12 +910,12 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_model_lighting examples/model_lighting.cpp)
     target_compile_features(gkcore_model_lighting PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_lighting PRIVATE gkcore::gkcore)
-    add_executable(gkcore_model_viewer examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp)
+    add_executable(gkcore_model_viewer examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelSecondaryMotionPreview.cpp)
     target_compile_features(gkcore_model_viewer PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_viewer PRIVATE gkcore::gkcore)
     gkcore_enable_warnings(gkcore_model_viewer)
 
-    add_executable(gkcore_model_benchmark examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp)
+    add_executable(gkcore_model_benchmark examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelSecondaryMotionPreview.cpp)
     target_compile_features(gkcore_model_benchmark PRIVATE cxx_std_17)
     target_compile_definitions(gkcore_model_benchmark PRIVATE GKCORE_MODEL_BENCHMARK=1)
     if(TARGET gkcore_capture_runtime)
@@ -913,7 +925,7 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     gkcore_enable_warnings(gkcore_model_benchmark)
 
-    add_executable(gkcore_model_benchmark_visible examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp)
+    add_executable(gkcore_model_benchmark_visible examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelSecondaryMotionPreview.cpp)
     target_compile_features(gkcore_model_benchmark_visible PRIVATE cxx_std_17)
     target_compile_definitions(gkcore_model_benchmark_visible PRIVATE GKCORE_MODEL_BENCHMARK=1)
     target_link_libraries(gkcore_model_benchmark_visible PRIVATE gkcore::gkcore)
@@ -1045,7 +1057,7 @@ if(GKCORE_BUILD_RUNTIME)
                 COMMAND gkcore_model_gpu_skinning_multi_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures")
             set_tests_properties(gkcore.model_gpu_skinning_multi PROPERTIES LABELS "windows;gpu;fp64" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=1")
             add_executable(gkcore_model_blend_capture_tests tests/model_blend_capture_tests.cpp)
-            add_executable(gkcore_real_model_capture_tests tests/real_model_capture_tests.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp)
+            add_executable(gkcore_real_model_capture_tests tests/real_model_capture_tests.cpp examples/support/FHumanoidMapOptions.cpp examples/support/ModelMappingReport.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelSecondaryMotionPreview.cpp)
             target_compile_features(gkcore_real_model_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_real_model_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_real_model_capture_tests)
@@ -1308,6 +1320,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/HumanoidBoneTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimationMappingInfo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelMaterial.h include/gkcore/ModelMaterialSettings.h include/gkcore/ModelAlphaModeTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)

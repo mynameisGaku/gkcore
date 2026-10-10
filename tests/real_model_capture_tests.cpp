@@ -5,6 +5,7 @@
 #include "examples/support/ModelMappingReport.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
+#include "examples/support/ModelSecondaryMotionPreview.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -477,6 +478,12 @@ int main(int argc, char** argv)
         return 2;
     }
     // 大きく移動するmotionを画面内で見るための任意指定。
+    const char* secondaryMotionPath = nullptr;
+    if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-motion option\n");
+        return 2;
+    }
     bool followMotion = false;
     if (!gk::examples::ParseMotionViewOptions(argc, argv, followMotion))
     {
@@ -485,7 +492,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion]\n");
+        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -703,6 +710,10 @@ int main(int argc, char** argv)
     {
         passed = false;
     }
+    if (passed && secondaryMotionPath)
+    {
+        passed = gk::examples::ApplySecondaryMotionPreview(model, secondaryMotionPath);
+    }
     if (passed)
     {
         // frameごとに指定するanimation時刻を求める。
@@ -763,6 +774,10 @@ int main(int argc, char** argv)
                 {
                     passed = VerifyArmIkPreview(model, armIkPreview, mode, frame);
                 }
+            }
+            if (passed && secondaryMotionPath)
+            {
+                passed = Check(gk::UpdateModelSecondaryMotion(model, hasAnimationStep ? animationStepSeconds : 1.0 / 60.0), "UpdateModelSecondaryMotion");
             }
             gk::Vec3 displayCenter{ center[0], center[1], center[2] };
             if (passed && followMotion && !motionView.GetCenter(displayCenter))

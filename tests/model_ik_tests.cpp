@@ -3,6 +3,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdint.h>
 
 namespace
 {
@@ -544,9 +545,244 @@ bool TestInvalidIkInputsAreAtomic()
     return true;
 }
 
+/**
+ * 非自明な親回転と分岐を持つ、指定骨数の2-bone fixtureを作る。
+ */
+bool MakeWideFixture(uint32_t boneCount, bool reverseChainSigns, FModelSkeleton& skeleton, FModelPose& pose)
+{
+    for (uint32_t bone = 0; bone < boneCount; ++bone)
+    {
+        // root、middle、end以外はroot直下の分岐として配置する。
+        const int32_t parent = bone == 0 ? -1 : bone == 1 ? 0 : bone == 2 ? 1 : 0;
+        FModelBoneTransform transform{};
+        transform.position[0] = bone == 0 ? 1.25f : bone == 1 ? 0.9f : bone == 2 ? 0.75f : 0.001f * static_cast<float>(bone % 17u);
+        transform.position[1] = bone == 0 ? -0.75f : bone == 1 ? 0.16f : bone == 2 ? -0.11f : 0.002f * static_cast<float>(bone % 13u);
+        transform.position[2] = bone == 0 ? 0.4f : bone == 1 ? 0.08f : bone == 2 ? 0.13f : -0.001f * static_cast<float>(bone % 11u);
+        if (bone == 0)
+        {
+            transform.rotation[0] = 0.13f;
+            transform.rotation[1] = -0.18f;
+            transform.rotation[2] = 0.09f;
+            transform.rotation[3] = 0.97f;
+        }
+        else if (bone == 1)
+        {
+            transform.rotation[0] = 0.05f;
+            transform.rotation[1] = 0.12f;
+            transform.rotation[2] = -0.08f;
+            transform.rotation[3] = 0.98f;
+        }
+        else if (bone == 2)
+        {
+            transform.rotation[0] = -0.07f;
+            transform.rotation[1] = 0.03f;
+            transform.rotation[2] = 0.15f;
+            transform.rotation[3] = 0.98f;
+        }
+        else
+        {
+            transform.rotation[0] = 0.01f * static_cast<float>(bone % 7u + 1u);
+            transform.rotation[1] = -0.012f * static_cast<float>(bone % 5u + 1u);
+            transform.rotation[2] = 0.008f * static_cast<float>(bone % 9u + 1u);
+            transform.rotation[3] = 1.0f;
+        }
+        const double length = sqrt(static_cast<double>(transform.rotation[0]) * transform.rotation[0] + static_cast<double>(transform.rotation[1]) * transform.rotation[1] + static_cast<double>(transform.rotation[2]) * transform.rotation[2] + static_cast<double>(transform.rotation[3]) * transform.rotation[3]);
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            transform.rotation[component] = static_cast<float>(transform.rotation[component] / length);
+            if (reverseChainSigns && bone < 3)
+                transform.rotation[component] = -transform.rotation[component];
+        }
+        if (!skeleton.parents.Append(parent) || !skeleton.restLocalTransforms.Append(transform) || !pose.localTransforms.Append(transform))
+            return false;
+    }
+    return true;
+}
+
+/**
+ * poseの全変換とmorph値を別配列へ複製する。
+ */
+bool ClonePose(const FModelPose& source, FModelPose& output)
+{
+    return output.localTransforms.AppendRange(source.localTransforms.Data(), source.localTransforms.Count()) && output.morphWeights.AppendRange(source.morphWeights.Data(), source.morphWeights.Count());
+}
+
+/**
+ * すべてのpose値が成分ごとに一致するか調べる。
+ */
+bool SamePose(const FModelPose& first, const FModelPose& second)
+{
+    if (first.localTransforms.Count() != second.localTransforms.Count() || first.morphWeights.Count() != second.morphWeights.Count())
+        return false;
+    for (uint32_t bone = 0; bone < first.localTransforms.Count(); ++bone)
+    {
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            if (first.localTransforms.At(bone).position[axis] != second.localTransforms.At(bone).position[axis] || first.localTransforms.At(bone).scale[axis] != second.localTransforms.At(bone).scale[axis])
+                return false;
+        for (uint32_t component = 0; component < 4; ++component)
+            if (first.localTransforms.At(bone).rotation[component] != second.localTransforms.At(bone).rotation[component])
+                return false;
+    }
+    for (uint32_t morph = 0; morph < first.morphWeights.Count(); ++morph)
+        if (first.morphWeights.At(morph) != second.morphWeights.At(morph))
+            return false;
+    return true;
+}
+
+/**
+ * 同じ3-bone鎖を持つ縮約版と339骨版でsigned quaternion結果を比較する。
+ */
+bool TestWideTwoBoneResultsMatchReducedFixture()
+{
+    const float weights[3] = { 0.0f, 1.0f, 0.37f };
+    for (uint32_t signCase = 0; signCase < 2; ++signCase)
+    {
+        for (float weight : weights)
+        {
+            FModelSkeleton reducedSkeleton, wideSkeleton;
+            FModelPose reducedSource, wideSource, reducedOutput, wideOutput;
+            gk::String error;
+            if (!MakeWideFixture(3, signCase != 0, reducedSkeleton, reducedSource) || !MakeWideFixture(339, signCase != 0, wideSkeleton, wideSource))
+                return Fail("wide IK fixture allocation failed");
+            const float target[3] = { 2.05f, 0.0f, 0.55f };
+            const float pole[3] = { 1.25f, 0.1f, 1.4f };
+            if (!SolveTwoBoneIk(reducedSkeleton, reducedSource, 0, 1, 2, target, pole, weight, reducedOutput, error))
+                return Fail(error.CStr());
+            ResetModelIkWorkForTesting();
+            if (!SolveTwoBoneIk(wideSkeleton, wideSource, 0, 1, 2, target, pole, weight, wideOutput, error))
+                return Fail(error.CStr());
+            if (GetModelIkWorldRotationCountForTesting() > 12u)
+                return Fail("two-bone IK accumulated world rotations outside the requested ancestor paths");
+            for (uint32_t bone = 0; bone < 3; ++bone)
+            {
+                for (uint32_t component = 0; component < 4; ++component)
+                {
+                    if (reducedOutput.localTransforms.At(bone).rotation[component] != wideOutput.localTransforms.At(bone).rotation[component])
+                        return Fail("wide two-bone IK changed a signed chain quaternion component");
+                }
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * 全骨入力検証の失敗とsource/output alias時のpose原子性を保つ。
+ */
+bool TestWideTwoBoneValidationAndAliasing()
+{
+    FModelSkeleton skeleton;
+    FModelPose source, output, expectedOutput;
+    gk::String error;
+    if (!MakeWideFixture(339, false, skeleton, source) || !ClonePose(source, output))
+        return Fail("wide IK validation fixture allocation failed");
+    output.localTransforms.At(338).position[0] = 123.0f;
+    if (!ClonePose(output, expectedOutput))
+        return Fail("wide IK output snapshot allocation failed");
+    const float target[3] = { 2.05f, 0.0f, 0.55f };
+    const float pole[3] = { 1.25f, 0.1f, 1.4f };
+    FModelPose invalidSource;
+    if (!ClonePose(source, invalidSource))
+        return Fail("wide IK invalid-pose allocation failed");
+    invalidSource.localTransforms.At(338).rotation[0] = NAN;
+    if (SolveTwoBoneIk(skeleton, invalidSource, 0, 1, 2, target, pole, 0.6f, output, error) || error.Empty() || !SamePose(output, expectedOutput))
+        return Fail("non-finite unrelated bone was accepted or changed the output pose");
+
+    error.Clear();
+    skeleton.parents.At(338) = 338;
+    if (SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 0.6f, output, error) || error.Empty() || !SamePose(output, expectedOutput))
+        return Fail("invalid unrelated parent was accepted or changed the output pose");
+    skeleton.parents.At(338) = 0;
+
+    FModelPose separateOutput, aliasedPose;
+    if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 0.6f, separateOutput, error) || !ClonePose(source, aliasedPose))
+        return Fail(error.Empty() ? "wide IK alias fixture allocation failed" : error.CStr());
+    if (!SolveTwoBoneIk(skeleton, aliasedPose, 0, 1, 2, target, pole, 0.6f, aliasedPose, error) || !SamePose(separateOutput, aliasedPose))
+        return Fail("source/output alias changed the two-bone IK result");
+    return true;
+}
+
+/**
+ * 揺れた節の位置へ回転だけで合わせ、末端の先と失敗時の出力を確認する。
+ */
+bool TestSecondaryChainOrientation()
+{
+    FModelSkeleton skeleton;
+    FModelPose source, output, saved;
+    gk::String error;
+    const uint32_t bones[3] = { 0, 1, 2 };
+    const gk::Vec3 targets[4] = { { 0, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 1, 2, 0 } };
+    ResetModelIkWorkForTesting();
+    if (!MakeChain(skeleton) || !MakePose(source) || !OrientModelPoseChain(skeleton, source, bones, 3, { 1, 0, 0 }, targets, output, error))
+    {
+        return Fail(error.CStr());
+    }
+    if (GetModelIkWorldRotationCountForTesting() > 2)
+    {
+        return Fail("secondary orientation recomputed the same chain ancestors");
+    }
+    gk::Array<float> matrices;
+    if (!EvaluateModelPose(skeleton, output, matrices, error))
+    {
+        return Fail(error.CStr());
+    }
+    for (uint32_t bone = 0; bone < 3; ++bone)
+    {
+        const uint32_t offset = bone * 16u;
+        if (fabsf(matrices.At(offset + 12) - targets[bone].x) > 0.0001f || fabsf(matrices.At(offset + 13) - targets[bone].y) > 0.0001f || fabsf(matrices.At(offset + 14) - targets[bone].z) > 0.0001f)
+        {
+            return Fail("secondary chain did not reach a simulated joint");
+        }
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (output.localTransforms.At(bone).position[axis] != source.localTransforms.At(bone).position[axis] || output.localTransforms.At(bone).scale[axis] != source.localTransforms.At(bone).scale[axis])
+            {
+                return Fail("secondary orientation changed local position or scale");
+            }
+        }
+    }
+    if (fabsf(matrices.At(32) + matrices.At(44) - targets[3].x) > 0.0001f || fabsf(matrices.At(33) + matrices.At(45) - targets[3].y) > 0.0001f || !ClonePose(output, saved))
+    {
+        return Fail("secondary dummy tip did not follow the last bone");
+    }
+    // 実データの小さなscale軸差でも、節位置の誤差が鎖長の0.01%以内に収まる。
+    source.localTransforms.At(0).scale[0] = 0.999999881f;
+    source.localTransforms.At(0).scale[1] = 0.99998951f;
+    source.localTransforms.At(0).scale[2] = 0.99998951f;
+    if (!OrientModelPoseChain(skeleton, source, bones, 3, { 1, 0, 0 }, targets, output, error) || !EvaluateModelPose(skeleton, output, matrices, error))
+    {
+        return Fail("secondary motion rejected a small authored scale-axis difference");
+    }
+    for (uint32_t bone = 0; bone < 3; ++bone)
+    {
+        if (fabsf(matrices.At(bone * 16u + 12u) - targets[bone].x) > 0.0001f || fabsf(matrices.At(bone * 16u + 13u) - targets[bone].y) > 0.0001f)
+        {
+            return Fail("secondary motion exceeded the small-scale position tolerance");
+        }
+    }
+    saved.localTransforms.Clear();
+    saved.morphWeights.Clear();
+    if (!ClonePose(output, saved))
+    {
+        return Fail("secondary scale output snapshot allocation failed");
+    }
+    source.localTransforms.At(0).scale[1] = 0.95f;
+    if (OrientModelPoseChain(skeleton, source, bones, 3, { 1, 0, 0 }, targets, output, error) || !SamePose(output, saved))
+    {
+        return Fail("secondary motion accepted an unsupported axis scale or changed output");
+    }
+    source.localTransforms.At(0).scale[1] = 0.99998951f;
+    const uint32_t invalid[2] = { 0, 2 };
+    if (OrientModelPoseChain(skeleton, source, invalid, 2, { 1, 0, 0 }, targets, output, error) || !SamePose(output, saved))
+    {
+        return Fail("invalid secondary chain changed the output pose");
+    }
+    return true;
+}
+
 }
 
 int main()
 {
-    return TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() && TestUnchangedTargetPreservesRotatedUnequalChain() ? 0 : 1;
+    return TestSecondaryChainOrientation() && TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() && TestUnchangedTargetPreservesRotatedUnequalChain() && TestWideTwoBoneResultsMatchReducedFixture() && TestWideTwoBoneValidationAndAliasing() ? 0 : 1;
 }

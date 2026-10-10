@@ -134,11 +134,7 @@ class ADeferredPoseTestSource final : public gk::model::AModelAnimationSource
             error.Assign("test source rejects this GPU pose");
             return false;
         }
-        gk::model::animation::FModelGpuSkinningGeometry::FMatrix matrix{};
-        matrix.value[0] = 1.0;
-        matrix.value[3] = pose.localTransforms.At(0).position[0];
-        matrix.value[5] = 1.0;
-        matrix.value[10] = 1.0;
+        const auto matrix = MakeGpuSkinningMatrix(pose);
         if (!output.Append(matrix))
         {
             error.Assign("test GPU matrix allocation failed");
@@ -165,10 +161,11 @@ class ADeferredPoseTestSource final : public gk::model::AModelAnimationSource
         gk::model::animation::FModelSparsePoseGeometry candidate;
         if (gpuSkinning_)
         {
+            const auto matrix = MakeGpuSkinningMatrix(pose);
             for (uint32_t index = 0; index < gpuGeometry_.positions.Count(); ++index)
             {
                 const auto& bind = gpuGeometry_.positions.At(index);
-                const gk::model::animation::FModelSparsePoseGeometry::FModelVector4 posedPosition{ { static_cast<float>(bind.value[0]) + pose.localTransforms.At(0).position[0], static_cast<float>(bind.value[1]), 0.0f, 1.0f } };
+                const gk::model::animation::FModelSparsePoseGeometry::FModelVector4 posedPosition{ { static_cast<float>(matrix.value[0] * bind.value[0] + matrix.value[1] * bind.value[1] + matrix.value[2] * bind.value[2] + matrix.value[3]), static_cast<float>(matrix.value[4] * bind.value[0] + matrix.value[5] * bind.value[1] + matrix.value[6] * bind.value[2] + matrix.value[7]), static_cast<float>(matrix.value[8] * bind.value[0] + matrix.value[9] * bind.value[1] + matrix.value[10] * bind.value[2] + matrix.value[11]), 1.0f } };
                 const gk::model::animation::FModelSparsePoseGeometry::FModelVector4 posedNormal{ { 0.0f, 0.0f, 1.0f, 0.0f } };
                 if (!candidate.positions.Append(posedPosition) || !candidate.normals.Append(posedNormal))
                 {
@@ -195,6 +192,29 @@ class ADeferredPoseTestSource final : public gk::model::AModelAnimationSource
     }
 
   private:
+    static gk::model::animation::FModelGpuSkinningGeometry::FMatrix MakeGpuSkinningMatrix(const gk::model::animation::FModelPose& pose)
+    {
+        const auto& rotation = pose.localTransforms.At(0).rotation;
+        const double x = rotation[0];
+        const double y = rotation[1];
+        const double z = rotation[2];
+        const double w = rotation[3];
+        gk::model::animation::FModelGpuSkinningGeometry::FMatrix matrix{};
+        matrix.value[0] = 1.0 - 2.0 * (y * y + z * z);
+        matrix.value[1] = 2.0 * (x * y - z * w);
+        matrix.value[2] = 2.0 * (x * z + y * w);
+        matrix.value[3] = pose.localTransforms.At(0).position[0];
+        matrix.value[4] = 2.0 * (x * y + z * w);
+        matrix.value[5] = 1.0 - 2.0 * (x * x + z * z);
+        matrix.value[6] = 2.0 * (y * z - x * w);
+        matrix.value[7] = pose.localTransforms.At(0).position[1];
+        matrix.value[8] = 2.0 * (x * z - y * w);
+        matrix.value[9] = 2.0 * (y * z + x * w);
+        matrix.value[10] = 1.0 - 2.0 * (x * x + y * y);
+        matrix.value[11] = pose.localTransforms.At(0).position[2];
+        return matrix;
+    }
+
     bool gpuSkinning_;
     gk::model::animation::FModelSkeleton skeleton_;
     gk::Array<gk::model::animation::FModelSparseVertexMap> mapping_;
@@ -493,6 +513,182 @@ bool DeferredGpuPoseContract()
     return Check(defaultCapabilityDisabled && gpuCapabilityCanBeEnabled && evaluatedOnlyBlendPositions && unsupportedPoseFallsBack && fallbackUsesFrozenPose && cpuCapabilityFallback && gpuCapabilityUsesFrozenPose, "GPU deferred capability, BLEND subset, frozen pose, and CPU materialization");
 }
 
+/**
+ * secondary motion適用後のGPU予約poseとCPU materializeが、後続更新から独立することを確認する。
+ */
+bool DeferredGpuSecondaryMotionContract()
+{
+    if (!gAnimationTestBackend)
+        return Check(false, "secondary motion GPU fixture backend");
+    gAnimationTestBackend->supportsGpuModelSkinning_ = true;
+    gk::String error;
+    const auto model = RegisterGpuTestModel(error);
+    if (!model.IsValid())
+    {
+        gAnimationTestBackend->supportsGpuModelSkinning_ = false;
+        return Check(false, "secondary motion GPU fixture model");
+    }
+    const uint32_t bone = 0;
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.gravity = { 0.0f, 0.0f, -9.81f };
+    settings.endOffset = { 0.05f, 0.0f, 0.0f };
+    settings.frequencyHz = 3.0f;
+    settings.dampingRatio = 0.7f;
+    settings.maxAngleDegrees = 60.0f;
+    gk::Vec3 queriedPosition{};
+    bool passed = gk::PlayModelAnimation(model, 0, false) == 0 && gk::SetModelAnimationTime(model, 0.75) == 0 && gk::SetModelSecondaryMotionChain(model, &bone, 1, settings) == 0;
+    for (uint32_t step = 0; step < 18; ++step)
+    {
+        passed = gk::UpdateModelSecondaryMotion(model, 1.0 / 60.0) == 0 && passed;
+    }
+    passed = gk::GetModelBonePosition(model, bone, queriedPosition) == 0 && fabsf(queriedPosition.x - 0.75f) < 1e-5f && passed;
+
+    const bool frameStarted = gk::BeginFrame() == 0;
+    passed = frameStarted && gk::DrawModel(model) == 0 && passed;
+    const auto& draws = gk::detail::GetContext().frame.draws;
+    const gk::model::FModelDeferredPose* frozen = frameStarted && draws.Count() == 1 ? draws.At(0).deferredPose : nullptr;
+    float frozenRotation[4]{};
+    float frozenLocalPosition[3]{};
+    float frozenScale[3]{};
+    double frozenMatrix[12]{};
+    float frozenGeometry[4][4]{};
+    const bool hasFrozenGpuPose = frozen && frozen->gpuEvaluationOnly && frozen->frozenPose.localTransforms.Count() == 1 && frozen->gpuSkinningMatrices.Count() == 1 && frozen->geometry.positions.Count() == 4;
+    if (hasFrozenGpuPose)
+    {
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            frozenRotation[component] = frozen->frozenPose.localTransforms.At(0).rotation[component];
+            for (uint32_t positionComponent = 0; positionComponent < 4; ++positionComponent)
+            {
+                frozenGeometry[component][positionComponent] = frozen->geometry.positions.At(component).value[positionComponent];
+            }
+        }
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            frozenLocalPosition[axis] = frozen->frozenPose.localTransforms.At(0).position[axis];
+            frozenScale[axis] = frozen->frozenPose.localTransforms.At(0).scale[axis];
+        }
+        for (uint32_t component = 0; component < 12; ++component)
+        {
+            frozenMatrix[component] = frozen->gpuSkinningMatrices.At(0).value[component];
+        }
+    }
+    const bool queryMatchesGpuSnapshot = hasFrozenGpuPose && fabsf(frozen->frozenPose.localTransforms.At(0).position[0] - queriedPosition.x) < 1e-5f && fabs(frozen->gpuSkinningMatrices.At(0).value[3] - queriedPosition.x) < 1e-5;
+    const bool secondaryRotationReachedGpu = hasFrozenGpuPose && fabsf(frozenRotation[0]) + fabsf(frozenRotation[1]) + fabsf(frozenRotation[2]) > 1e-4f && fabs(frozenMatrix[0] - 1.0) > 1e-4;
+    passed = hasFrozenGpuPose && queryMatchesGpuSnapshot && secondaryRotationReachedGpu && passed;
+
+    passed = gk::UpdateModelSecondaryMotion(model, 1.0 / 60.0) == 0 && gk::ClearModelSecondaryMotion(model) == 0 && gk::GetModelBonePosition(model, bone, queriedPosition) == 0 && fabsf(queriedPosition.x - 0.75f) < 1e-5f && passed;
+    bool queuedSnapshotUnchanged = hasFrozenGpuPose && frozen->gpuEvaluationOnly && frozen->frozenPose.localTransforms.Count() == 1 && frozen->frozenPose.morphWeights.Count() == 0 && frozen->gpuSkinningMatrices.Count() == 1 && frozen->geometry.positions.Count() == 4;
+    if (queuedSnapshotUnchanged)
+    {
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            queuedSnapshotUnchanged = queuedSnapshotUnchanged && frozen->frozenPose.localTransforms.At(0).rotation[component] == frozenRotation[component];
+            for (uint32_t positionComponent = 0; positionComponent < 4; ++positionComponent)
+            {
+                queuedSnapshotUnchanged = queuedSnapshotUnchanged && frozen->geometry.positions.At(component).value[positionComponent] == frozenGeometry[component][positionComponent];
+            }
+        }
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            queuedSnapshotUnchanged = queuedSnapshotUnchanged && frozen->frozenPose.localTransforms.At(0).position[axis] == frozenLocalPosition[axis] && frozen->frozenPose.localTransforms.At(0).scale[axis] == frozenScale[axis];
+        }
+        for (uint32_t component = 0; component < 12; ++component)
+        {
+            queuedSnapshotUnchanged = queuedSnapshotUnchanged && frozen->gpuSkinningMatrices.At(0).value[component] == frozenMatrix[component];
+        }
+    }
+    auto* materialized = frozen ? gk::model::MaterializeDeferredModelPose(*frozen, error) : nullptr;
+    const double expectedFrozenVertexX = frozenMatrix[0] * 3.0 + frozenMatrix[1] * 0.75 + frozenMatrix[2] * 0.0 + frozenMatrix[3];
+    const bool fallbackUsesFrozenSecondaryPose = materialized && materialized->vertices.Count() == 4 && fabsf(materialized->vertices.At(3).position[0] - static_cast<float>(expectedFrozenVertexX)) < 1e-5f && fabsf(materialized->vertices.At(3).position[0] - 3.75f) > 1e-3f;
+    if (materialized)
+        gk::Release(&materialized->reference);
+    passed = queuedSnapshotUnchanged && fallbackUsesFrozenSecondaryPose && passed;
+    if (frameStarted)
+    {
+        passed = gk::DeleteModel(model) == 0 && passed;
+        passed = gk::Present() == 0 && passed;
+    }
+    else
+    {
+        passed = gk::DeleteModel(model) == 0 && passed;
+    }
+    gAnimationTestBackend->supportsGpuModelSkinning_ = false;
+    return Check(passed, "GPU deferred secondary motion, query/draw agreement, frozen snapshot, and CPU materialization");
+}
+
+/**
+ * clipとIKがないmodelでも、secondary motionだけでGPU deferred poseを作ることを確認する。
+ */
+bool DeferredGpuSecondaryMotionOnlyContract()
+{
+    if (!gAnimationTestBackend)
+        return Check(false, "secondary-only GPU fixture backend");
+    gAnimationTestBackend->supportsGpuModelSkinning_ = true;
+    gk::String error;
+    const auto model = RegisterGpuTestModel(error);
+    if (!model.IsValid())
+    {
+        gAnimationTestBackend->supportsGpuModelSkinning_ = false;
+        return Check(false, "secondary-only GPU fixture model");
+    }
+    const uint32_t bone = 0;
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.gravity = { 0.0f, 0.0f, -9.81f };
+    settings.endOffset = { 0.05f, 0.0f, 0.0f };
+    settings.frequencyHz = 3.0f;
+    settings.dampingRatio = 0.7f;
+    settings.maxAngleDegrees = 60.0f;
+    bool passed = gk::SetModelSecondaryMotionChain(model, &bone, 1, settings) == 0;
+    for (uint32_t step = 0; step < 18; ++step)
+    {
+        passed = gk::UpdateModelSecondaryMotion(model, 1.0 / 60.0) == 0 && passed;
+    }
+    gk::Vec3 positionBeforeDraw{};
+    passed = gk::GetModelBonePosition(model, bone, positionBeforeDraw) == 0 && fabsf(positionBeforeDraw.x) < 1e-5f && passed;
+
+    const bool frameStarted = gk::BeginFrame() == 0;
+    passed = frameStarted && gk::DrawModel(model) == 0 && passed;
+    const auto& draws = gk::detail::GetContext().frame.draws;
+    const gk::model::FModelDeferredPose* firstSnapshot = frameStarted && draws.Count() == 1 ? draws.At(0).deferredPose : nullptr;
+    const bool secondaryOnlyUsesGpuDeferredPose = firstSnapshot && firstSnapshot->gpuEvaluationOnly && firstSnapshot->frozenPose.localTransforms.Count() == 1 && firstSnapshot->gpuSkinningMatrices.Count() == 1 && fabsf(firstSnapshot->frozenPose.localTransforms.At(0).rotation[0]) + fabsf(firstSnapshot->frozenPose.localTransforms.At(0).rotation[1]) + fabsf(firstSnapshot->frozenPose.localTransforms.At(0).rotation[2]) > 1e-4f;
+    float frozenRotation[4]{};
+    if (secondaryOnlyUsesGpuDeferredPose)
+    {
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            frozenRotation[component] = firstSnapshot->frozenPose.localTransforms.At(0).rotation[component];
+        }
+    }
+    gk::Vec3 positionAfterFirstDraw{};
+    passed = gk::GetModelBonePosition(model, bone, positionAfterFirstDraw) == 0 && fabsf(positionAfterFirstDraw.x - positionBeforeDraw.x) < 1e-5f && passed;
+    passed = frameStarted && gk::DrawModel(model) == 0 && passed;
+    const gk::model::FModelDeferredPose* secondSnapshot = frameStarted && draws.Count() == 2 ? draws.At(1).deferredPose : nullptr;
+    bool repeatedDrawDidNotAdvance = secondaryOnlyUsesGpuDeferredPose && secondSnapshot && secondSnapshot->gpuEvaluationOnly && secondSnapshot->frozenPose.localTransforms.Count() == 1;
+    if (repeatedDrawDidNotAdvance)
+    {
+        for (uint32_t component = 0; component < 4; ++component)
+        {
+            repeatedDrawDidNotAdvance = repeatedDrawDidNotAdvance && secondSnapshot->frozenPose.localTransforms.At(0).rotation[component] == frozenRotation[component];
+        }
+    }
+    passed = gk::ClearModelSecondaryMotion(model) == 0 && passed;
+    gk::Vec3 positionAfterClear{};
+    passed = gk::GetModelBonePosition(model, bone, positionAfterClear) == 0 && fabsf(positionAfterClear.x) < 1e-5f && passed;
+    bool queuedSnapshotSurvivedClear = repeatedDrawDidNotAdvance && firstSnapshot->frozenPose.localTransforms.At(0).rotation[0] == frozenRotation[0] && secondSnapshot->frozenPose.localTransforms.At(0).rotation[0] == frozenRotation[0];
+    if (frameStarted)
+    {
+        passed = gk::DeleteModel(model) == 0 && passed;
+        passed = gk::Present() == 0 && passed;
+    }
+    else
+    {
+        passed = gk::DeleteModel(model) == 0 && passed;
+    }
+    gAnimationTestBackend->supportsGpuModelSkinning_ = false;
+    return Check(secondaryOnlyUsesGpuDeferredPose && repeatedDrawDidNotAdvance && queuedSnapshotSurvivedClear && passed, "GPU deferred secondary-only pose, pure query/draw, and frozen clear snapshot");
+}
+
 bool Contract(const char* directory)
 {
     const auto root = std::filesystem::u8path(directory);
@@ -511,7 +707,7 @@ bool Contract(const char* directory)
     gk::detail::SetBackendForTesting(gAnimationTestBackend);
     if (!Check(gk::Init() == 0, "Init"))
         return false;
-    if (!DeferredPoseContract() || !DeferredGpuPoseContract())
+    if (!DeferredPoseContract() || !DeferredGpuPoseContract() || !DeferredGpuSecondaryMotionContract() || !DeferredGpuSecondaryMotionOnlyContract())
         return false;
     const auto model = gk::LoadModelSequence(paths, 2, 1.0f);
     if (!Check(model.IsValid() && gk::GetModelAnimationCount(model) == 1, "sequence load"))

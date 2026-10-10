@@ -10,6 +10,7 @@
  */
 namespace gk::model
 {
+struct FModelSecondaryMotionState;
 /**
  * 1モデルinstanceの再生枠、ブレンド、ボーンの役割、IKを所有する。
  */
@@ -25,6 +26,8 @@ struct FModelPlayback
     Array<FModelIkCommand> ik;
     // IKが参照する、所有済みのボーン列。
     Array<uint32_t> ikBones;
+    // このinstanceだけが所有する揺れもの設定と状態。
+    FModelSecondaryMotionState* secondaryMotion = nullptr;
 
     /**
      * 再生枠が保持する元データを解放する。

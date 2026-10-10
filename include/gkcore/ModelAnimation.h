@@ -78,7 +78,7 @@ GKCORE_API int SetModelAnimationBlend(ModelHandle model, ModelAnimationHandle an
  */
 GKCORE_API int SetModelAnimationBlendWeight(ModelHandle model, float weight);
 /**
- * 両再生枠を解除して初期姿勢に戻す。IKの設定は保持する。
+ * 両再生枠を解除し、初期姿勢を基準にする。IKと揺れものの設定・状態は保持する。
  */
 GKCORE_API int StopModelAnimation(ModelHandle model);
 /**

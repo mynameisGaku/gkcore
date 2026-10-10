@@ -1251,3 +1251,14 @@ Swingingは腰が大きく移動し、固定cameraではframe2が画面外に出
 通常Runtimeの可視benchmark・1280x720・検証OFF・3000/warmup300は今回210.209FPS、p95 5.588msでした。DrawModel平均1.100ms、Present平均3.059ms。変更前を同時刻で取ろうとしたrunはwindowが途中で閉じられ完了せず、因果的な速度改善は判定できません。300FPS要求は引き続き未達です。骨番号検索の削減をwall FPS改善と取り違えず、計測と姿勢評価/描画の重複処理を次に調べます。
 
 ゲーム構築用treeは新しいsample補助2fileを含む312fileで、Runtimeと5sampleをRelease buildしました。新header名を含む52fileのRuntime SDK配布allowlistと、install済みDLL/shaderを使うconsumerのGPU Init→Present→Shutdownも成功。旧SDK内の旧名4headerを消す操作は自動承認reviewがポリシーで拒否したため実行していません。旧SDKを残し、build/motion-view-sdkへ新規installして旧名を混ぜない配布物を検証しました。tests・検証tool・私有asset・開発記録はmainへ含めません。
+
+## 2026-10-11 アニメーションに連動する揺れもの
+
+- 要求: 髪・スカート・アクセサリーをアニメーションと連動して揺らす。model instanceのPlaybackが各鎖のbone列・設定・節位置/速度・確定回転を所有し、clip/blend/IKの後に明示更新する。
+- RED: solver stub、姿勢の方向合わせstub、祖先回転の重複積算budget、実モデルと同じ小軸差のfixture、180度反転の中間ゼロ長をそれぞれ検出。既存pose検査の正規化回数と339骨IKの余分な積算も検出した。
+- GREEN: ばね・減衰・重力・風、骨長/曲げ角、仮想末端、teleport/0.25秒以上の停止/中間ゼロ長時のリセットを実装。30/60/300FPSの収束、反復照会の無更新、失敗原子性、instance分離、IK後の姿勢、CPU/GPU予約とCPU fallbackの凍結を検査した。
+- Windows CPU MSVC19.51: Debug/Release各57件成功。native v142/MSVC19.29のDebug関連4件も成功。
+- Win11 build26200 / RTX4070SUPER driver617.42 / v142 / SDK10.0.22621.0: YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖を各構成120frame実行。GPU変形validationはDebug/Release各120件valid=true。保存12画像は構成間でbyte一致し、祖先積算変更前後の12画像もbyte一致。髪・衣服・尻尾の変化を目視し、身体との接触品質は未判定。
+- SDK Runtime54ファイルがallowlistに一致。配布header/DLLの4 API exportを外部consumerから呼び、GPU起動からPresent/Shutdownまで成功。再利用したconsumer出力の古いgkcore.dllでentrypoint未検出が一度発生したため、現SDKのDLLへ更新して成功を確認した。
+- 計測: 1280x720通常Release、VSyncなし、標準効果、3000frame/warmup300。最新188.150FPS、p95 5.610ms、揺れ更新1.045ms。300FPS、身体sphere/capsule、スカート隣接制約、world SRT慣性、近接時の品質は未完。
+- 最新記録: build/native-validation/secondary-{full-debug,full-release}-test.log、secondary-final-{release,debug}-capture.log、secondary-motion-final-benchmark.log、secondary-sdk-consumer-run.log。STARTの11へ設定を追加し、CheckOnlyで起動pathを確認した。

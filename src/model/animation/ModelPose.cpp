@@ -8,6 +8,11 @@ namespace gk::model::animation
 {
 namespace
 {
+#if defined(GKCORE_TESTING)
+// このthreadの姿勢計算で実行した正規化数。
+thread_local uint64_t quaternionNormalizationCountForTesting = 0;
+#endif
+
 
 /**
  * 四成分quaternionを一時計算で扱う。
@@ -22,6 +27,27 @@ struct FQuaternion
  * quaternionをoverflowを避けて単位長へ正規化する。
  */
 bool NormalizeQuaternion(FQuaternion& value);
+
+/**
+ * floatの回転4成分が有限かつ全zeroでないことを検査する。入力は変更しない。
+ * 有限な非zero floatは安全に正規化できるため、検査だけにはsqrtや除算を使わない。
+ */
+bool HasValidRotation(const float rotation[4])
+{
+    bool nonzero = false;
+    for (uint32_t component = 0; component < 4; ++component)
+    {
+        // 実際の正規化と同じdoubleへの変換で、極小値も判定する。
+        const double value = rotation[component];
+        if (!isfinite(value))
+        {
+            return false;
+        }
+        nonzero = nonzero || value != 0.0;
+    }
+    return nonzero;
+}
+
 
 /**
  * 骨格rest変換が有限値と有効親順を持つか調べる。
@@ -50,10 +76,7 @@ bool ValidateSkeleton(const FModelSkeleton& skeleton, gk::String& error)
                 return false;
             }
         }
-        FQuaternion rotation{};
-        for (uint32_t component = 0; component < 4; ++component)
-            rotation.value[component] = transform.rotation[component];
-        if (!NormalizeQuaternion(rotation))
+        if (!HasValidRotation(transform.rotation))
         {
             error.Assign("Model skeleton rest rotation is zero or non-finite");
             return false;
@@ -75,6 +98,9 @@ bool ValidateSkeleton(const FModelSkeleton& skeleton, gk::String& error)
  */
 bool NormalizeQuaternion(FQuaternion& value)
 {
+#if defined(GKCORE_TESTING)
+    ++quaternionNormalizationCountForTesting;
+#endif
     double largest = 0.0;
     for (uint32_t component = 0; component < 4; ++component)
     {
@@ -123,10 +149,7 @@ bool ValidatePose(const FModelSkeleton& skeleton, const FModelPose& pose, gk::St
                 return false;
             }
         }
-        FQuaternion rotation{};
-        for (uint32_t component = 0; component < 4; ++component)
-            rotation.value[component] = transform.rotation[component];
-        if (!NormalizeQuaternion(rotation))
+        if (!HasValidRotation(transform.rotation))
         {
             error.Assign("Model pose rotation is zero or non-finite");
             return false;
@@ -237,6 +260,18 @@ bool BuildLocalMatrix(const FModelBoneTransform& transform, float output[16])
 }
 
 }
+
+#if defined(GKCORE_TESTING)
+void ResetModelPoseWorkForTesting()
+{
+    quaternionNormalizationCountForTesting = 0;
+}
+
+uint64_t GetModelPoseQuaternionNormalizationCountForTesting()
+{
+    return quaternionNormalizationCountForTesting;
+}
+#endif
 
 /**
  * skeletonのrest姿勢とdefault morph係数からposeを作る。失敗時はoutputを保つ。

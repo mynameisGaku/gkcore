@@ -299,6 +299,71 @@ bool TestModelBonePositionsQuery(gk::ModelHandle instance, AAnimationRigTestSour
 }
 
 /**
+ * 揺れもの鎖の更新順、照会の非更新性、instance分離、失敗時保持を確認する。
+ */
+bool TestModelSecondaryMotion(gk::ModelHandle model, gk::ModelHandle instance)
+{
+    const uint32_t bones[3] = { 0, 1, 2 };
+    const uint32_t disconnected[2] = { 0, 2 };
+    const uint32_t duplicate[3] = { 0, 1, 1 };
+    const uint32_t overlapping[2] = { 1, 2 };
+    const uint32_t queryBones[3] = { 0, 1, 2 };
+    gk::Vec3 basePose[3]{};
+    gk::Vec3 currentPose[3]{};
+    gk::Vec3 repeatedPose[3]{};
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.frequencyHz = 6.0f;
+    settings.dampingRatio = 0.8f;
+    settings.gravity = { 0.0f, 0.0f, -9.81f };
+    settings.endOffset = { 0.1f, 0.0f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 8;
+    bool passed = gk::ClearModelSecondaryMotion(model) == 0 && gk::ClearModelSecondaryMotion(instance) == 0;
+    passed = gk::ClearModelIk(instance) == 0 && gk::StopModelAnimation(instance) == 0 && passed;
+    passed = gk::GetModelBonePositions(model, queryBones, 3, basePose) == 0 && gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && NearVector(basePose[0], currentPose[0]) && NearVector(basePose[1], currentPose[1]) && NearVector(basePose[2], currentPose[2]) && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, bones, 3, settings) == 0 && passed;
+    for (uint32_t step = 0; step < 18; ++step)
+    {
+        passed = gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && passed;
+    }
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && passed;
+    passed = fabsf(currentPose[2].z - basePose[2].z) > 0.001f && passed;
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, repeatedPose) == 0 && currentPose[0].x == repeatedPose[0].x && currentPose[0].y == repeatedPose[0].y && currentPose[0].z == repeatedPose[0].z && currentPose[1].x == repeatedPose[1].x && currentPose[1].y == repeatedPose[1].y && currentPose[1].z == repeatedPose[1].z && currentPose[2].x == repeatedPose[2].x && currentPose[2].y == repeatedPose[2].y && currentPose[2].z == repeatedPose[2].z && passed;
+    gk::Vec3 untouched[3] = { currentPose[0], currentPose[1], currentPose[2] };
+    gk::FModelSecondaryMotionSettings invalidSettings = settings;
+    invalidSettings.frequencyHz = std::numeric_limits<float>::quiet_NaN();
+    passed = gk::SetModelSecondaryMotionChain(instance, disconnected, 2, settings) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, duplicate, 3, settings) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, overlapping, 2, settings) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChain(instance, bones, 3, invalidSettings) == -1 && passed;
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && currentPose[0].x == untouched[0].x && currentPose[0].y == untouched[0].y && currentPose[0].z == untouched[0].z && currentPose[1].x == untouched[1].x && currentPose[1].y == untouched[1].y && currentPose[1].z == untouched[1].z && currentPose[2].x == untouched[2].x && currentPose[2].y == untouched[2].y && currentPose[2].z == untouched[2].z && passed;
+    passed = gk::GetModelBonePositions(model, queryBones, 3, repeatedPose) == 0 && NearVector(repeatedPose[0], basePose[0]) && NearVector(repeatedPose[1], basePose[1]) && NearVector(repeatedPose[2], basePose[2]) && passed;
+
+    // 予約済み描画は、その後のsimulation更新で書き換わらない。
+    passed = gk::BeginFrame() == 0 && gk::DrawModel(instance) == 0 && passed;
+    const auto& draws = gk::detail::GetContext().frame.draws;
+    const float queuedEndX = draws.Count() == 1 ? draws.At(0).model->vertices.At(2).position[0] : 0.0f;
+    const float queuedEndY = draws.Count() == 1 ? draws.At(0).model->vertices.At(2).position[1] : 0.0f;
+    const float queuedEndZ = draws.Count() == 1 ? draws.At(0).model->vertices.At(2).position[2] : 0.0f;
+    passed = draws.Count() == 1 && currentPose[2].x == queuedEndX && currentPose[2].y == queuedEndY && currentPose[2].z == queuedEndZ && gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::DrawModel(instance) == 0 && draws.Count() == 2 && draws.At(0).model->vertices.At(2).position[0] == queuedEndX && draws.At(0).model->vertices.At(2).position[1] == queuedEndY && draws.At(0).model->vertices.At(2).position[2] == queuedEndZ && passed;
+    passed = gk::Present() == 0 && passed;
+
+    // animation blendとIKの後に更新し、anchorは合成後のroot位置を使う。
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && gk::PlayModelAnimation(instance, 0, false) == 0 && gk::SetModelAnimationBlend(instance, 1, 0.5f) == 0 && gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 1.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }) == 0 && gk::SetModelSecondaryMotionChain(instance, bones, 3, settings) == 0 && gk::UpdateModelAnimation(instance, 0.0) == 0 && gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && passed;
+    passed = gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && Near(currentPose[0].x, 1.0f) && passed;
+    passed = gk::ResetModelSecondaryMotion(instance) == 0 && gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && Near(currentPose[0].x, 1.0f) && Near(currentPose[2].x, 1.0f) && Near(currentPose[2].y, 1.0f) && passed;
+    passed = gk::UpdateModelSecondaryMotion(instance, std::numeric_limits<double>::quiet_NaN()) == -1 && passed;
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && gk::GetModelBonePositions(instance, queryBones, 3, currentPose) == 0 && Near(currentPose[0].x, 1.0f) && Near(currentPose[2].x, 1.0f) && Near(currentPose[2].y, 1.0f) && passed;
+    passed = gk::ResetModelSecondaryMotion(model) == 0 && gk::ClearModelSecondaryMotion(model) == 0 && gk::ClearModelSecondaryMotion(instance) == 0 && gk::ClearModelIk(instance) == 0 && gk::StopModelAnimation(instance) == 0 && gk::PlayModelAnimation(instance, 0, false) == 0 && gk::SetModelAnimationBlend(instance, 1, 0.5f) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "model secondary motion update, isolation, failure atomicity, or snapshot contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
  * 腕IK preview計算の独立した幾何期待値と失敗時保持を確認する。
  */
 bool TestModelArmIkPreview()
@@ -1099,7 +1164,7 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
-    if (!TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
+    if (!TestModelSecondaryMotion(model, instance) || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
     {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);

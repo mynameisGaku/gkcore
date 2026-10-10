@@ -15,7 +15,7 @@ gk::UpdateModelAnimation(character, deltaSeconds);
 gk::DrawModel(character);
 ```
 
-`SetModelAnimationTime`で秒単位の時刻を指定できます。速度は`SetModelAnimationSpeed`で変更し、0で一時停止、負値で逆再生します。loop中はclip長で折り返し、loopなしでは両端へ制限します。`StopModelAnimation`は再生枠を解除して初期姿勢へ戻します。
+`SetModelAnimationTime`で秒単位の時刻を指定できます。速度は`SetModelAnimationSpeed`で変更し、0で一時停止、負値で逆再生します。loop中はclip長で折り返し、loopなしでは両端へ制限します。`StopModelAnimation`は再生枠を解除して初期姿勢を基準にします。IKと揺れものの設定・状態は保持します。揺れも現在の姿勢へ戻したい場合は`ResetModelSecondaryMotion`を続けて呼びます。
 
 `CreateModelInstance`は形状・材質を共有し、新しい位置設定と独立した再生状態を持つモデルを作ります。読み込み直後はclipを再生せず、初期姿勢と既定morph係数を表示します。
 
@@ -173,3 +173,7 @@ if (gk::GetModelAnimationMappingInfo(character, info) == 0)
 全ボーン数には補助骨を含みます。人型対応数は同じ役割で結び付いた骨だけを数え、名前だけの対応は含めません。再生枠0は主モーション、1はブレンド側です。対応表や役割を変更しても、登録済みの診断値は次の再適用まで保持します。元のanimation handleを解放した後も照会できます。未再生・無効handle・slotでは件数取得が失敗し、出力値は変えません。
 
 対応した骨に、そのclipで実際の動きがあるとは限りません。部分的な表情・腕だけのモーションも利用できるので、不足があっても自動で再生を止めません。必要な役割が揃っているかをゲーム側で確認してください。
+
+## 髪や衣服の揺れ
+
+骨格のあるモデルには、髪・スカート・アクセサリーの鎖を登録できます。clipとブレンドを進めてIKを設定した後、`UpdateModelSecondaryMotion`で揺れを一度更新します。身体との衝突は未対応です。設定と制約は[モデルの揺れもの](model-secondary-motion.md)を参照してください。

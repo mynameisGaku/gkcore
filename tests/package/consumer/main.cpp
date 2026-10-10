@@ -1,6 +1,23 @@
 ﻿#include <Windows.h>
 #include <gkcore.h>
 #include <gkcore/Handle.h>
+#include <gkcore/ModelSecondaryMotion.h>
+#include <gkcore/FModelSecondaryMotionSettings.h>
+
+/**
+ * 配布headerとDLLだけで、揺れものの公開APIをリンク・呼び出しできることを確認する。
+ */
+bool VerifySecondaryMotionApiExports()
+{
+    // 配布headerだけで設定を作り、新しい揺れものAPIのexportも呼び出す。
+    const gk::FModelSecondaryMotionSettings secondarySettings{};
+    const uint32_t bone = 0;
+    if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1)
+    {
+        return false;
+    }
+    return true;
+}
 
 #if defined(GKCORE_PACKAGE_GPU_SMOKE)
 /**
@@ -8,6 +25,10 @@
  */
 int main()
 {
+    if (!VerifySecondaryMotionApiExports())
+    {
+        return 1;
+    }
     if (gk::SetWindowSize(640, 480) != 0)
     {
         return 1;
@@ -52,6 +73,10 @@ int main()
  */
 int main()
 {
+    if (!VerifySecondaryMotionApiExports())
+    {
+        return 1;
+    }
     if (gk::WasKeyPressed(gk::Key::Space))
     {
         return 1;

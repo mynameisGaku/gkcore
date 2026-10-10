@@ -5,6 +5,7 @@
 #include "examples/support/ModelMappingReport.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
+#include "examples/support/ModelSecondaryMotionPreview.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -239,6 +240,12 @@ int main(int argc, char** argv)
         return 2;
     }
     // 大きく移動するmotionを画面内で見るための任意指定。
+    const char* secondaryMotionPath = nullptr;
+    if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-motion option\n");
+        return 2;
+    }
     bool followMotion = false;
     if (!gk::examples::ParseMotionViewOptions(argc, argv, followMotion))
     {
@@ -247,7 +254,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -454,6 +461,10 @@ int main(int argc, char** argv)
     double drawModelMilliseconds[4096]{};
     // Present APIごとのCPU所要時間。
     double presentMilliseconds[4096]{};
+    // 目標計算とIK設定に使ったCPU時間。
+    double ikSetupMilliseconds[4096]{};
+    // 揺れもの更新に使ったCPU時間。
+    double secondaryMotionMilliseconds[4096]{};
     // 計測区間全体のframe時間合計。
     double measuredFrameTotalMilliseconds = 0.0;
     // warmup後に最初の計測frameを開始したtick。
@@ -489,6 +500,10 @@ int main(int argc, char** argv)
     }
 #endif
     if (!failed && (!Check(gk::SetBloomEnabled(bloomEnabled), "SetBloomEnabled") || !Check(gk::SetBloomIntensity(0.35f), "SetBloomIntensity")))
+    {
+        failed = true;
+    }
+    if (!failed && secondaryMotionPath && !gk::examples::ApplySecondaryMotionPreview(model, secondaryMotionPath))
     {
         failed = true;
     }
@@ -533,6 +548,11 @@ int main(int argc, char** argv)
         if (gk::WasKeyPressed(gk::Key::R))
         {
             rotationY = 0.0f;
+            if (secondaryMotionPath && !Check(gk::ResetModelSecondaryMotion(model), "ResetModelSecondaryMotion"))
+            {
+                failed = true;
+                break;
+            }
         }
         if (gk::WasKeyPressed(gk::Key::Space))
         {
@@ -568,6 +588,16 @@ int main(int argc, char** argv)
             failed = true;
             break;
         }
+#if defined(GKCORE_MODEL_BENCHMARK)
+        // IKの目標計算と設定だけを、描画予約・Presentから分けて測る。
+        LARGE_INTEGER ikSetupStart{};
+        LARGE_INTEGER ikSetupEnd{};
+        if (externalIkMode && !QueryPerformanceCounter(&ikSetupStart))
+        {
+            failed = true;
+            break;
+        }
+#endif
         if (externalIkMode)
         {
             // 毎frameの目標は、直前のIK姿勢を消したアニメーション姿勢から作る。
@@ -590,6 +620,33 @@ int main(int argc, char** argv)
             }
             armIkPreview = currentArmIkPreview;
         }
+#if defined(GKCORE_MODEL_BENCHMARK)
+        if (externalIkMode && !QueryPerformanceCounter(&ikSetupEnd))
+        {
+            failed = true;
+            break;
+        }
+#endif
+#if defined(GKCORE_MODEL_BENCHMARK)
+        LARGE_INTEGER secondaryStart{}, secondaryEnd{};
+        if (secondaryMotionPath && !QueryPerformanceCounter(&secondaryStart))
+        {
+            failed = true;
+            break;
+        }
+#endif
+        if (secondaryMotionPath && !Check(gk::UpdateModelSecondaryMotion(model, deltaSeconds), "UpdateModelSecondaryMotion"))
+        {
+            failed = true;
+            break;
+        }
+#if defined(GKCORE_MODEL_BENCHMARK)
+        if (secondaryMotionPath && !QueryPerformanceCounter(&secondaryEnd))
+        {
+            failed = true;
+            break;
+        }
+#endif
         // 追従は表示用中心だけを変え、motionの腰位置はそのまま残す。
         gk::Vec3 displayCenter{ center[0], center[1], center[2] };
         if (followMotion && !motionView.GetCenter(displayCenter))
@@ -681,6 +738,8 @@ int main(int argc, char** argv)
         {
             // warmup除外後の配列位置。
             const uint32_t sample = benchmarkFrame - benchmarkWarmup;
+            ikSetupMilliseconds[sample] = externalIkMode ? static_cast<double>(ikSetupEnd.QuadPart - ikSetupStart.QuadPart) * 1000.0 / static_cast<double>(timerFrequency.QuadPart) : 0.0;
+            secondaryMotionMilliseconds[sample] = secondaryMotionPath ? static_cast<double>(secondaryEnd.QuadPart - secondaryStart.QuadPart) * 1000.0 / static_cast<double>(timerFrequency.QuadPart) : 0.0;
             if (sample == 0)
             {
                 benchmarkMeasurementStart = frameStart;
@@ -702,6 +761,9 @@ int main(int argc, char** argv)
         // 各API所要時間とframe率の集計値。
         double averageDrawModelMs = 0.0;
         double averagePresentMs = 0.0;
+        // 計測frameだけに含まれるIK準備の平均時間。
+        double averageIkSetupMs = 0.0;
+        double averageSecondaryMotionMs = 0.0;
         double averageFps = 0.0;
         double p95FrameMs = 0.0;
         if (measuredFrames)
@@ -710,15 +772,19 @@ int main(int argc, char** argv)
             {
                 averageDrawModelMs += drawModelMilliseconds[sample];
                 averagePresentMs += presentMilliseconds[sample];
+                averageIkSetupMs += ikSetupMilliseconds[sample];
+                averageSecondaryMotionMs += secondaryMotionMilliseconds[sample];
             }
             averageDrawModelMs /= measuredFrames;
             averagePresentMs /= measuredFrames;
+            averageIkSetupMs /= measuredFrames;
+            averageSecondaryMotionMs /= measuredFrames;
             averageFps = measuredFrameTotalMilliseconds > 0.0 ? static_cast<double>(measuredFrames) * 1000.0 / measuredFrameTotalMilliseconds : 0.0;
             qsort(frameMilliseconds, measuredFrames, sizeof(double), CompareMilliseconds);
             const uint32_t percentileIndex = static_cast<uint32_t>(ceil(static_cast<double>(measuredFrames) * 0.95)) - 1;
             p95FrameMs = frameMilliseconds[percentileIndex];
         }
-        fprintf(stdout, "{\"framesRequested\":%u,\"warmupFrames\":%u,\"framesMeasured\":%u,\"completed\":%s,\"averageFps\":%.3f,\"p95FrameMs\":%.3f,\"averageDrawModelMs\":%.3f,\"averagePresentMs\":%.3f}\n", benchmarkFrames, benchmarkWarmup, measuredFrames, benchmarkFrame == benchmarkTotalFrames ? "true" : "false", averageFps, p95FrameMs, averageDrawModelMs, averagePresentMs);
+        fprintf(stdout, "{\"framesRequested\":%u,\"warmupFrames\":%u,\"framesMeasured\":%u,\"completed\":%s,\"averageFps\":%.3f,\"p95FrameMs\":%.3f,\"averageDrawModelMs\":%.3f,\"averagePresentMs\":%.3f,\"averageIkSetupMs\":%.3f,\"averageSecondaryMotionMs\":%.3f}\n", benchmarkFrames, benchmarkWarmup, measuredFrames, benchmarkFrame == benchmarkTotalFrames ? "true" : "false", averageFps, p95FrameMs, averageDrawModelMs, averagePresentMs, averageIkSetupMs, averageSecondaryMotionMs);
     }
 #endif
     if (model.IsValid() && !Check(gk::DeleteModel(model), "DeleteModel"))

@@ -9,6 +9,17 @@
 
 namespace gk::model::animation
 {
+#if defined(GKCORE_TESTING)
+/**
+ * 検査用のquaternion正規化回数を0へ戻す。製品buildには含めない。
+ */
+void ResetModelPoseWorkForTesting();
+/**
+ * 検査中に実行したquaternion正規化回数を返す。
+ */
+uint64_t GetModelPoseQuaternionNormalizationCountForTesting();
+#endif
+
 
 /**
  * 骨格姿勢の初期化、補間、親子変換評価を提供する。
