@@ -2,11 +2,14 @@
 #include <gkcore/ModelSecondaryMotion.h>
 #include "model/animation/ModelSecondaryMotion.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
+#include "model/animation/ModelSecondaryMotionColliders.h"
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/AModelAnimationSource.h"
 #include "core/Context.h"
 #include <math.h>
+#include "foundation/FVector3d.h"
+#include "model/animation/ModelSecondaryMotionCollision.h"
 #include <string.h>
 
 namespace gk::model
@@ -139,9 +142,30 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
         return false;
     }
     state->chains.MoveFrom(candidate.chains);
+    state->colliders.MoveFrom(candidate.colliders);
+    state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
+    state->colliderMargin = candidate.colliderMargin;
     delete playback->secondaryMotion;
     playback->secondaryMotion = state;
     transform.playback = playback;
+    return true;
+}
+
+/**
+ * 接触設定と前回の身体配置を候補へコピーする。元の状態は変更しない。
+ */
+bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, model::FModelSecondaryMotionState& candidate, String& error)
+{
+    if (!previous)
+    {
+        return true;
+    }
+    candidate.colliderMargin = previous->colliderMargin;
+    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
+    {
+        error.Assign("secondary motion collision state allocation failed");
+        return false;
+    }
     return true;
 }
 
@@ -241,6 +265,12 @@ int Update(ModelHandle handle, double delta, bool reset)
         return Failure(error);
     }
     model::FModelSecondaryMotionState candidate;
+    // 全鎖で同じ身体姿勢を使い、途中の揺れを身体の位置へ戻さない。
+    Array<model::animation::FModelSecondaryMotionCollisionShape> currentShapes;
+    if (!CopyCollisionSettings(previous, candidate, error) || !model::EvaluateSecondaryMotionColliders(resource->animation->source->Skeleton(), base, matrices, previous->colliders.Data(), previous->colliders.Count(), previous->colliderMargin, currentShapes, error) || previous->previousCollisionShapes.Count() != currentShapes.Count())
+    {
+        return Failure(error);
+    }
     for (uint32_t index = 0; index < previous->chains.Count(); ++index)
     {
         if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
@@ -262,8 +292,13 @@ int Update(ModelHandle handle, double delta, bool reset)
         }
         else
         {
-            if (!model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error))
+            const bool advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            if (!advanced)
             {
+                // 設定を調整できるよう、接触を解けなかった鎖の先頭boneを示す。
+                error.Append(" (chain root: ");
+                error.AppendUnsigned(chain.bones.At(0));
+                error.Append(")");
                 return Failure(error);
             }
             Array<Vec3> points;
@@ -281,6 +316,42 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
+    if (!reset && currentShapes.Count() > 0)
+    {
+        // 描画へ渡す回転を全鎖へ重ね、実際のFK位置でも接触が成立することを確認する。
+        model::animation::FModelPose combined;
+        Array<float> renderedMatrices;
+        if (!combined.localTransforms.AppendRange(base.localTransforms.Data(), base.localTransforms.Count()) || !combined.morphWeights.AppendRange(base.morphWeights.Data(), base.morphWeights.Count()) || !model::ApplyModelSecondaryMotion(candidate, combined, error) || !model::animation::EvaluateModelPose(resource->animation->source->Skeleton(), combined, renderedMatrices, error))
+        {
+            return Failure(error);
+        }
+        for (uint32_t index = 0; index < candidate.chains.Count(); ++index)
+        {
+            Array<Vec3> renderedTargets;
+            Array<FVector3d> renderedPoints;
+            if (!Targets(*candidate.chains.At(index), renderedMatrices, renderedTargets, error))
+            {
+                return Failure(error);
+            }
+            for (uint32_t point = 0; point < renderedTargets.Count(); ++point)
+            {
+                const auto position = renderedTargets.At(point);
+                if (!renderedPoints.Append(FVector3d{ { position.x, position.y, position.z } }))
+                {
+                    return detail::SetError("secondary motion rendered contact allocation failed");
+                }
+            }
+            if (!model::animation::CheckSecondaryMotionContacts(currentShapes.Data(), currentShapes.Count(), renderedPoints.Data(), renderedPoints.Count(), error))
+            {
+                // 回転を姿勢へ戻した結果で失敗した鎖も、先頭boneで識別する。
+                error.Append(" (rendered chain root: ");
+                error.AppendUnsigned(candidate.chains.At(index)->bones.At(0));
+                error.Append(")");
+                return Failure(error);
+            }
+        }
+    }
+    candidate.previousCollisionShapes.MoveFrom(currentShapes);
     if (!Commit(*transform, candidate, error))
     {
         return Failure(error);
@@ -319,6 +390,17 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
     }
     const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
     model::FModelSecondaryMotionState candidate;
+    if (!CopyCollisionSettings(previous, candidate, error))
+    {
+        return Failure(error);
+    }
+    for (uint32_t index = 0; index < candidate.colliders.Count(); ++index)
+    {
+        if (IsAncestor(skeleton, bones[0], candidate.colliders.At(index).bone))
+        {
+            return detail::SetError("secondary motion cannot control a collision attachment or its ancestor");
+        }
+    }
     if (previous)
     {
         for (uint32_t index = 0; index < previous->chains.Count(); ++index)
@@ -380,6 +462,71 @@ int ClearModelSecondaryMotion(ModelHandle handle)
     {
         delete transform->playback->secondaryMotion;
         transform->playback->secondaryMotion = nullptr;
+    }
+    detail::ClearError();
+    return 0;
+}
+int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMotionCollider* colliders, uint32_t count, float margin)
+{
+    // 解除は骨格を持たないモデルにも行える。無効handleでは状態を作らない。
+    auto* resource = detail::FindModel(handle);
+    auto* transform = resource ? detail::FindModelTransform(handle) : nullptr;
+    if (!transform || count > 64 || (count > 0 && !colliders) || !isfinite(margin) || margin < 0.0f)
+    {
+        return detail::SetError("invalid secondary motion collider setup");
+    }
+    const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (!previous)
+    {
+        if (count == 0)
+        {
+            detail::ClearError();
+            return 0;
+        }
+        return detail::SetError("configure secondary motion chains before collision shapes");
+    }
+    String error;
+    model::FModelSecondaryMotionState candidate;
+    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    {
+        if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
+        {
+            return Failure(error);
+        }
+    }
+    candidate.colliderMargin = margin;
+    if (count > 0)
+    {
+        // 新しい形状の取付先とscaleを、現在のclip・blend・IK姿勢で検証する。
+        model::animation::FModelPose base;
+        Array<float> matrices;
+        if (!resource->animation || !resource->animation->source || !BasePose(*resource, *transform, base, matrices, error))
+        {
+            return Failure(error);
+        }
+        const auto& skeleton = resource->animation->source->Skeleton();
+        for (uint32_t shape = 0; shape < count; ++shape)
+        {
+            if (colliders[shape].bone >= skeleton.parents.Count())
+            {
+                return detail::SetError("invalid secondary motion collision attachment bone");
+            }
+            for (uint32_t chain = 0; chain < previous->chains.Count(); ++chain)
+            {
+                if (IsAncestor(skeleton, previous->chains.At(chain)->bones.At(0), colliders[shape].bone))
+                {
+                    return detail::SetError("collision attachment must be outside secondary motion branches");
+                }
+            }
+        }
+        if (!candidate.colliders.AppendRange(colliders, count) || !model::EvaluateSecondaryMotionColliders(skeleton, base, matrices, colliders, count, margin, candidate.previousCollisionShapes, error))
+        {
+            return Failure(error);
+        }
+    }
+    if (!Commit(*transform, candidate, error))
+    {
+        return Failure(error);
     }
     detail::ClearError();
     return 0;

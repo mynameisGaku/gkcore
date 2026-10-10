@@ -240,6 +240,12 @@ int main(int argc, char** argv)
         return 2;
     }
     // 大きく移動するmotionを画面内で見るための任意指定。
+    const char* secondaryColliderPath = nullptr;
+    if (!gk::examples::ParseSecondaryColliderOptions(argc, argv, secondaryColliderPath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-colliders option\n");
+        return 2;
+    }
     const char* secondaryMotionPath = nullptr;
     if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
     {
@@ -252,9 +258,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
+    if (secondaryColliderPath && !secondaryMotionPath)
+    {
+        fprintf(stderr, "--secondary-colliders requires --secondary-motion\n");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -504,6 +515,10 @@ int main(int argc, char** argv)
         failed = true;
     }
     if (!failed && secondaryMotionPath && !gk::examples::ApplySecondaryMotionPreview(model, secondaryMotionPath))
+    {
+        failed = true;
+    }
+    if (!failed && secondaryColliderPath && !gk::examples::ApplySecondaryColliderPreview(model, secondaryColliderPath))
     {
         failed = true;
     }

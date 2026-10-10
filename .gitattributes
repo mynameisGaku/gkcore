@@ -1,4 +1,4 @@
-# Runtimeとゲーム例の自作ソースをCRLFで保つ。
+# Runtimeとゲーム用exampleの自作ソースをCRLFで保つ。
 third_party/** -text -whitespace
 *.bat text eol=crlf
 /include/** text eol=crlf
