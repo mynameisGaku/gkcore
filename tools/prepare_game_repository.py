@@ -44,6 +44,8 @@ EXAMPLE_FILES = (
     "examples/support/FHumanoidMapOptions.cpp",
     "examples/support/ModelMappingReport.h",
     "examples/support/ModelMappingReport.cpp",
+    "examples/support/FModelArmIkPreview.h",
+    "examples/support/FModelArmIkPreview.cpp",
     "examples/assets/model_lighting.glb",
     "examples/shaders/tint.hlsl",
     "examples/shaders/post_effect_tint.hlsl",

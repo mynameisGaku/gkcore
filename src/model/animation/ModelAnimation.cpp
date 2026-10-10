@@ -537,6 +537,38 @@ const char* GetModelBoneName(ModelHandle handle, uint32_t bone)
     return asset && asset->source ? asset->source->BoneName(bone) : nullptr;
 }
 
+int GetModelBonePosition(ModelHandle handle, uint32_t bone, Vec3& output)
+{
+    // 所有元の骨格とこのinstanceの状態を借り、照会では状態を作らない。
+    auto* resource = detail::FindModel(handle);
+    auto* transform = Transform(handle);
+    auto* asset = resource ? resource->animation : nullptr;
+    if (!transform || !asset || !asset->source || bone >= asset->source->Skeleton().parents.Count())
+    {
+        return detail::SetError("invalid model bone or missing skeleton");
+    }
+    // 描画と共通の順序で姿勢を評価し、頂点変形を省いて骨の原点だけを読む。
+    model::animation::FModelPose pose;
+    String error;
+    const auto& skeleton = asset->source->Skeleton();
+    const bool evaluated = transform->playback ? model::EvaluateModelPlaybackPose(*resource, *transform->playback, pose, error) : model::animation::InitializeModelPose(skeleton, pose, error);
+    Array<float> matrices;
+    if (!evaluated || !model::animation::EvaluateModelPose(skeleton, pose, matrices, error))
+    {
+        return Failure(error);
+    }
+    // 全処理の成功後に、呼び出し側の出力位置を置き換える。
+    const uint32_t offset = bone * 16u + 12u;
+    const Vec3 candidate{ matrices.At(offset), matrices.At(offset + 1u), matrices.At(offset + 2u) };
+    if (!detail::IsFinite(candidate))
+    {
+        return detail::SetError("model bone position is not finite");
+    }
+    output = candidate;
+    detail::ClearError();
+    return 0;
+}
+
 int32_t FindModelBone(ModelHandle handle, const char* name)
 {
     if (!name || !*name)

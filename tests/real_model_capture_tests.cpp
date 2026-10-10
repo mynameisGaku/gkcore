@@ -3,6 +3,7 @@
 #include <gkcore/ModelAnimation.h>
 #include "examples/support/FHumanoidMapOptions.h"
 #include "examples/support/ModelMappingReport.h"
+#include "examples/support/FModelArmIkPreview.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -162,20 +163,6 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
 }
 
 /**
- * 人型役割から対応するmodel bone番号を探す。
- */
-int32_t FindModelRoleBone(gk::ModelHandle model, gk::EHumanoidBone role)
-{
-    // 役割を確認するmodel bone番号。
-    for (uint32_t bone = 0; bone < gk::GetModelBoneCount(model); ++bone)
-    {
-        if (gk::GetModelBoneRole(model, bone) == role)
-            return static_cast<int32_t>(bone);
-    }
-    return -1;
-}
-
-/**
  * 自動判定または手動設定された人型役割の数を返す。
  */
 uint32_t CountModelRoles(gk::ModelHandle model)
@@ -263,6 +250,62 @@ bool RequireHumanoidLegMappings(gk::ModelHandle model, gk::ModelAnimationHandle 
 }
 
 /**
+ * 初期骨長と手首の目標到達、肩より内側へ折れない関節位置を確認する。
+ */
+bool VerifyArmIkPreview(gk::ModelHandle model, const gk::examples::FModelArmIkPreview& preview, const char* mode)
+{
+    // IK後の3関節位置を、再生や表示変換を進めず取得する。
+    gk::Vec3 joints[3]{};
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        if (!Check(gk::GetModelBonePosition(model, preview.bones[index], joints[index]), "GetModelBonePosition(IK result)"))
+            return false;
+    }
+    // 腕全体の長さに対する、到達誤差と骨長の許容値。
+    const double tolerance = 0.0005 * preview.armLength + 1.0e-6;
+    const double errorX = static_cast<double>(joints[2].x) - preview.target.x;
+    const double errorY = static_cast<double>(joints[2].y) - preview.target.y;
+    const double errorZ = static_cast<double>(joints[2].z) - preview.target.z;
+    const double endpointError = sqrt(errorX * errorX + errorY * errorY + errorZ * errorZ);
+    bool valid = isfinite(endpointError) && endpointError <= tolerance;
+    double lengths[2]{};
+    for (uint32_t segment = 0; segment < 2; ++segment)
+    {
+        const auto& first = joints[segment];
+        const auto& second = joints[segment + 1];
+        const auto& initialFirst = preview.joints[segment];
+        const auto& initialSecond = preview.joints[segment + 1];
+        const double x = static_cast<double>(second.x) - first.x;
+        const double y = static_cast<double>(second.y) - first.y;
+        const double z = static_cast<double>(second.z) - first.z;
+        const double initialX = static_cast<double>(initialSecond.x) - initialFirst.x;
+        const double initialY = static_cast<double>(initialSecond.y) - initialFirst.y;
+        const double initialZ = static_cast<double>(initialSecond.z) - initialFirst.z;
+        lengths[segment] = sqrt(x * x + y * y + z * z);
+        const double initialLength = sqrt(initialX * initialX + initialY * initialY + initialZ * initialZ);
+        valid = valid && isfinite(lengths[segment]) && fabs(lengths[segment] - initialLength) <= tolerance;
+    }
+    // 目標のXZ方向は、肩から胴体の外へ向かう方向として構築している。
+    const double outwardX = static_cast<double>(preview.target.x) - preview.joints[0].x;
+    const double outwardZ = static_cast<double>(preview.target.z) - preview.joints[0].z;
+    const double outwardLength = sqrt(outwardX * outwardX + outwardZ * outwardZ);
+    const double elbowOutside = ((joints[1].x - joints[0].x) * outwardX + (joints[1].z - joints[0].z) * outwardZ) / outwardLength;
+    const double handOutside = ((joints[2].x - joints[0].x) * outwardX + (joints[2].z - joints[0].z) * outwardZ) / outwardLength;
+    valid = valid && isfinite(elbowOutside) && elbowOutside >= -tolerance && isfinite(handOutside) && handOutside > 0.0;
+    // 2ボーンIKでは、肘が指定したpoleと同じ曲げ方向にあることも確認する。
+    if (strcmp(mode, "ik") == 0)
+    {
+        const double dx = preview.target.x - joints[0].x, dy = preview.target.y - joints[0].y, dz = preview.target.z - joints[0].z;
+        const double ex = joints[1].x - joints[0].x, ey = joints[1].y - joints[0].y, ez = joints[1].z - joints[0].z;
+        const double px = preview.pole.x - joints[0].x, py = preview.pole.y - joints[0].y, pz = preview.pole.z - joints[0].z;
+        const double projection = (ex * dx + ey * dy + ez * dz) * (px * dx + py * dy + pz * dz) / (dx * dx + dy * dy + dz * dz);
+        valid = valid && ex * px + ey * py + ez * pz - projection > 0.0;
+    }
+    printf("ik-preview mode=%s target=(%.6f,%.6f,%.6f) hand=(%.6f,%.6f,%.6f) armLength=%.6f endpointError=%.9g lengths=(%.6f,%.6f) elbowOutside=%.6f handOutside=%.6f tolerance=%.9g valid=%s\n", mode, preview.target.x, preview.target.y, preview.target.z, joints[2].x, joints[2].y, joints[2].z, preview.armLength, endpointError, lengths[0], lengths[1], elbowOutside, handOutside, tolerance, valid ? "true" : "false");
+    return valid;
+}
+
+/**
  * mode名を確認し、描画回数を返す。
  */
 bool ParseMode(const char* text, const char*& mode, uint32_t& frameCount)
@@ -284,22 +327,26 @@ bool ParseMode(const char* text, const char*& mode, uint32_t& frameCount)
 /**
  * capture用の背景、モデル、UIを1frameへ記録する。
  */
-bool DrawFrame(gk::ModelHandle model, uint32_t frameIndex, uint32_t frameCount, float scale, const float center[3], const char* mode)
+bool DrawFrame(gk::ModelHandle model, uint32_t frameIndex, uint32_t frameCount, float scale, const float center[3], const char* mode, const gk::examples::FModelArmIkPreview* ikPreview, float viewRotation, uint32_t windowWidth, uint32_t windowHeight)
 {
-    // previewだけ高解像度にし、元と同じ4:3比率を保つ。
-    const float frameWidth = strcmp(mode, "preview") == 0 ? 1280.0f : 640.0f;
-    const float frameHeight = strcmp(mode, "preview") == 0 ? 960.0f : 480.0f;
-    const float angle = strcmp(mode, "rotate") == 0 ? (static_cast<float>(frameIndex % 3) * 0.523598776f) : (strcmp(mode, "front") == 0 ? 3.141592654f : 0.0f);
+    // 実際の描画解像度に背景とUIを合わせ、4:3比率は保つ。
+    const float frameWidth = static_cast<float>(windowWidth);
+    const float frameHeight = static_cast<float>(windowHeight);
+    const float angle = viewRotation + (strcmp(mode, "rotate") == 0 ? (static_cast<float>(frameIndex % 3) * 0.523598776f) : (strcmp(mode, "front") == 0 ? 3.141592654f : 0.0f));
     // 診断modeでは指向性ライトを切る。
     const float lightIntensity = strcmp(mode, "static-unlit") == 0 ? 0.0f : 2.5f;
     // 診断modeでは材質色を環境光だけで確認する。
     const float ambientIntensity = strcmp(mode, "static-unlit") == 0 ? 1.0f : 0.22f;
     const gk::Vec3 lightDirection{ sinf(0.35f), -0.45f, -cosf(0.35f) };
     const gk::Vec3 rotation{ 0.0f, angle, 0.0f };
-    const gk::Vec3 position{ -scale * center[0], -scale * center[1], -scale * center[2] };
+    // model中心を軸に回転し、目標マーカーと同じ表示変換を使う。
+    const gk::Vec3 position{ -scale * (center[0] * cosf(angle) + center[2] * sinf(angle)), -scale * center[1], -scale * (-center[0] * sinf(angle) + center[2] * cosf(angle)) };
     if (!Check(gk::SetModelPosition(model, position), "SetModelPosition") || !Check(gk::SetModelRotation(model, rotation), "SetModelRotation") || !Check(gk::SetAmbientLight(ambientIntensity), "SetAmbientLight") || !Check(gk::SetDirectionalLight(lightDirection, lightIntensity), "SetDirectionalLight") || !Check(gk::BeginFrame(), "BeginFrame") || !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "SetDrawLayer(Scene)") || !Check(gk::DrawRect(0.0f, 0.0f, frameWidth, frameHeight, gk::ColorRGB(28, 34, 48), true), "DrawRect(background)") || !Check(gk::DrawModel(model), "DrawModel"))
         return false;
     if (!Check(gk::SetDrawLayer(gk::DrawLayer::UI), "SetDrawLayer(UI)") || !Check(gk::DrawRect(frameWidth - 46.0f, 20.0f, 24.0f, 24.0f, gk::ColorRGB(0, 255, 0), true), "DrawRect(UI marker)"))
+        return false;
+    // 目標が手首の形状に隠れないよう、UI layerで位置を重ねて示す。
+    if (ikPreview && !gk::examples::DrawModelArmIkTarget(*ikPreview, scale, { center[0], center[1], center[2] }, angle))
         return false;
     if (!Check(gk::DrawString(20.0f, 20.0f, "実モデル capture  /  Escapeで終了", gk::ColorRGB(255, 255, 255)), "DrawString(title)") || !Check(gk::DrawString(20.0f, 50.0f, mode, gk::ColorRGB(210, 220, 240)), "DrawString(mode)"))
         return false;
@@ -351,9 +398,19 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid scale, center, capture mode, or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "invalid arguments");
         return 2;
     }
-    // 高解像度の細部確認はpreview modeだけで行う。
-    const uint32_t windowWidth = strcmp(mode, "preview") == 0 ? 1280u : 640u;
-    const uint32_t windowHeight = strcmp(mode, "preview") == 0 ? 960u : 480u;
+    // 斜め・側面の目視検査用に、model全体のY回転を指定できる。
+    float viewRotation = 0.0f;
+    const char* viewRotationText = getenv("GKCORE_TEST_VIEW_ROTATION");
+    if (viewRotationText && !ParseFloat(viewRotationText, viewRotation))
+    {
+        fprintf(stderr, "GKCORE_TEST_VIEW_ROTATION must be finite\n");
+        return 2;
+    }
+    // 袖や手先など、低解像度では判断しにくい部分だけ拡大captureする。
+    const char* highResolutionText = getenv("GKCORE_TEST_CAPTURE_HIGH_RES");
+    const bool highResolution = highResolutionText && strcmp(highResolutionText, "1") == 0;
+    const uint32_t windowWidth = highResolution ? 2560u : strcmp(mode, "preview") == 0 ? 1280u : 640u;
+    const uint32_t windowHeight = highResolution ? 1920u : strcmp(mode, "preview") == 0 ? 960u : 480u;
     if (!Check(gk::SetWindowSize(windowWidth, windowHeight), "SetWindowSize") || !Check(gk::Init(), "Init"))
     {
         gk::Shutdown();
@@ -433,47 +490,26 @@ int main(int argc, char** argv)
         if (secondaryAnimation.IsValid() && !Check(gk::DeleteModelAnimation(secondaryAnimation), "DeleteModelAnimation(secondary after blend)"))
             passed = false;
     }
-    if (passed && strcmp(mode, "ik") == 0)
+    // 腕の長さと肩の側から、肩より外側のsample目標を作る。
+    gk::examples::FModelArmIkPreview armIkPreview{};
+    if (passed && humanoidIkMode)
     {
-        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
-        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
-        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
-        if (root < 0 || middle < 0 || end < 0)
+        if (!gk::examples::BuildModelArmIkPreview(model, armIkPreview))
         {
-            fprintf(stderr, "ik mode requires RightUpperArm, RightLowerArm, and RightHand role mappings\n");
+            fprintf(stderr, "IK preview requires arm and torso roles with valid joint positions: %s\n", gk::GetLastErrorMessage());
             passed = false;
         }
         else
         {
-            const float inverseScale = 1.0f / scale;
-            const gk::Vec3 target{ center[0] + 0.15f * inverseScale, center[1] + 0.08f * inverseScale, center[2] };
-            const gk::Vec3 pole{ center[0], center[1], center[2] + 0.25f * inverseScale };
-            passed = Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, target, pole), "SetModelHumanoidTwoBoneIk") && passed;
-            if (passed)
+            const int result = strcmp(mode, "ik") == 0 ? gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, armIkPreview.target, armIkPreview.pole) : gk::SetModelIkChain(model, armIkPreview.bones, 3, armIkPreview.target);
+            if (!Check(result, "SetModelIk(preview)"))
             {
-                // 実モデル検証でIK入力と対応先を追跡できるよう記録する。
-                printf("ik-role RightUpperArm=%s[%d] RightLowerArm=%s[%d] RightHand=%s[%d] target=(%.6f,%.6f,%.6f) pole=(%.6f,%.6f,%.6f)\n", gk::GetModelBoneName(model, static_cast<uint32_t>(root)), root, gk::GetModelBoneName(model, static_cast<uint32_t>(middle)), middle, gk::GetModelBoneName(model, static_cast<uint32_t>(end)), end, target.x, target.y, target.z, pole.x, pole.y, pole.z);
+                passed = false;
             }
         }
     }
-    if (passed && strcmp(mode, "chain") == 0)
-    {
-        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
-        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
-        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
-        if (root < 0 || middle < 0 || end < 0)
-        {
-            fprintf(stderr, "chain mode requires RightUpperArm, RightLowerArm, and RightHand role mappings\n");
-            passed = false;
-        }
-        else
-        {
-            const uint32_t chain[3] = { static_cast<uint32_t>(root), static_cast<uint32_t>(middle), static_cast<uint32_t>(end) };
-            const float inverseScale = 1.0f / scale;
-            const gk::Vec3 target{ center[0] + 0.18f * inverseScale, center[1] + 0.1f * inverseScale, center[2] };
-            passed = Check(gk::SetModelIkChain(model, chain, 3, target), "SetModelIkChain") && passed;
-        }
-    }
+    if (passed && humanoidIkMode)
+        passed = VerifyArmIkPreview(model, armIkPreview, mode);
     if (passed && strcmp(mode, "blend") == 0)
     {
         if (gk::GetModelAnimationCount(model) < 2)
@@ -506,7 +542,7 @@ int main(int argc, char** argv)
             const double sampleTime = static_cast<double>(frame % 4) * 0.5;
             // 対象modeの再生枠へ必要な時刻を設定する。
             const bool setAnimationTime = strcmp(mode, "animate") == 0 ? Check(gk::SetModelAnimationTime(model, sampleTime), "SetModelAnimationTime") : ((externalMode || externalBlendMode) ? Check(gk::SetModelAnimationTime(model, externalDuration * static_cast<double>(frame % 5) / 5.0, 0), "SetModelAnimationTime(primary)") && (!externalBlendMode || Check(gk::SetModelAnimationTime(model, secondaryDuration * static_cast<double>(frame % 5) / 5.0, 1), "SetModelAnimationTime(secondary)")) : true);
-            passed = CheckEvents() && setAnimationTime && DrawFrame(model, frame, frameCount, scale, center, mode);
+            passed = CheckEvents() && setAnimationTime && DrawFrame(model, frame, frameCount, scale, center, mode, humanoidIkMode ? &armIkPreview : nullptr, viewRotation, windowWidth, windowHeight);
         }
     }
     else if (model.IsValid())

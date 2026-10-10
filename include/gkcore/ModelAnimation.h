@@ -111,6 +111,12 @@ GKCORE_API uint32_t GetModelBoneCount(ModelHandle model);
  */
 GKCORE_API const char* GetModelBoneName(ModelHandle model, uint32_t bone);
 /**
+ * 現在のclip・ブレンド・IKを評価し、ボーン原点のモデル空間位置を取得する。
+ * 表示用の位置・回転・scaleを含めず、再生時刻を進めない。成功は0。
+ * 無効handle・ボーン番号・骨格なし・姿勢評価の失敗は-1でoutputを保つ。
+ */
+GKCORE_API int GetModelBonePosition(ModelHandle model, uint32_t bone, Vec3& output);
+/**
  * 一意なボーン名を検索する。見つからない・同名が複数ある場合は-1。
  */
 GKCORE_API int32_t FindModelBone(ModelHandle model, const char* name);

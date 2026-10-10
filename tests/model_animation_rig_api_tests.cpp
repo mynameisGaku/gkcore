@@ -10,10 +10,12 @@
 #include "model/animation/FModelPlayback.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
+#include "examples/support/FModelArmIkPreview.h"
 
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <limits>
 #include <math.h>
 #include <stdio.h>
@@ -63,10 +65,12 @@ class AAnimationRigTestBackend final : public gk::detail::Backend
 class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
 {
   public:
-    // IK検査用の親順3節骨格。
+    // IK検査用の親順骨格。
     gk::model::animation::FModelSkeleton skeleton;
     // 対応表検査ではtargetと異なる名前を使う。
-    const char* boneNames[3] = { "joint_a", "joint_b", "joint_c" };
+    const char* boneNames[4] = { "joint_a", "joint_b", "joint_c", "joint_d" };
+    // fixtureに登録した骨数。
+    uint32_t boneCount = 3;
 
     gk::model::EModelAnimationFormat Format() const override
     {
@@ -78,7 +82,7 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     }
     const char* BoneName(uint32_t bone) const override
     {
-        return bone < 3 ? boneNames[bone] : nullptr;
+        return bone < boneCount ? boneNames[bone] : nullptr;
     }
     const char* MorphName(uint32_t) const override
     {
@@ -110,9 +114,9 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     bool Deform(const gk::model::animation::FModelPose& pose, gk::detail::ModelResource& output, gk::String& error) const override
     {
         gk::Array<float> matrices;
-        if (output.vertices.Count() != 3 || !gk::model::animation::EvaluateModelPose(skeleton, pose, matrices, error))
+        if (output.vertices.Count() != boneCount || !gk::model::animation::EvaluateModelPose(skeleton, pose, matrices, error))
             return false;
-        for (uint32_t bone = 0; bone < 3; ++bone)
+        for (uint32_t bone = 0; bone < boneCount; ++bone)
         {
             for (uint32_t axis = 0; axis < 3; ++axis)
                 output.vertices.At(bone).position[axis] = matrices.At(bone * 16u + 12u + axis);
@@ -128,6 +132,183 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
 bool Near(float left, float right)
 {
     return fabsf(left - right) <= 0.001f;
+}
+
+/**
+ * preview内の計算結果が有限値か確認する。
+ */
+bool IsFinitePreview(const gk::examples::FModelArmIkPreview& preview)
+{
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        if (!isfinite(preview.joints[index].x) || !isfinite(preview.joints[index].y) || !isfinite(preview.joints[index].z))
+            return false;
+    }
+    return isfinite(preview.target.x) && isfinite(preview.target.y) && isfinite(preview.target.z) && isfinite(preview.pole.x) && isfinite(preview.pole.y) && isfinite(preview.pole.z) && isfinite(preview.armLength);
+}
+
+/**
+ * IK previewの全fieldが失敗前と同じか確認する。
+ */
+bool SamePreview(const gk::examples::FModelArmIkPreview& left, const gk::examples::FModelArmIkPreview& right)
+{
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        if (left.bones[index] != right.bones[index] || left.joints[index].x != right.joints[index].x || left.joints[index].y != right.joints[index].y || left.joints[index].z != right.joints[index].z)
+            return false;
+    }
+    return left.target.x == right.target.x && left.target.y == right.target.y && left.target.z == right.target.z && left.pole.x == right.pole.x && left.pole.y == right.pole.y && left.pole.z == right.pole.z && left.armLength == right.armLength;
+}
+
+/**
+ * model空間の骨位置を、描画変換や再生時刻の副作用なしで取得できることを確認する。
+ */
+bool TestModelBonePositionQuery(gk::ModelHandle model, gk::ModelHandle instance)
+{
+    gk::Vec3 position{ 91.0f, 92.0f, 93.0f };
+    bool passed = gk::ClearModelIk(instance) == 0 && gk::StopModelAnimation(instance) == 0;
+    passed = gk::GetModelBonePosition(instance, 2, position) == 0 && Near(position.x, 2.0f) && Near(position.y, 0.0f) && Near(position.z, 0.0f) && passed;
+    passed = gk::PlayModelAnimation(instance, 0, false) == 0 && gk::SetModelAnimationBlend(instance, 1, 0.5f) == 0 && passed;
+    passed = gk::GetModelBonePosition(instance, 2, position) == 0 && Near(position.x, 3.0f) && Near(position.y, 0.0f) && Near(position.z, 0.0f) && passed;
+    const double time0 = gk::GetModelAnimationTime(instance, 0);
+    const double time1 = gk::GetModelAnimationTime(instance, 1);
+    const auto* transform = gk::detail::FindModelTransform(instance);
+    const auto* playback = transform ? transform->playback : nullptr;
+    const uint32_t ikCount = playback ? playback->ik.Count() : 0;
+    const gk::Vec3 target{ 1.0f, 1.0f, 0.0f };
+    passed = gk::SetModelTwoBoneIk(instance, 0, 1, 2, target, { 0.0f, 1.0f, 0.0f }) == 0 && passed;
+    passed = gk::GetModelBonePosition(instance, 2, position) == 0 && Near(position.x, target.x) && Near(position.y, target.y) && Near(position.z, target.z) && passed;
+    passed = gk::SetModelPosition(instance, { 20.0f, 30.0f, 40.0f }) == 0 && gk::SetModelRotation(instance, { 0.2f, 0.3f, 0.4f }) == 0 && gk::SetModelScale(instance, { 2.0f, 3.0f, 4.0f }) == 0 && passed;
+    passed = gk::GetModelBonePosition(instance, 2, position) == 0 && Near(position.x, target.x) && Near(position.y, target.y) && Near(position.z, target.z) && passed;
+    passed = gk::GetModelAnimationTime(instance, 0) == time0 && gk::GetModelAnimationTime(instance, 1) == time1 && passed;
+    transform = gk::detail::FindModelTransform(instance);
+    playback = transform ? transform->playback : nullptr;
+    passed = playback && playback->ik.Count() == ikCount + 1 && playback->ik.At(playback->ik.Count() - 1).target[0] == target.x && playback->ik.At(playback->ik.Count() - 1).target[1] == target.y && playback->ik.At(playback->ik.Count() - 1).target[2] == target.z && passed;
+    position = { 91.0f, 92.0f, 93.0f };
+    passed = gk::GetModelBonePosition(instance, 3, position) == -1 && Near(position.x, 91.0f) && Near(position.y, 92.0f) && Near(position.z, 93.0f) && passed;
+    passed = gk::GetModelBonePosition({}, 0, position) == -1 && Near(position.x, 91.0f) && Near(position.y, 92.0f) && Near(position.z, 93.0f) && passed;
+    const auto stale = gk::CreateModelInstance(model);
+    passed = stale.IsValid() && gk::DeleteModel(stale) == 0 && gk::GetModelBonePosition(stale, 0, position) == -1 && Near(position.x, 91.0f) && Near(position.y, 92.0f) && Near(position.z, 93.0f) && passed;
+    passed = gk::ClearModelIk(instance) == 0 && gk::StopModelAnimation(instance) == 0 && gk::SetModelPosition(instance, { 0.0f, 0.0f, 0.0f }) == 0 && gk::SetModelRotation(instance, { 0.0f, 0.0f, 0.0f }) == 0 && gk::SetModelScale(instance, { 1.0f, 1.0f, 1.0f }) == 0 && gk::PlayModelAnimation(instance, 0, false) == 0 && gk::SetModelAnimationBlend(instance, 1, 0.5f) == 0 && passed;
+    if (!passed)
+        fprintf(stderr, "model-space current bone position query contract failed: %s\n", gk::GetLastErrorMessage());
+    return passed;
+}
+
+/**
+ * 腕IK preview計算の独立した幾何期待値と失敗時保持を確認する。
+ */
+bool TestModelArmIkPreview()
+{
+    const gk::Vec3 joints[3] = { { -1.0f, 1.0f, 0.0f }, { -2.0f, 1.0f, 0.0f }, { -3.0f, 1.0f, 0.0f } };
+    gk::examples::FModelArmIkPreview preview{};
+    bool passed = gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, joints, preview) && IsFinitePreview(preview);
+    passed = passed && Near(preview.joints[0].x, -1.0f) && Near(preview.joints[0].y, 1.0f) && Near(preview.joints[0].z, 0.0f) && Near(preview.joints[1].x, -2.0f) && Near(preview.joints[1].y, 1.0f) && Near(preview.joints[1].z, 0.0f) && Near(preview.joints[2].x, -3.0f) && Near(preview.joints[2].y, 1.0f) && Near(preview.joints[2].z, 0.0f);
+    passed = passed && Near(preview.target.x, -2.5f) && Near(preview.target.y, 0.5f) && Near(preview.target.z, 0.0f) && Near(preview.pole.x, -1.0f) && Near(preview.pole.y, 1.0f) && Near(preview.pole.z, 2.0f) && Near(preview.armLength, 2.0f);
+    gk::examples::FModelArmIkPreview mirrored{};
+    const gk::Vec3 mirroredJoints[3] = { { 1.0f, 1.0f, 0.0f }, { 2.0f, 1.0f, 0.0f }, { 3.0f, 1.0f, 0.0f } };
+    passed = gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, mirroredJoints, mirrored) && IsFinitePreview(mirrored) && Near(mirrored.target.x, 2.5f) && Near(mirrored.target.y, 0.5f) && Near(mirrored.target.z, 0.0f) && Near(mirrored.pole.x, 1.0f) && Near(mirrored.pole.y, 1.0f) && Near(mirrored.pole.z, 2.0f) && Near(mirrored.armLength, 2.0f) && passed;
+    for (float scale : { 0.0001f, 0.01f, 0.5f, 10.0f, 100.0f, 10000.0f })
+    {
+        gk::Vec3 scaled[3] = { { joints[0].x * scale, joints[0].y * scale, joints[0].z * scale }, { joints[1].x * scale, joints[1].y * scale, joints[1].z * scale }, { joints[2].x * scale, joints[2].y * scale, joints[2].z * scale } };
+        gk::examples::FModelArmIkPreview scaledPreview{};
+        passed = gk::examples::MakeModelArmIkPreview({ 0.0f, scale, 0.0f }, scaled, scaledPreview) && IsFinitePreview(scaledPreview) && Near(scaledPreview.target.x / scale, -2.5f) && Near(scaledPreview.target.y / scale, 0.5f) && Near(scaledPreview.pole.x / scale, -1.0f) && Near(scaledPreview.pole.y / scale, 1.0f) && Near(scaledPreview.pole.z / scale, 2.0f) && Near(scaledPreview.armLength / scale, 2.0f) && passed;
+    }
+    const gk::examples::FModelArmIkPreview original = preview;
+    const gk::Vec3 degenerate[3] = { { 0.0f, 1.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, { 0.0f, -1.0f, 0.0f } };
+    passed = !gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, degenerate, preview) && Near(preview.target.x, original.target.x) && Near(preview.target.y, original.target.y) && Near(preview.pole.x, original.pole.x) && Near(preview.armLength, original.armLength) && passed;
+    const gk::Vec3 zeroLength[3] = { joints[0], joints[0], joints[2] };
+    passed = !gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, zeroLength, preview) && Near(preview.target.x, original.target.x) && Near(preview.target.y, original.target.y) && Near(preview.pole.x, original.pole.x) && Near(preview.armLength, original.armLength) && passed;
+    const gk::Vec3 unbalanced[3] = { { -1.0f, 1.0f, 0.0f }, { -100.0f, 1.0f, 0.0f }, { -101.0f, 1.0f, 0.0f } };
+    passed = !gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, unbalanced, preview) && SamePreview(preview, original) && passed;
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const gk::Vec3 nanJoint[3] = { { nan, 1.0f, 0.0f }, joints[1], joints[2] };
+    passed = !gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, nullptr, preview) && SamePreview(preview, original) && passed;
+    passed = !gk::examples::MakeModelArmIkPreview({ nan, 1.0f, 0.0f }, joints, preview) && SamePreview(preview, original) && passed;
+    passed = !gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, nanJoint, preview) && SamePreview(preview, original) && passed;
+    passed = !gk::examples::BuildModelArmIkPreview({}, preview) && SamePreview(preview, original) && passed;
+    if (!passed)
+        fprintf(stderr, "model arm IK preview geometry or failure atomicity failed\n");
+    return passed;
+}
+
+/**
+ * UpperChest未設定時にChestへ胴体位置を探し直してpreviewを作る。
+ */
+bool TestBuildArmIkTorsoFallback()
+{
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+        return false;
+    auto* source = new AAnimationRigTestSource;
+    source->boneCount = 4;
+    const int32_t parents[4] = { -1, 0, 1, 2 };
+    gk::model::animation::FModelBoneTransform rest[4]{};
+    rest[0].position[1] = 1.0f;
+    rest[1].position[0] = -1.0f;
+    rest[2].position[0] = -1.0f;
+    rest[3].position[0] = -1.0f;
+    if (!source->skeleton.parents.AppendRange(parents, 4) || !source->skeleton.restLocalTransforms.AppendRange(rest, 4))
+    {
+        delete source;
+        gk::Release(&resource->reference);
+        return false;
+    }
+    gk::String error;
+    resource->animation = gk::model::CreateModelAnimationAsset(source, error);
+    gk::detail::ModelVertex vertices[4]{};
+    if (!resource->animation || !resource->vertices.AppendRange(vertices, 4))
+    {
+        gk::Release(&resource->reference);
+        return false;
+    }
+    const auto model = gk::detail::RegisterModelResource(resource, error);
+    gk::detail::ModelTransform transform{};
+    transform.handle = model;
+    transform.scale = { 1.0f, 1.0f, 1.0f };
+    if (!model.IsValid() || !gk::detail::GetContext().modelTransforms.Append(transform))
+    {
+        if (model.IsValid())
+            gk::DeleteModel(model);
+        return false;
+    }
+    bool passed = gk::SetModelBoneRole(model, 0, gk::EHumanoidBone::Chest) == 0 && gk::SetModelBoneRole(model, 1, gk::EHumanoidBone::RightUpperArm) == 0 && gk::SetModelBoneRole(model, 2, gk::EHumanoidBone::RightLowerArm) == 0 && gk::SetModelBoneRole(model, 3, gk::EHumanoidBone::RightHand) == 0;
+    gk::examples::FModelArmIkPreview preview{};
+    preview.target = { 71.0f, 72.0f, 73.0f };
+    passed = gk::examples::BuildModelArmIkPreview(model, preview) && Near(preview.joints[0].x, -1.0f) && Near(preview.joints[0].y, 1.0f) && Near(preview.joints[1].x, -2.0f) && Near(preview.joints[1].y, 1.0f) && Near(preview.joints[2].x, -3.0f) && Near(preview.joints[2].y, 1.0f) && Near(preview.target.x, -2.5f) && Near(preview.target.y, 0.5f) && Near(preview.target.z, 0.0f) && preview.bones[0] == 1 && preview.bones[1] == 2 && preview.bones[2] == 3 && passed;
+    if (gk::DeleteModel(model) != 0)
+        passed = false;
+    if (!passed)
+        fprintf(stderr, "arm IK preview did not fall back from UpperChest to Chest: %s\n", gk::GetLastErrorMessage());
+    return passed;
+}
+
+/**
+ * IK目標markerがUI層へ8個の塗り三角形として正しいworld位置で積まれることを確認する。
+ */
+bool TestModelArmIkTargetMarker()
+{
+    const gk::Vec3 joints[3] = { { -1.0f, 1.0f, 0.0f }, { -2.0f, 1.0f, 0.0f }, { -3.0f, 1.0f, 0.0f } };
+    gk::examples::FModelArmIkPreview preview{};
+    if (!gk::examples::MakeModelArmIkPreview({ 0.0f, 1.0f, 0.0f }, joints, preview))
+        return false;
+    auto& context = gk::detail::GetContext();
+    const uint32_t firstMarkerDraw = context.frame.draws.Count();
+    bool passed = gk::SetDrawLayer(gk::DrawLayer::UI) == 0 && gk::examples::DrawModelArmIkTarget(preview, 2.0f, { 1.0f, 2.0f, 3.0f }, 1.57079632679f) && context.frame.draws.Count() == firstMarkerDraw + 8;
+    const uint8_t expectedFlags = static_cast<uint8_t>(gk::detail::DrawFilled);
+    const uint8_t expectedLayer = static_cast<uint8_t>(gk::DrawLayer::UI);
+    const uint32_t expectedColor = gk::ColorRGB(255, 150, 35);
+    for (uint32_t index = 0; index < 8 && passed; ++index)
+    {
+        const auto& draw = context.frame.draws.At(firstMarkerDraw + index);
+        passed = draw.kind == gk::detail::DrawKind::Triangle3D && draw.flags == expectedFlags && draw.layer == expectedLayer && draw.color == expectedColor;
+        for (uint32_t point = 0; point < 3 && passed; ++point)
+            passed = draw.points[point].x >= -6.0241f && draw.points[point].x <= -5.9759f && draw.points[point].y >= -3.0241f && draw.points[point].y <= -2.9759f && draw.points[point].z >= 6.9759f && draw.points[point].z <= 7.0241f;
+    }
+    passed = gk::SetDrawLayer(gk::DrawLayer::Scene) == 0 && passed;
+    if (!passed)
+        fprintf(stderr, "model arm IK target marker packet, layer, fill, or transformed position failed\n");
+    return passed;
 }
 
 /**
@@ -389,6 +570,7 @@ bool TestHumanoidTwoBoneIk(gk::ModelHandle model, gk::ModelHandle instance)
     passed = gk::BeginFrame() == 0 && gk::DrawModel(model) == 0 && gk::DrawModel(instance) == 0 && passed;
     const auto& draws = gk::detail::GetContext().frame.draws;
     passed = draws.Count() == 2 && Near(draws.At(0).model->vertices.At(2).position[0], 1.0f) && Near(draws.At(0).model->vertices.At(2).position[1], 1.0f) && Near(draws.At(0).model->vertices.At(2).position[2], 0.0f) && Near(draws.At(1).model->vertices.At(2).position[0], 1.0f) && Near(draws.At(1).model->vertices.At(2).position[1], 1.0f) && Near(draws.At(1).model->vertices.At(2).position[2], 0.0f) && passed;
+    passed = TestModelArmIkTargetMarker() && passed;
     if (!passed)
         fprintf(stderr, "humanoid two-bone IK role resolution, failure atomicity, isolation, or endpoint contract failed: %s\n", gk::GetLastErrorMessage());
     return passed;
@@ -454,6 +636,13 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
+    if (!TestModelBonePositionQuery(model, instance) || !TestModelArmIkPreview() || !TestBuildArmIkTorsoFallback())
+    {
+        gk::DeleteModel(instance);
+        gk::DeleteModel(model);
+        gk::Shutdown();
+        return false;
+    }
     const gk::Vec3 pole{ 0.0f, 1.0f, 0.0f };
     if (gk::SetModelTwoBoneIk(instance, 0, 1, 2, { 1.0f, 1.0f, 0.0f }, pole) != 0 || gk::BeginFrame() != 0 || gk::DrawModel(instance) != 0)
     {
@@ -464,7 +653,8 @@ bool TestBlendThenIkSnapshot()
         return false;
     }
     const auto& draws = gk::detail::GetContext().frame.draws;
-    if (draws.Count() != 1 || !Near(draws.At(0).model->vertices.At(2).position[0], 1.0f) || !Near(draws.At(0).model->vertices.At(2).position[1], 1.0f))
+    gk::Vec3 queriedEndpoint{};
+    if (draws.Count() != 1 || gk::GetModelBonePosition(instance, 2, queriedEndpoint) != 0 || !Near(draws.At(0).model->vertices.At(2).position[0], 1.0f) || !Near(draws.At(0).model->vertices.At(2).position[1], 1.0f) || !Near(draws.At(0).model->vertices.At(2).position[0], queriedEndpoint.x) || !Near(draws.At(0).model->vertices.At(2).position[1], queriedEndpoint.y) || !Near(draws.At(0).model->vertices.At(2).position[2], queriedEndpoint.z))
     {
         fprintf(stderr, "IK was not evaluated after clip blending\n");
         gk::DeleteModel(instance);

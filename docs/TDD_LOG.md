@@ -1199,3 +1199,21 @@ Trooperの実IKは前腕scale=[0.999998987,1,1]が旧1e-6相対判定をわず�
 CPU全56件はDebug4.71秒、Release4.43秒で成功しました。全行列検査を追加した後のfocused IKも両構成で成功。実モデルはSci-Fi Trooper、Clown Monster、Cesium Man、YUMEKAのstatic/IK/chainをDebug/Releaseで計24回実行し、12画像ペアが全画素一致、タイトル以外のモデル領域もIK/chainで変わりました。FBX3モデルは全位置・法線のGPU readbackで位置差0、法線最大差約1.19e-7、許容0.0005で成功。GLBは既存CPU skinningで描画し、GPU-only readbackは要求していません。実行環境はWindows 11 build26200、RTX4070 SUPER driver617.42、MSVC19.29/v14214.29、SDK10.0.22621.0です。commandはgkcore_real_model_capture_tests <model> <scale> <centerX> <centerY> <centerZ> <static|ik|chain>に材質/役割表optionを追加、GKCORE_TEST_CAPTURE_PATH・GKCORE_TEST_CAPTURE_FRAMES=1・FBXのIK/chainでGKCORE_VERIFY_GPU_SKINNING=1を指定しました。capture専用buildは非表示windowです。関連ログはhumanoid-ik-{debug,release}-<model>-<mode>.log、比較結果はhumanoid-ik-image-comparison.jsonです。
 
 公開用308ファイルの構成からRuntimeと5サンプルのRelease build、SDK install、新API宣言のinstall確認、install済みDLL/shaderを使う既存consumerのGPU起動・描画・終了に成功しました。CMake初回はPowerShellの未引用バージョン引数が分割されてSDK選択に失敗し、引数を引用して同じbuildへ再configureしました。ログはhumanoid-ik-game-{config,build,install,consumer-run}.logです。tests・開発記録・私有モデルはmainへ含めません。
+
+## 腕IKの目標位置と見た目の確認
+
+ユーザーの「ピエロ以外の手が埋まっている」指摘を受け、前回の画像を見直しました。旧sampleはmodel中心から+Xへ一定距離という目標を使い、右肩が-X側にあるモデルでは胴体を横切る動きを要求していました。GPU/CPU一致と画像の構成間一致を、見た目の合格に使ったのは不十分です。以前のhumanoid-ik画像は、貫通のない姿勢の基準画像としては扱いません。
+
+現在の骨原点を描画と共通のclip/blend/IK評価で取得するGetModelBonePositionを追加しました。モデル空間で返し、表示SRTを含めず時刻を進めず、失敗時はoutputを保持します。API未宣言のcompile REDをbuild/dev-windows/model_animation_rig_api_red.logへ保存し、初期位置・ブレンド・IK到達点・描画頂点との一致・時刻と命令の保持・無効照会を確認しました。
+
+FModelArmIkPreviewは肩と胴体のXZ方向、上腕と前腕の長さから肩より外側の同じ目標を両IK modeへ作ります。到達不能な極端な節長比と非有限入力は拒否します。目標をオレンジの中抜きマーカーとしてUIへ表示し、modelとマーカーは表示中心を軸に同じ変換で回転します。線だけの3D三角形がrenderer未対応であることを実装確認で見つけ、8枚のfilled triangleへ変更しました。pure geometryの試験ではMakeがbone番号を推定するという誤った期待を削除し、Buildだけが番号を割り当てる契約に合わせています。
+
+実Cesium GLBで、UpperChest未設定でもChestがあるのにfallbackが失敗しました。役割が未登録と検索失敗を混同していたため、4骨のChest->腕fixtureを先にREDにし、正常な未登録を区別してGREENへ修正。ログはik-target-torso-fallback-{red,green}*です。UI markerの8 packet・filled flag・world変換もCPUで独立に検査します。
+
+最終CPU56件はDebug4.49秒、Release4.20秒で成功。実モデル4種のReleaseはstatic正面とIK/chainの正面・45度・90度、Debugはstatic/IK/chain正面、合計40回が成功しました。正面12画像ペアが全画素一致。32姿勢照会で手首到達・骨長・肩より外側の関節位置を確認し、chainの最大到達誤差4.36112567e-5、2ボーンは約1.19e-7以下です。FBX3種の24 GPU readbackでは位置差0、法線最大差1.1920929e-7。GLBは既存CPU skinningの描画で、GPU-only検証は要求していません。追加のYUMEKA 2560x1920拡大capture3方向も同じ到達確認とGPU readbackで成功しました。
+
+画像の別レビューでも、旧画像のような手を胴体中央へ引き込む表示は4モデルの3方向で見られませんでした。YUMEKAの拡大像では、正面で大きな袖に手首が隠れ、斜め・側面で指が袖口から出ていることを確認しました。体・衣服・髪・持ち物のmesh交差と動作中の貫通は検査していません。IKに衝突回避や関節角度制限を追加したわけではありません。
+
+実行環境はWindows11 build26200、RTX4070 SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621.0。gkcore_real_model_capture_testsの既存model/scale/center/modeと材質/役割表引数、GKCORE_TEST_VIEW_ROTATION=0/0.7853981634/1.5707963268を指定。FBXのIK/chainはGKCORE_VERIFY_GPU_SKINNING=1、拡大像はGKCORE_TEST_CAPTURE_HIGH_RES=1。capture専用windowは非表示です。画像はbuild/real-model-captures/{Release,Debug}/ik-outside-body、数値はik-target-comparison.json、ログはik-target-*です。
+
+公開用310ファイルの構成からRuntime・5sampleをbuild/installし、新API宣言のinstallと既存consumerのGPU起動・描画・終了を確認しました。fallback修正後のhelperは公開用sourceへ同期し、再build/installしています。tests・検証記録・私有モデルはmainへ含めません。関連ログはik-target-final-game-*、ik-target-game-consumer-run.logです。
