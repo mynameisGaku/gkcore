@@ -2,7 +2,7 @@
 #include "model/animation/HumanoidBoneMap.h"
 #include "foundation/Memory.h"
 #include "resources/ResourceIO.h"
-#include <gkcore/EHumanoidBone.h>
+#include <gkcore/HumanoidBoneTypes.h>
 
 #include <string.h>
 

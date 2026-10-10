@@ -47,6 +47,10 @@ viewerは`SetVSyncEnabled(false)`で画面更新の待機を外し、実際の�
 
 GLB/FBX内のclipは`animate`または`blend`で、別ファイルのmotionは`external`または`external-blend`で確認できます。`external-ik`と`external-blend-ik`では、motion更新後にIKを再計算し、前frameのIK姿勢が次の目標へ影響しないことを確認できます。capture検証では`GKCORE_TEST_ANIMATION_FRAMES`で描画回数を2〜120frameに指定し、既定の12frameでclip長に沿った姿勢とloopへの折り返しを確認します。保存する画像枚数は別の`GKCORE_TEST_CAPTURE_FRAMES`で1〜16枚を指定します。animated IK captureだけに使う`GKCORE_TEST_ANIMATION_START_SECONDS`は開始秒（既定0）、`GKCORE_TEST_ANIMATION_STEP_SECONDS`はframeごとの秒数（省略時は主motionのdurationをcapture全体へ割り当て）です。blend時は同じ秒数を両motionへ設定し、それぞれのdurationでloopします。実時間のloop境界を追うcaptureでは開始秒とstepを指定してください。異なる骨名の人型モデルでは、一般的な名前から役割を推定しますが、未知・曖昧な骨名がある場合は自動対応できないことがあります。APIで手動の役割設定と対応結果の照会ができます。詳細は[モデルアニメーション](model-animation.md)を参照してください。
 
+launcherの8〜10ではDownloads内の`Skinning Test.fbx`と`Swinging.fbx`を使い、YUMEKAへの単独適用とblend + 右腕IKを選べます。両motionはanimation-onlyとして読み込め、どちらも66骨・morphなし・`mixamo.com` clip 1本です。durationはSkinning Testが2.25秒、Swingingが2.43333333秒です。通常のmodel inspectではどちらも「FBX contains no supported static triangles」と報告されるため、ここではmotion素材として扱います。
+
+viewerは起動時にモデルと各外部motionの人型役割を推定して対応を設定し、IKで必要な役割は骨番号へ解決してsampleの更新処理で再利用します。メニュー8〜10では任意flag `--follow-motion`を付けます。viewerはmotion適用前に一意なHips役割の骨番号とその時点の位置を初期化し、以後のHips移動分だけ表示中心を更新します。motionの骨位置は変更しません。Hips役割が一意でない場合は開始できません。モデルを読み直すか、`--model-bones`などでHips役割の割当を変更した後は、再生前に追従状態を初期化し直す必要があります。このflagはメニュー8〜10だけに指定し、通常のmotion modeでは従来どおり指定した静止表示中心を使います。YUMEKAでは各motionの52人型役割のうち51本が対応し、左右の目は未対応でした。単独再生は各6姿勢、blend+IKは12姿勢を実GPUで描画しました。TrooperへのSkinning TestとClownへのSwingingは各52本が対応し、IKを重ねた12姿勢も確認しています。追従表示の48画像ではモデルが描画範囲に残りました。これは確認した組合せの結果であり、体や衣服の貫通、補助骨の変形品質まで保証するものではありません。
+
 317骨のYUMEKA FBXと、66骨のMixamo `Silly Dancing.fbx`・`Capoeira.fbx`を組み合わせた実動作確認を行っています。自動推定で役割が付いた骨はそれぞれ53本と52本、共通して対応した骨は51本でした。左右の太もも・すね・足首・つま先を含め、単独再生とブレンドで確認しました。未対応の役割は初期姿勢のまま残り、必要に応じてAPIで手動設定します。この結果は該当モデルとmotionでの確認であり、モデルの見た目や衣服の重なりを含む画質改善を保証しません。
 
 検証に使ったCesium Manはローカル検証専用です。元データと付属するCC-BY-4.0 / Cesium LegalMarkの条件は[Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)で確認できます。ユーザー提供のモデル・motionを含め、権利確認のない私有assetをSDKや他の配布物へ含めないでください。

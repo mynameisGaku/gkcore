@@ -3,8 +3,8 @@
 #define GKCORE_MODELANIMATION_H
 
 #include <gkcore.h>
-#include <gkcore/EHumanoidBone.h>
-#include <gkcore/FModelAnimationMappingInfo.h>
+#include <gkcore/HumanoidBoneTypes.h>
+#include <gkcore/ModelAnimationMappingInfo.h>
 
 /**
  * 公開model animation API。

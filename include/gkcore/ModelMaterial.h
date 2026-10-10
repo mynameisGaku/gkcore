@@ -3,7 +3,7 @@
 #define GKCORE_MODELMATERIAL_H
 
 #include <gkcore.h>
-#include <gkcore/FModelMaterialSettings.h>
+#include <gkcore/ModelMaterialSettings.h>
 
 /**
  * モデル材質を問い合わせ・変更する公開API。

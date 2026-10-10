@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/HumanoidBoneMap.h"
-#include <gkcore/EHumanoidBone.h>
+#include <gkcore/HumanoidBoneTypes.h>
 
 #include <filesystem>
 #include <chrono>

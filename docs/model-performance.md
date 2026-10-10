@@ -1,4 +1,4 @@
-# モデルviewerの処理時間
+﻿# モデルviewerの処理時間
 
 目標は、実モデルを表示しながら300FPS以上を出すことです。測定には通常のRuntime DLLを使う`gkcore_model_benchmark_visible`を使用します。VSyncを無効にし、1280×720、標準のBloom・トーンマッピング・FXAA、基本色画像付きのYUMEKAで確認します。モデルを省略した描画や、停止したアニメーションの値ではありません。
 
@@ -13,6 +13,8 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 | YUMEKA + Silly Dancing / Capoeiraのブレンド | 3000 / 300 | 324.762 | 3.497ms |
 
 ブレンドは太もも・すねの対応漏れを修正後、両motionを51本の骨へ適用した測定です。再生は計測用コードを含めない通常のRelease Runtimeで、約9秒の連続計測を完走しました。平均300FPS以上を確認した結果で、全frameが3.333ms以下だったことや、全モデル・他GPUで同じFPSが出ることを保証するものではありません。GPU変形追加時点のnative全体検査はDebug/Release各78件が成功しました。脚対応修正後はCPU各53件と、animation・GPU画像・SDK consumerを含む関連統合検査各9件が成功しています。測定ログは`build/native-validation/final-real-model-{static-,rotate-}benchmark.log`、脚対応修正後のブレンドは`mixamo-legs-benchmark.log`です。
+
+動作中の右腕IKを加えたSilly Dancing / Capoeiraの測定は、前回269.801FPS、骨番号を起動時に解決する変更後の今回210.209FPS（p95 5.588ms、DrawModel平均1.100ms、Present平均3.059ms）でした。両方とも3000frame/warmup300ですが、同時刻の有効な変更前対照はありません。今回の変更によるFPS改善や300FPS達成を確認した結果とは扱いません。骨番号検索は毎frameから初期化時へ移し、元の12姿勢画像は全画素一致しました。最新ログはik-perf-binding-benchmark.log、途中で閉じた計測はik-perf-baseline.logで完了していません。追従表示の処理時間はこの測定へ含めていません。
 
 ## 再計測
 

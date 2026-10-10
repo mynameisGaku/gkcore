@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#ifndef GKCORE_EMODELALPHAMODE_H
-#define GKCORE_EMODELALPHAMODE_H
+#ifndef GKCORE_MODELALPHAMODETYPES_H
+#define GKCORE_MODELALPHAMODETYPES_H
 
 /**
  * 基本色のalphaをモデル描画で扱う方法。

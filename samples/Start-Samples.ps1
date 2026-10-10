@@ -210,6 +210,9 @@ Write-Host '  4. Cesium Manを静止表示（ローカル検証素材）'
 Write-Host '  5. Sci-Fi TrooperでMixamo motionをblend（ローカル検証素材）'
 Write-Host '  6. Clown MonsterでMixamo motionをblend（ローカル検証素材）'
 Write-Host '  7. YUMEKAで外部blend + 右腕IK（オレンジの目標を表示）'
+Write-Host '  8. YUMEKAでSkinning Testを単独再生（腰移動に表示中心が追従）'
+Write-Host '  9. YUMEKAでSwingingを単独再生（腰移動に表示中心が追従）'
+Write-Host ' 10. YUMEKAでSkinning Test + Swingingをblend + 右腕IK（腰移動に表示中心が追従）'
 Write-Host '  0. 終了'
 if (-not (Test-RequiredFile 'Visual Studio solution' $solutionPath))
 {
@@ -229,6 +232,32 @@ if ($CheckOnly)
     else
     {
         $allChecksPassed = $false
+    }
+    $skinningTestPath = Get-MotionPath 'Skinning Test.fbx'
+    if ($skinningTestPath)
+    {
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test単独再生' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external', $skinningTestPath, '--follow-motion', '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
+    }
+    else
+    {
+        Write-Host '省略: Skinning Test.fbxは任意素材のため、未提供でも確認を失敗にしません。'
+    }
+    $swingingPath = Get-MotionPath 'Swinging.fbx'
+    if ($swingingPath)
+    {
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA Swinging単独再生' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external', $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
+    }
+    else
+    {
+        Write-Host '省略: Swinging.fbxは任意素材のため、未提供でも確認を失敗にしません。'
+    }
+    if ($skinningTestPath -and $swingingPath)
+    {
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging blend + IK' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
+    }
+    else
+    {
+        Write-Host '省略: blend + IK確認にはSkinning Test.fbxとSwinging.fbxの両方が必要です。'
     }
     $allChecksPassed = (Invoke-Viewer 'monkey.obj 正面表示' (@($monkeyPath, '0.5609934521', '-0.014946', '0.0079755', '-0.0313325', 'front'))) -and $allChecksPassed
     $allChecksPassed = (Invoke-Viewer 'Cesium Man 静止表示' (@($cesiumPath, '0.9956520475', '0', '0.753275105', '0.024976999', 'static'))) -and $allChecksPassed
@@ -306,6 +335,34 @@ switch ($selection)
         {
             $blendArguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--materials', $yumekaMaterialsPath)
             $result = Invoke-Viewer 'YUMEKA 外部motion blend + IK' $blendArguments
+        }
+    }
+    '8'
+    {
+        $skinningTestPath = Get-MotionPath 'Skinning Test.fbx'
+        if ($skinningTestPath)
+        {
+            $externalArguments = $yumekaArguments + @('external', $skinningTestPath, '--follow-motion', '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA Skinning Test単独再生' $externalArguments
+        }
+    }
+    '9'
+    {
+        $swingingPath = Get-MotionPath 'Swinging.fbx'
+        if ($swingingPath)
+        {
+            $externalArguments = $yumekaArguments + @('external', $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA Swinging単独再生' $externalArguments
+        }
+    }
+    '10'
+    {
+        $skinningTestPath = Get-MotionPath 'Skinning Test.fbx'
+        $swingingPath = Get-MotionPath 'Swinging.fbx'
+        if ($skinningTestPath -and $swingingPath)
+        {
+            $blendArguments = $yumekaArguments + @('external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA Skinning Test + Swinging blend + IK' $blendArguments
         }
     }
     '3'

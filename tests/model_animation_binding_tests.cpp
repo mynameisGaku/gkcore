@@ -1,7 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelAnimationBinding.h"
 #include "model/animation/ModelPose.h"
-#include <gkcore/EHumanoidBone.h>
+#include <gkcore/HumanoidBoneTypes.h>
 
 #include <math.h>
 #include <stdio.h>

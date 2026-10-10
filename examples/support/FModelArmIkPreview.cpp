@@ -347,9 +347,13 @@ bool MakeMotionFollowingArmIkPreview(gk::Vec3 hips, gk::Vec3 torso, gk::Vec3 lef
     return true;
 }
 
-bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& output)
+bool ResolveAnimatedModelArmIkBones(gk::ModelHandle model, uint32_t output[6])
 {
-    // 腕3点、腰、胸、反対側の肩を一つの姿勢から取得する。
+    if (!output)
+    {
+        return false;
+    }
+    // 腕3点、腰、胸、反対側の肩の番号を候補へ解決する。
     uint32_t bones[6]{};
     const gk::EHumanoidBone roles[6] = { gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, gk::EHumanoidBone::Hips, gk::EHumanoidBone::None, gk::EHumanoidBone::LeftUpperArm };
     for (uint32_t index = 0; index < 6; ++index)
@@ -377,9 +381,30 @@ bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& o
             break;
         }
     }
+    if (!foundTorso)
+    {
+        return false;
+    }
+    for (uint32_t index = 0; index < 6; ++index)
+    {
+        output[index] = bones[index];
+    }
+    return true;
+}
+
+bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& output)
+{
+    // 役割を毎回読み直す従来の呼び出しも維持する。
+    uint32_t bones[6]{};
+    return ResolveAnimatedModelArmIkBones(model, bones) && BuildAnimatedModelArmIkPreview(model, bones, output);
+}
+
+bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, const uint32_t bones[6], FModelArmIkPreview& output)
+{
+    // 骨番号の検査と現在姿勢の評価は、公開batch照会へまとめる。
     gk::Vec3 positions[6]{};
     FModelArmIkPreview result{};
-    if (!foundTorso || gk::GetModelBonePositions(model, bones, 6, positions) != 0 || !MakeMotionFollowingArmIkPreview(positions[3], positions[4], positions[5], positions, result))
+    if (gk::GetModelBonePositions(model, bones, 6, positions) != 0 || !MakeMotionFollowingArmIkPreview(positions[3], positions[4], positions[5], positions, result))
     {
         return false;
     }

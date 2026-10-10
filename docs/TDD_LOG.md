@@ -1233,3 +1233,21 @@ GetModelBonePositionsはclip/blend/IKと骨原点の評価を一度ずつ行い�
 通常Runtimeの表示あり1280x720、GPU検証OFF、warmup300・計測3000frameの最新sampleは269.801FPS、p95 4.038ms、DrawModel平均0.825ms、Present平均2.307msでした。300FPSの要求はこのmodeでは未達です。START.batの7番で修正後のYUMEKA blend+IKを起動でき、CheckOnlyによる必要file/引数検査も成功しました。未計測GPUや全骨格の自然さは保証しません。
 
 ゲーム構築用310fileのallowlistは変えず、Runtime・5sampleを既存の配布検証buildでRelease build/installしました。インストール先の新API宣言を確認し、install済みDLL/shaderを既存consumerへ渡したGPUのInit→Present→Shutdownも成功しました。mainへtests・検証tool・私有asset・開発記録は含めません。
+
+## 骨番号の事前解決、新しいモーションと追従表示
+
+動くIK sampleの腕3本・腰・胸・反対肩を起動時に解決して保存し、毎frameの役割検索を省きました。役割表を変更しないsampleが所有する6番号で、一般呼出の2引数Buildは従来の再検索を維持します。Resolve失敗時の配列保持、無効番号とnullでのpreview保持、役割の解除/再設定で再Resolveが必要なこと、clipと時刻への追随をTDDで確認しました。公開宣言未追加のREDを先に取得しています。Clear→現在位置照会→同じbone番号でIK設定→Drawの順と、すべてのsolver検査は維持しました。従来YUMEKA blend+IKの12姿勢は全画素一致しています。
+
+途中でユーザーが公開header4個を名称変更しました。新名へ合わせる明示回答を受け、型名は変えずHumanoidBoneTypes.h、ModelAlphaModeTypes.h、ModelAnimationMappingInfo.h、ModelMaterialSettings.hへinclude・guard・install・配布allowlistを更新しました。参照未更新のnative build failureを記録し、更新後のRuntimeとsample buildを確認しました。既存のaggregate API headerから各型を引き続き使えます。
+
+新たなユーザー提供Skinning Test.fbxとSwinging.fbxをanimation loaderで読み、各66骨・1 clip、2.25秒/2.43333333秒を確認しました。通常model inspectはsupported static trianglesなしで失敗するため、motionとして使っています。YUMEKAへ単独6姿勢ずつ、blend+IK12姿勢、TrooperへSkinning Test+IK12姿勢、ClownへSwinging+IK12姿勢を描画しました。人型対応はYUMEKA各51/53（左右の目不足）、TrooperとClown各52/52です。全48frameのGPU位置・法線readbackと36frameのIK到達・骨長・補正量の検査が成功しました。検査素材はDownloadsを読み取りだけで使い、main/SDKへ含めません。
+
+Swingingは腰が大きく移動し、固定cameraではframe2が画面外に出ました。sample所有のFModelMotionViewをpaired header/cppへ追加し、--follow-motionで初期の腰からの差を表示中心へ加えます。clipの位置・回転・IK目標はそのままです。骨役割設定後・再生前に初期化し、同じ中心をモデル変換とtarget markerへ渡します。GetCenterの表示SRTからの独立、Init失敗時の状態保持、モデル解放と大きな有限差分での出力保持、flag除去/重複/材質path値をCPU契約で確認しました。小さな差分をFLT_MAXへ足す誤ったoverflow期待は丸めで消えるため、大きな有限差分で検査しています。
+
+追従を指定して同じ5case・48frameを再描画し、モデル領域の画素は全frameで存在しました（最小3533画素）。元の腕振り、頭上へ伸ばす腕、体の回転と両手の動きを画像で確認しました。衣服の貫通や全任意bone rigの変形品質は合格条件に含めていません。STARTの8/9は各単独motion、10は2motion blend+右腕IKで、追従はこの3項目だけに指定します。ファイルがない環境ではCheckOnlyの新項目だけを省略します。CheckOnlyは成功しました。
+
+最終CPUはDebug/Release各56件成功（7.95秒/7.60秒）。nativeはWindows11 build26200、RTX4070 SUPER driver617.42、v142/MSVC19.29・SDK10.0.22621.0。gkcore_real_model_capture_testsへmodel/scale/center、externalまたはexternal-blend-ik/external-ik、motionと--follow-motionと材質を渡し、GKCORE_VERIFY_GPU_SKINNING=1で検査。captureは非表示windowを使用しました。成果物はbuild/real-model-captures/Release/new-motions-follow、数値/画像比較/解析はbuild/native-validation/new-motion-*とik-binding-image-regression.*です。
+
+通常Runtimeの可視benchmark・1280x720・検証OFF・3000/warmup300は今回210.209FPS、p95 5.588msでした。DrawModel平均1.100ms、Present平均3.059ms。変更前を同時刻で取ろうとしたrunはwindowが途中で閉じられ完了せず、因果的な速度改善は判定できません。300FPS要求は引き続き未達です。骨番号検索の削減をwall FPS改善と取り違えず、計測と姿勢評価/描画の重複処理を次に調べます。
+
+ゲーム構築用treeは新しいsample補助2fileを含む312fileで、Runtimeと5sampleをRelease buildしました。新header名を含む52fileのRuntime SDK配布allowlistと、install済みDLL/shaderを使うconsumerのGPU Init→Present→Shutdownも成功。旧SDK内の旧名4headerを消す操作は自動承認reviewがポリシーで拒否したため実行していません。旧SDKを残し、build/motion-view-sdkへ新規installして旧名を混ぜない配布物を検証しました。tests・検証tool・私有asset・開発記録はmainへ含めません。

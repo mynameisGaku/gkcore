@@ -1,8 +1,8 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#ifndef GKCORE_FMODELMATERIALSETTINGS_H
-#define GKCORE_FMODELMATERIALSETTINGS_H
+#ifndef GKCORE_MODELMATERIALSETTINGS_H
+#define GKCORE_MODELMATERIALSETTINGS_H
 
-#include <gkcore/EModelAlphaMode.h>
+#include <gkcore/ModelAlphaModeTypes.h>
 #include <gkcore/Handle.h>
 
 /**

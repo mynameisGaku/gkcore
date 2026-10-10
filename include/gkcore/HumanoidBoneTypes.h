@@ -1,6 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
-#ifndef GKCORE_EHUMANOIDBONE_H
-#define GKCORE_EHUMANOIDBONE_H
+#ifndef GKCORE_HUMANOIDBONETYPES_H
+#define GKCORE_HUMANOIDBONETYPES_H
 
 #include <stdint.h>
 

@@ -12,8 +12,10 @@
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
 #include "examples/support/FModelArmIkPreview.h"
+#include "examples/support/FModelMotionView.h"
 
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
@@ -69,9 +71,11 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     // IK検査用の親順骨格。
     gk::model::animation::FModelSkeleton skeleton;
     // 対応表検査ではtargetと異なる名前を使う。
-    const char* boneNames[4] = { "joint_a", "joint_b", "joint_c", "joint_d" };
+    const char* boneNames[7] = { "joint_a", "joint_b", "joint_c", "joint_d", "joint_e", "joint_f", "joint_g" };
     // fixtureに登録した骨数。
     uint32_t boneCount = 3;
+    // trueならtranslated clipのroot移動量へ再生時刻を加える。
+    bool timeVaryingTranslation = false;
     // 1回のpose評価で各clipを1度だけ読むことを数える。
     mutable uint32_t sampleCount = 0;
 
@@ -101,7 +105,7 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     }
     double ClipDuration(uint32_t clip) const override
     {
-        return clip < 2 ? 1.0 : -1.0;
+        return clip < 2 ? (clip == 1 && timeVaryingTranslation ? 1.0e33 : 1.0) : -1.0;
     }
 
     bool Sample(uint32_t clip, double seconds, gk::model::animation::FModelPose& output, gk::String& error) const override
@@ -113,7 +117,7 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
         }
         if (clip == 1)
         {
-            output.localTransforms.At(0).position[0] = 2.0f;
+            output.localTransforms.At(0).position[0] = 2.0f + (timeVaryingTranslation ? static_cast<float>(seconds) : 0.0f);
         }
         error.Clear();
         return true;
@@ -542,6 +546,179 @@ bool TestBuildArmIkTorsoFallback()
 }
 
 /**
+ * 事前解決した6骨bindingを使うpreviewが役割変更後も保持され、再解決と現在poseへ追随することを確認する。
+ */
+bool TestAnimatedArmIkCachedBinding()
+{
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+    {
+        return false;
+    }
+    auto* source = new AAnimationRigTestSource;
+    source->boneCount = 7;
+    source->timeVaryingTranslation = true;
+    const int32_t parents[7] = { -1, 0, 1, 0, 0, 0, 0 };
+    gk::model::animation::FModelBoneTransform rest[7]{};
+    rest[0].position[1] = 1.0f;
+    rest[1].position[0] = -1.0f;
+    rest[2].position[0] = -1.0f;
+    rest[3].position[0] = 0.0f;
+    rest[4].position[1] = 1.0f;
+    rest[5].position[0] = 1.0f;
+    rest[6].position[0] = 0.5f;
+    if (!source->skeleton.parents.AppendRange(parents, 7) || !source->skeleton.restLocalTransforms.AppendRange(rest, 7))
+    {
+        delete source;
+        gk::Release(&resource->reference);
+        return false;
+    }
+    gk::String error;
+    resource->animation = gk::model::CreateModelAnimationAsset(source, error);
+    gk::detail::ModelVertex vertices[7]{};
+    if (!resource->animation || !resource->vertices.AppendRange(vertices, 7))
+    {
+        gk::Release(&resource->reference);
+        return false;
+    }
+    const auto model = gk::detail::RegisterModelResource(resource, error);
+    gk::detail::ModelTransform transform{};
+    transform.handle = model;
+    transform.scale = { 1.0f, 1.0f, 1.0f };
+    if (!model.IsValid() || !gk::detail::GetContext().modelTransforms.Append(transform))
+    {
+        if (model.IsValid())
+        {
+            gk::DeleteModel(model);
+        }
+        return false;
+    }
+    const gk::EHumanoidBone roles[6] = { gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, gk::EHumanoidBone::Hips, gk::EHumanoidBone::Chest, gk::EHumanoidBone::LeftUpperArm };
+    bool passed = true;
+    for (uint32_t index = 0; index < 6; ++index)
+    {
+        passed = gk::SetModelBoneRole(model, index, roles[index]) == 0 && passed;
+    }
+    gk::examples::FModelMotionView motionView;
+    const gk::Vec3 viewCenter{ 5.0f, 6.0f, 7.0f };
+    passed = motionView.Initialize(model, viewCenter) && passed;
+    gk::Vec3 observedCenter{};
+    passed = motionView.GetCenter(observedCenter) && NearVector(observedCenter, viewCenter) && passed;
+    passed = gk::SetModelPosition(model, { 20.0f, 30.0f, 40.0f }) == 0 && gk::SetModelRotation(model, { 0.2f, 0.3f, 0.4f }) == 0 && gk::SetModelScale(model, { 2.0f, 3.0f, 4.0f }) == 0 && passed;
+    observedCenter = {};
+    passed = motionView.GetCenter(observedCenter) && NearVector(observedCenter, viewCenter) && passed;
+    gk::examples::FModelMotionView overflowView;
+    const float largestFloat = std::numeric_limits<float>::max();
+    passed = overflowView.Initialize(model, { largestFloat, 0.0f, 0.0f }) && passed;
+    gk::Vec3 retainedCenter{ 81.0f, 82.0f, 83.0f };
+    passed = !motionView.Initialize({}, { 8.0f, 9.0f, 10.0f }) && motionView.GetCenter(retainedCenter) && NearVector(retainedCenter, viewCenter) && passed;
+    passed = !motionView.Initialize(model, { std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f }) && motionView.GetCenter(retainedCenter) && NearVector(retainedCenter, viewCenter) && passed;
+    auto* modelTransform = gk::detail::FindModelTransform(model);
+    passed = modelTransform && modelTransform->playback && modelTransform->playback->roles.Count() == 7 && passed;
+    if (modelTransform && modelTransform->playback && modelTransform->playback->roles.Count() == 7)
+    {
+        modelTransform->playback->roles.At(6) = static_cast<uint16_t>(gk::EHumanoidBone::Hips);
+    }
+    passed = !motionView.Initialize(model, { 11.0f, 12.0f, 13.0f }) && motionView.GetCenter(retainedCenter) && NearVector(retainedCenter, viewCenter) && passed;
+    if (modelTransform && modelTransform->playback && modelTransform->playback->roles.Count() == 7)
+    {
+        modelTransform->playback->roles.At(6) = static_cast<uint16_t>(gk::EHumanoidBone::None);
+    }
+    passed = gk::SetModelBoneRole(model, 3, gk::EHumanoidBone::None) == 0 && passed;
+    passed = !motionView.Initialize(model, { 11.0f, 12.0f, 13.0f }) && motionView.GetCenter(retainedCenter) && NearVector(retainedCenter, viewCenter) && passed;
+    passed = gk::SetModelBoneRole(model, 3, gk::EHumanoidBone::Hips) == 0 && passed;
+    uint32_t binding[6]{};
+    const uint32_t expectedBinding[6] = { 0, 1, 2, 3, 4, 5 };
+    passed = gk::examples::ResolveAnimatedModelArmIkBones(model, binding) && memcmp(binding, expectedBinding, sizeof(binding)) == 0 && passed;
+    gk::examples::FModelArmIkPreview cached{};
+    gk::examples::FModelArmIkPreview dynamic{};
+    passed = gk::examples::BuildAnimatedModelArmIkPreview(model, binding, cached) && gk::examples::BuildAnimatedModelArmIkPreview(model, dynamic) && SamePreview(cached, dynamic) && passed;
+    passed = gk::PlayModelAnimation(model, 1, false) == 0 && gk::SetModelAnimationTime(model, 0.0, 0) == 0 && gk::UpdateModelAnimation(model, 0.0) == 0 && passed;
+    gk::examples::FModelArmIkPreview animated{};
+    passed = gk::examples::BuildAnimatedModelArmIkPreview(model, binding, animated) && Near(animated.joints[0].x, cached.joints[0].x + 2.0f) && passed;
+    passed = gk::SetModelAnimationTime(model, 0.5, 0) == 0 && gk::UpdateModelAnimation(model, 0.0) == 0 && passed;
+    gk::examples::FModelArmIkPreview retimed{};
+    passed = gk::examples::BuildAnimatedModelArmIkPreview(model, binding, retimed) && Near(retimed.joints[0].x, cached.joints[0].x + 2.5f) && passed;
+    observedCenter = {};
+    passed = motionView.GetCenter(observedCenter) && NearVector(observedCenter, { 7.5f, 6.0f, 7.0f }) && passed;
+    passed = gk::SetModelAnimationTime(model, 1.0e32, 0) == 0 && gk::UpdateModelAnimation(model, 0.0) == 0 && passed;
+    retainedCenter = { 92.0f, 93.0f, 94.0f };
+    passed = !overflowView.GetCenter(retainedCenter) && NearVector(retainedCenter, { 92.0f, 93.0f, 94.0f }) && passed;
+    passed = gk::SetModelAnimationTime(model, 0.5, 0) == 0 && gk::UpdateModelAnimation(model, 0.0) == 0 && passed;
+    passed = gk::SetModelBoneRole(model, 0, gk::EHumanoidBone::None) == 0 && passed;
+    gk::examples::FModelArmIkPreview stillCached{};
+    uint32_t resolvedAgain[6]{};
+    const uint32_t savedFailedBinding[6] = { 51, 52, 53, 54, 55, 56 };
+    uint32_t unresolvedBinding[6];
+    memcpy(unresolvedBinding, savedFailedBinding, sizeof(unresolvedBinding));
+    passed = gk::examples::BuildAnimatedModelArmIkPreview(model, binding, stillCached) && stillCached.bones[0] == 0 && !gk::examples::ResolveAnimatedModelArmIkBones(model, unresolvedBinding) && memcmp(unresolvedBinding, savedFailedBinding, sizeof(unresolvedBinding)) == 0 && passed;
+    passed = gk::SetModelBoneRole(model, 6, gk::EHumanoidBone::RightUpperArm) == 0 && gk::examples::ResolveAnimatedModelArmIkBones(model, resolvedAgain) && resolvedAgain[0] == 6 && passed;
+    gk::examples::FModelArmIkPreview rebound{};
+    passed = gk::examples::BuildAnimatedModelArmIkPreview(model, resolvedAgain, rebound) && rebound.bones[0] == 6 && passed;
+    const gk::examples::FModelArmIkPreview savedPreview = rebound;
+    const uint32_t savedBinding[6] = { 41, 42, 43, 44, 45, 46 };
+    uint32_t failedBinding[6];
+    memcpy(failedBinding, savedBinding, sizeof(failedBinding));
+    passed = !gk::examples::ResolveAnimatedModelArmIkBones({}, failedBinding) && memcmp(failedBinding, savedBinding, sizeof(failedBinding)) == 0 && passed;
+    passed = !gk::examples::ResolveAnimatedModelArmIkBones(model, nullptr) && passed;
+    gk::examples::FModelArmIkPreview failedPreview = savedPreview;
+    passed = !gk::examples::BuildAnimatedModelArmIkPreview(model, nullptr, failedPreview) && SamePreview(failedPreview, savedPreview) && passed;
+    const uint32_t invalidBinding[6] = { 99, 1, 2, 3, 4, 5 };
+    failedPreview = savedPreview;
+    passed = !gk::examples::BuildAnimatedModelArmIkPreview(model, invalidBinding, failedPreview) && SamePreview(failedPreview, savedPreview) && passed;
+    passed = gk::DeleteModel(model) == 0 && passed;
+    retainedCenter = { 101.0f, 102.0f, 103.0f };
+    passed = !motionView.GetCenter(retainedCenter) && NearVector(retainedCenter, { 101.0f, 102.0f, 103.0f }) && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "cached animated arm IK binding or failure atomicity failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
+ * viewer option解析が位置引数とmaterials設定を保ち、follow flagの重複失敗を変更なしで返す。
+ */
+bool TestParseMotionViewOptions()
+{
+    char app[] = "viewer";
+    char model[] = "motion.glb";
+    char scale[] = "1";
+    char centerX[] = "0";
+    char centerY[] = "1";
+    char centerZ[] = "2";
+    char motionFlag[] = "--motion-bones";
+    char motionPath[] = "bones.glb";
+    char followFlag[] = "--follow-motion";
+    char materialsFlag[] = "--materials";
+    char materialsValue[] = "--follow-motion";
+    char* arguments[12] = { app, model, scale, centerX, centerY, centerZ, motionFlag, motionPath, followFlag, materialsFlag, materialsValue, nullptr };
+    int argumentCount = 11;
+    bool followMotion = false;
+    bool passed = gk::examples::ParseMotionViewOptions(argumentCount, arguments, followMotion) && followMotion && argumentCount == 10 && arguments[6] == motionFlag && arguments[7] == motionPath && arguments[8] == materialsFlag && arguments[9] == materialsValue && arguments[10] == nullptr;
+
+    char duplicateApp[] = "viewer";
+    char duplicateModel[] = "motion.glb";
+    char duplicateScale[] = "1";
+    char duplicateX[] = "0";
+    char duplicateY[] = "1";
+    char duplicateZ[] = "2";
+    char duplicateFirst[] = "--follow-motion";
+    char duplicateSecond[] = "--follow-motion";
+    char* duplicateArguments[9] = { duplicateApp, duplicateModel, duplicateScale, duplicateX, duplicateY, duplicateZ, duplicateFirst, duplicateSecond, nullptr };
+    char* originalArguments[9];
+    memcpy(originalArguments, duplicateArguments, sizeof(duplicateArguments));
+    int duplicateCount = 8;
+    bool duplicateFollowMotion = true;
+    passed = !gk::examples::ParseMotionViewOptions(duplicateCount, duplicateArguments, duplicateFollowMotion) && duplicateCount == 8 && duplicateFollowMotion && memcmp(originalArguments, duplicateArguments, sizeof(duplicateArguments)) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "motion-view command line option contract failed\n");
+    }
+    return passed;
+}
+
+/**
  * IK目標markerがUI層へ8個の塗り三角形として正しいworld位置で積まれることを確認する。
  */
 bool TestModelArmIkTargetMarker()
@@ -922,7 +1099,7 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
-    if (!TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback())
+    if (!TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
     {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);

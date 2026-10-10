@@ -4,6 +4,7 @@
 #include "examples/support/FHumanoidMapOptions.h"
 #include "examples/support/ModelMappingReport.h"
 #include "examples/support/FModelArmIkPreview.h"
+#include "examples/support/FModelMotionView.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -237,9 +238,16 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "unknown error");
         return 2;
     }
+    // 大きく移動するmotionを画面内で見るための任意指定。
+    bool followMotion = false;
+    if (!gk::examples::ParseMotionViewOptions(argc, argv, followMotion))
+    {
+        fprintf(stderr, "invalid or duplicate --follow-motion option\n");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -297,8 +305,16 @@ int main(int argc, char** argv)
     }
     // IKとchainも役割対応を使うため、手動表または自動判定を適用する。
     const bool humanoidIkMode = strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0 || externalIkMode;
-    if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode || humanoidIkMode) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
+    if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode || humanoidIkMode || followMotion) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
     {
+        failed = true;
+    }
+
+    // 再生前の腰を基準に、表示中心だけを追従させる。
+    gk::examples::FModelMotionView motionView;
+    if (!failed && followMotion && !motionView.Initialize(model, { center[0], center[1], center[2] }))
+    {
+        fprintf(stderr, "follow-motion requires a unique Hips role and valid model position\n");
         failed = true;
     }
 
@@ -368,6 +384,13 @@ int main(int argc, char** argv)
 
     // 腕の長さと肩の側から、肩より外側のsample目標を作る。
     gk::examples::FModelArmIkPreview armIkPreview{};
+    // このsampleは起動後に役割表を変更しないため、動くIKの6骨を一度だけ解決する。
+    uint32_t animatedIkBones[6]{};
+    if (!failed && externalIkMode && !gk::examples::ResolveAnimatedModelArmIkBones(model, animatedIkBones))
+    {
+        fprintf(stderr, "animated IK requires configured arm and torso roles\n");
+        failed = true;
+    }
     if (!failed && humanoidIkMode && !externalIkMode)
     {
         if (!gk::examples::BuildModelArmIkPreview(model, armIkPreview))
@@ -554,23 +577,31 @@ int main(int argc, char** argv)
                 failed = true;
                 break;
             }
-            if (!gk::examples::BuildAnimatedModelArmIkPreview(model, currentArmIkPreview))
+            if (!gk::examples::BuildAnimatedModelArmIkPreview(model, animatedIkBones, currentArmIkPreview))
             {
                 fprintf(stderr, "animated external IK preview requires arm and torso roles with valid joint positions: %s\n", gk::GetLastErrorMessage());
                 failed = true;
                 break;
             }
-            if (!Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, currentArmIkPreview.target, currentArmIkPreview.pole), "SetModelHumanoidTwoBoneIk(animated external)"))
+            if (!Check(gk::SetModelTwoBoneIk(model, currentArmIkPreview.bones[0], currentArmIkPreview.bones[1], currentArmIkPreview.bones[2], currentArmIkPreview.target, currentArmIkPreview.pole), "SetModelTwoBoneIk(animated external)"))
             {
                 failed = true;
                 break;
             }
             armIkPreview = currentArmIkPreview;
         }
+        // 追従は表示用中心だけを変え、motionの腰位置はそのまま残す。
+        gk::Vec3 displayCenter{ center[0], center[1], center[2] };
+        if (followMotion && !motionView.GetCenter(displayCenter))
+        {
+            fprintf(stderr, "follow-motion center evaluation failed\n");
+            failed = true;
+            break;
+        }
         // 指定中心を画面中央に保ったまま、modelと目標を一緒に回転する。
         const float rotationCosine = cosf(rotationY);
         const float rotationSine = sinf(rotationY);
-        const gk::Vec3 centeredPosition{ -scale * (center[0] * rotationCosine + center[2] * rotationSine), -scale * center[1], -scale * (-center[0] * rotationSine + center[2] * rotationCosine) };
+        const gk::Vec3 centeredPosition{ -scale * (displayCenter.x * rotationCosine + displayCenter.z * rotationSine), -scale * displayCenter.y, -scale * (-displayCenter.x * rotationSine + displayCenter.z * rotationCosine) };
         const gk::Vec3 rotation{ 0.0f, rotationY, 0.0f };
         const gk::Vec3 light{ sinf(0.35f), -0.45f, -cosf(0.35f) };
         if (!Check(gk::SetModelPosition(model, centeredPosition), "SetModelPosition") || !Check(gk::SetModelRotation(model, rotation), "SetModelRotation") || !Check(gk::SetDirectionalLight(light, 2.5f), "SetDirectionalLight") || !Check(gk::BeginFrame(), "BeginFrame") || !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "SetDrawLayer(Scene)") || !Check(gk::DrawRect(0.0f, 0.0f, 1280.0f, 720.0f, gk::ColorRGB(28, 34, 48), true), "DrawRect(background)"))
@@ -589,7 +620,7 @@ int main(int argc, char** argv)
         }
         if (humanoidIkMode)
         {
-            if (!gk::examples::DrawModelArmIkTarget(armIkPreview, scale, { center[0], center[1], center[2] }, rotationY))
+            if (!gk::examples::DrawModelArmIkTarget(armIkPreview, scale, displayCenter, rotationY))
             {
                 failed = true;
                 break;
