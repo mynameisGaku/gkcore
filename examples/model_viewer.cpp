@@ -3,6 +3,7 @@
 #include <gkcore/ModelAnimation.h>
 #include "examples/support/FHumanoidMapOptions.h"
 #include "examples/support/ModelMappingReport.h"
+#include "examples/support/FModelArmIkPreview.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -157,20 +158,6 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
     }
     fclose(file);
     return passed;
-}
-
-/**
- * 人型役割から対応するmodel bone番号を探す。
- */
-int32_t FindModelRoleBone(gk::ModelHandle model, gk::EHumanoidBone role)
-{
-    // 役割を確認するmodel bone番号。
-    for (uint32_t bone = 0; bone < gk::GetModelBoneCount(model); ++bone)
-    {
-        if (gk::GetModelBoneRole(model, bone) == role)
-            return static_cast<int32_t>(bone);
-    }
-    return -1;
 }
 
 /**
@@ -342,42 +329,22 @@ int main(int argc, char** argv)
             failed = true;
     }
 
-    if (!failed && strcmp(mode, "ik") == 0)
+    // 腕の長さと肩の側から、肩より外側のsample目標を作る。
+    gk::examples::FModelArmIkPreview armIkPreview{};
+    if (!failed && humanoidIkMode)
     {
-        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
-        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
-        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
-        if (root < 0 || middle < 0 || end < 0)
+        if (!gk::examples::BuildModelArmIkPreview(model, armIkPreview))
         {
-            fprintf(stderr, u8"IK modeにはRightUpperArm/RightLowerArm/RightHand役割の対応が必要です\n");
+            fprintf(stderr, "IK preview requires arm and torso roles with valid joint positions: %s\n", gk::GetLastErrorMessage());
             failed = true;
         }
         else
         {
-            const float inverseScale = 1.0f / scale;
-            const gk::Vec3 target{ center[0] + 0.15f * inverseScale, center[1] + 0.08f * inverseScale, center[2] };
-            const gk::Vec3 pole{ center[0], center[1], center[2] + 0.25f * inverseScale };
-            if (!Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, target, pole), "SetModelHumanoidTwoBoneIk"))
+            const int result = strcmp(mode, "ik") == 0 ? gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, armIkPreview.target, armIkPreview.pole) : gk::SetModelIkChain(model, armIkPreview.bones, 3, armIkPreview.target);
+            if (!Check(result, "SetModelIk(preview)"))
+            {
                 failed = true;
-        }
-    }
-    if (!failed && strcmp(mode, "chain") == 0)
-    {
-        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
-        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
-        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
-        if (root < 0 || middle < 0 || end < 0)
-        {
-            fprintf(stderr, u8"chain modeにはRightUpperArm/RightLowerArm/RightHand役割の対応が必要です\n");
-            failed = true;
-        }
-        else
-        {
-            const uint32_t chain[3] = { static_cast<uint32_t>(root), static_cast<uint32_t>(middle), static_cast<uint32_t>(end) };
-            const float inverseScale = 1.0f / scale;
-            const gk::Vec3 target{ center[0] + 0.18f * inverseScale, center[1] + 0.1f * inverseScale, center[2] };
-            if (!Check(gk::SetModelIkChain(model, chain, 3, target), "SetModelIkChain"))
-                failed = true;
+            }
         }
     }
     if (!failed && strcmp(mode, "blend") == 0)
@@ -527,9 +494,13 @@ int main(int argc, char** argv)
             failed = true;
             break;
         }
+        // 指定中心を画面中央に保ったまま、modelと目標を一緒に回転する。
+        const float rotationCosine = cosf(rotationY);
+        const float rotationSine = sinf(rotationY);
+        const gk::Vec3 centeredPosition{ -scale * (center[0] * rotationCosine + center[2] * rotationSine), -scale * center[1], -scale * (-center[0] * rotationSine + center[2] * rotationCosine) };
         const gk::Vec3 rotation{ 0.0f, rotationY, 0.0f };
         const gk::Vec3 light{ sinf(0.35f), -0.45f, -cosf(0.35f) };
-        if (!Check(gk::SetModelRotation(model, rotation), "SetModelRotation") || !Check(gk::SetDirectionalLight(light, 2.5f), "SetDirectionalLight") || !Check(gk::BeginFrame(), "BeginFrame") || !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "SetDrawLayer(Scene)") || !Check(gk::DrawRect(0.0f, 0.0f, 1280.0f, 720.0f, gk::ColorRGB(28, 34, 48), true), "DrawRect(background)"))
+        if (!Check(gk::SetModelPosition(model, centeredPosition), "SetModelPosition") || !Check(gk::SetModelRotation(model, rotation), "SetModelRotation") || !Check(gk::SetDirectionalLight(light, 2.5f), "SetDirectionalLight") || !Check(gk::BeginFrame(), "BeginFrame") || !Check(gk::SetDrawLayer(gk::DrawLayer::Scene), "SetDrawLayer(Scene)") || !Check(gk::DrawRect(0.0f, 0.0f, 1280.0f, 720.0f, gk::ColorRGB(28, 34, 48), true), "DrawRect(background)"))
         {
             failed = true;
             break;
@@ -542,6 +513,14 @@ int main(int argc, char** argv)
         {
             failed = true;
             break;
+        }
+        if (humanoidIkMode)
+        {
+            if (!gk::examples::DrawModelArmIkTarget(armIkPreview, scale, { center[0], center[1], center[2] }, rotationY))
+            {
+                failed = true;
+                break;
+            }
         }
 #if defined(GKCORE_MODEL_BENCHMARK)
         if (!Check(gk::DrawString(24.0f, 92.0f, "Benchmark", gk::ColorRGB(215, 225, 240)), "DrawString(benchmark)"))
