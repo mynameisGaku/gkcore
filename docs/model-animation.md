@@ -171,6 +171,9 @@ IKは手足を指定位置へ近づける計算です。
 大きく離れた目標による肩の変形や、twist補助boneへの回転の自動配分にも対応していません。
 目標到達やCPU/GPUの一致だけでは、貫通のない自然な姿勢とは判断できません。
 
+人型役割の型はHumanoidBoneTypes.h、対応件数の型はModelAnimationMappingInfo.hに分かれています。
+通常はModelAnimation.hのincludeで両方を使えます。
+
 GetModelBonePositionで、現在のclip・ブレンド・IK後のボーン原点をモデル空間で取得できます。
 表示用の位置・回転・scaleは含まず、照会だけでは時刻を進めません。
 未再生なら初期位置を返し、無効handle・番号・骨格なし・姿勢評価失敗では出力値を保ちます。
@@ -190,6 +193,11 @@ if (gk::GetModelBonePositions(character, bones, 3, joints) == 0)
     // 3関節は同じclip・ブレンド・IKの評価結果から取得している。
 }
 ```
+
+viewerは起動時に設定した役割表から腕と胴体の骨番号を一度解決して使います。
+動く役割表をゲーム側で使う場合は、役割変更後に番号を解決し直してください。
+--follow-motionを指定すると、再生前の腰からの移動量を表示中心へ加えます。
+大きく移動するclipを画面内で確認するための表示機能で、元のアニメーション位置やIK目標は変更しません。
 
 モデルviewerのexternal-ikとexternal-blend-ikは、外部モーションに右腕IKを重ねるsampleです。
 毎frame、時刻を更新して古いIKを解除し、現在のmotion姿勢から手先目標を作ります。

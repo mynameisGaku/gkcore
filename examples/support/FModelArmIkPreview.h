@@ -58,6 +58,19 @@ bool MakeMotionFollowingArmIkPreview(gk::Vec3 hips, gk::Vec3 torso, gk::Vec3 lef
 bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, FModelArmIkPreview& output);
 
 /**
+ * 右上腕・前腕・手・腰・胸・左上腕の順に6骨を解決する。失敗時はoutputを保つ。
+ * outputは6要素必要。同じモデルの役割を変更したら呼び直す。
+ */
+bool ResolveAnimatedModelArmIkBones(gk::ModelHandle model, uint32_t output[6]);
+
+/**
+ * 事前解決した6骨の現在位置から目標を作る。役割表は再検索しない。
+ * bonesは同じモデルで解決した6要素。無効番号・姿勢評価の失敗時はoutputを保つ。
+ * 前frameのIKを目標へ持ち越さない場合は、照会前にそのIKを解除する。
+ */
+bool BuildAnimatedModelArmIkPreview(gk::ModelHandle model, const uint32_t bones[6], FModelArmIkPreview& output);
+
+/**
  * モデル座標の手先目標を表示座標へ変換し、UIレイヤー上にオレンジ色の中抜き菱形を描く。
  * 呼び出し側は事前にUIレイヤーを選ぶ。scaleが正の有限値でない、または描画APIが失敗した場合はfalseを返す。
  */

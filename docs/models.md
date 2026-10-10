@@ -1,4 +1,4 @@
-# モデルを読み込む
+﻿# モデルを読み込む
 
 `gk::LoadModel` に UTF-8 のファイルパスを渡すと、モデルのハンドルが返ります。
 OBJ、GLB 2.0、FBX を読み込めます。
@@ -475,3 +475,6 @@ OBJとFBXはmetallic `0`、roughness `1` で描画します。
 使い方は[モデル照明ガイド](lighting.md)を参照してください。
 
 GLB以外のOBJ/FBX透明材質合成、影、環境マップ / IBL、手続き的に生成する画像は未対応です。
+
+材質設定の型はModelMaterialSettings.h、alpha modeの型はModelAlphaModeTypes.hに分かれています。
+ModelMaterial.hのincludeで両方を使えます。
