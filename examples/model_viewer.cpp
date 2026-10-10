@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
+#include "examples/support/FHumanoidMapOptions.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -225,9 +226,17 @@ int CompareMilliseconds(const void* left, const void* right)
  */
 int main(int argc, char** argv)
 {
+    // 人型bone対応表optionを先に取り除き、残りの位置引数を従来どおり解釈する。
+    gk::examples::FHumanoidMapOptions humanoidMapOptions{};
+    const char* humanoidMapError = nullptr;
+    if (!gk::examples::ParseHumanoidMapOptions(argc, argv, humanoidMapOptions, &humanoidMapError))
+    {
+        fprintf(stderr, "invalid humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "unknown error");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -251,9 +260,9 @@ int main(int argc, char** argv)
     const bool externalBlendMode = strcmp(mode, "external-blend") == 0;
     // modeに必要な引数が揃っているかを示す。
     const bool modeArgumentsValid = (externalMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
-    if (!IsKnownMode(mode) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]))
+    if (!IsKnownMode(mode) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
     {
-        fprintf(stderr, "unknown viewer mode: %s\n", mode);
+        fprintf(stderr, "invalid viewer mode or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : mode);
         return 2;
     }
     if (!Check(gk::SetWindowSize(1280, 720), "SetWindowSize") || !Check(gk::SetVSyncEnabled(false), "SetVSyncEnabled(false)") || !Check(gk::Init(), "Init"))
@@ -272,6 +281,10 @@ int main(int argc, char** argv)
         failed = true;
     if (!failed && hasMaterialConfig && !ApplyMaterialConfig(model, materialConfigPath))
         failed = true;
+    if (!failed && humanoidMapOptions.modelPath && !Check(gk::SetModelHumanoidBoneMap(model, humanoidMapOptions.modelPath), "SetModelHumanoidBoneMap"))
+        failed = true;
+    if (!failed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode) && !Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones"))
+        failed = true;
 
     // 適用後に解放する主motionのhandle。
     gk::ModelAnimationHandle externalAnimation{};
@@ -285,7 +298,7 @@ int main(int argc, char** argv)
             fprintf(stderr, "LoadModelAnimation(primary): %s\n", gk::GetLastErrorMessage());
             failed = true;
         }
-        else if (!Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones") || !Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)") || !Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)"))
+        else if (!(humanoidMapOptions.motionPath ? Check(gk::SetAnimationHumanoidBoneMap(externalAnimation, humanoidMapOptions.motionPath), "SetAnimationHumanoidBoneMap(primary)") : Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)")) || !Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)"))
             failed = true;
         if (!failed && externalBlendMode)
         {
@@ -295,7 +308,7 @@ int main(int argc, char** argv)
                 fprintf(stderr, "LoadModelAnimation(secondary): %s\n", gk::GetLastErrorMessage());
                 failed = true;
             }
-            else if (!Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)") || !Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)"))
+            else if (!(humanoidMapOptions.blendPath ? Check(gk::SetAnimationHumanoidBoneMap(secondaryAnimation, humanoidMapOptions.blendPath), "SetAnimationHumanoidBoneMap(secondary)") : Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)")) || !Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)"))
                 failed = true;
         }
         if (externalAnimation.IsValid() && !Check(gk::DeleteModelAnimation(externalAnimation), "DeleteModelAnimation(primary after apply)"))

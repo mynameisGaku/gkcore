@@ -62,6 +62,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
     src/model/animation/HumanoidMapping.cpp
+    src/model/animation/HumanoidBoneMap.cpp
     src/text/Text.cpp
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
@@ -291,7 +292,7 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_model_lighting examples/model_lighting.cpp)
     target_compile_features(gkcore_model_lighting PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_lighting PRIVATE gkcore::gkcore)
-    add_executable(gkcore_model_viewer examples/model_viewer.cpp)
+    add_executable(gkcore_model_viewer examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp)
     target_compile_features(gkcore_model_viewer PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_viewer PRIVATE gkcore::gkcore)
     gkcore_enable_warnings(gkcore_model_viewer)

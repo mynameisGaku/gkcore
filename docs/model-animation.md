@@ -200,3 +200,6 @@ GLB/FBXの骨格を共通の人型役割へ対応付け、初期姿勢と骨長�
 自動推定できない名前はSetModelBoneRoleとSetAnimationBoneRoleで指定してください。
 元の名前が異なっても同じ役割で結び付きます。
 骨格を持たないOBJへ骨モーションを適用することはできません。
+
+骨名を毎回手動指定する代わりに、SetModelHumanoidBoneMap・SetAnimationHumanoidBoneMapで保存した対応表を読み込めます。
+対応の全置換、失敗時の保持、再適用の手順は[人型ボーンの対応表](humanoid-bone-map.md)を参照してください。
