@@ -1161,3 +1161,11 @@ Unreal由来のモーションを別人型へ移す確認は、ClownMonsterWalk�
 公開用構成はtestsのない300ファイルからReleaseのRuntimeと5サンプルをビルドし、installしたSDKだけを使う別アプリのInit・描画・Present・Shutdownに成功しました。ログはgame-main-{config,build,install}.log、game-main-consumer-{config,build,run}.logです。作業コピー全体の削除と個別削除は自動承認レビューに拒否されたため、古い作業コピーを消す方式は止め、公開用の新しいGit treeを作る方式へ変更しました。元のdevと履歴は保持します。
 
 任意の異なる骨名と、異なる初期回転・骨長を持つ5ボーンの汎用人型binding契約も追加しました。FBX source/GLB targetという形式指定で、人型役割による対応、期待回転、骨長保持と三角関数から独立に求めた足位置を確認し、Debug/Releaseとも成功。新しい公開構成契約を含むCPU全体はDebug54/54件（4.73秒）、Release54/54件（3.99秒）です。起動メニュー6項目のファイル・材質・両motionもCheckOnlyで通過しました。
+
+## 人型ボーンの対応ファイル
+
+自動判定できない骨名にも対応を保存して再利用するため、SetModelHumanoidBoneMap・SetAnimationHumanoidBoneMapを追加しました。UTF-8対応表はRoleName/tab/骨名の全置換です。候補を完成してから反映し、失敗時・適用済みclip・別instanceを変更しません。parserを未実装stubとして契約REDを確認し、実装でGREEN。公開APIもstubでRED、正規実装でGREENにしました。viewerの引数では除去後のargv終端と、次optionを値として消費しない条件を先にREDとして修正しています。
+
+CPU Debug56/56件（4.47秒）、Release56/56件（5.36秒）成功。実モデルはCesium Man GLBの19役割を骨階層と関節位置から明示し、GLB motion→Trooper FBX、Trooper Idle FBX→Cesium GLB、Cesium GLBとClown Walk FBXの混在ブレンド→Clown FBXを各6姿勢でDebug/Release確認しました。8脚役割は全例で対応。FBX targetはGPU readbackで位置差0・法線最大差約1.79e-7、GLB targetは既存のCPU skinningを描画しています。GLB側でGPU-only readbackを要求した初回はdispatchなしで失敗したため、検証設定を正しく切り替えました。GPU処理が行われたという誤った記録にはしません。ログはhumanoid-map-*とhumanoid-profile-{debug,release}-*.log、画像はbuild/real-model-captures/{Debug,Release}/humanoid-profilesです。
+
+対応表の追加後も、公開用のtestsなし305ファイルからRuntimeと5サンプルをビルドし、install済みSDKだけを使うconsumerのGPU起動・描画・終了が成功しました。関連ログはhumanoid-map-game-{config,build,install}.logとhumanoid-map-game-consumer-*.logです。3組の各6画像もDebug/Releaseで全画素一致しています。

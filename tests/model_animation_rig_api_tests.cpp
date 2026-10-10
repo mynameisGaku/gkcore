@@ -9,9 +9,14 @@
 #include "model/animation/FModelAnimationAsset.h"
 #include "model/animation/FModelPlayback.h"
 #include "model/animation/ModelPose.h"
+#include "model/animation/ModelAnimationResources.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <math.h>
 #include <stdio.h>
+#include <string>
 
 namespace
 {
@@ -124,6 +129,117 @@ bool Near(float left, float right)
 }
 
 /**
+ * 公開profile API用に、既存fixtureと同じ3骨motionを登録する。
+ */
+gk::ModelAnimationHandle CreateRigAnimation()
+{
+    auto* source = new AAnimationRigTestSource;
+    const int32_t parents[3] = { -1, 0, 1 };
+    gk::model::animation::FModelBoneTransform rest[3]{};
+    rest[1].position[0] = 1.0f;
+    rest[2].position[0] = 1.0f;
+    if (!source->skeleton.parents.AppendRange(parents, 3) || !source->skeleton.restLocalTransforms.AppendRange(rest, 3))
+    {
+        delete source;
+        return {};
+    }
+    gk::String error;
+    auto* asset = gk::model::CreateModelAnimationAsset(source, error);
+    const auto handle = gk::model::RegisterAnimation(asset, error);
+    if (!handle.IsValid())
+        fprintf(stderr, "rig animation registration failed: %s\n", error.CStr());
+    return handle;
+}
+
+/**
+ * UTF-8 profileを指定先へ書き、APIへ渡すUTF-8パスを返す。
+ */
+bool WriteHumanoidProfile(const std::filesystem::path& path, const char* contents, std::string& utf8Path)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file || !(file << contents))
+        return false;
+    file.close();
+    const auto encoded = path.u8string();
+    utf8Path.assign(encoded.begin(), encoded.end());
+    return true;
+}
+
+/**
+ * 全置換、失敗時保持、instance分離、bind時点固定を公開APIで確認する。
+ */
+bool TestHumanoidProfiles(gk::ModelHandle model, gk::ModelHandle instance)
+{
+    namespace fs = std::filesystem;
+    const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+    const auto directory = fs::temp_directory_path() / ("gkcore-humanoid-profile-" + std::to_string(suffix));
+    fs::create_directories(directory);
+    const auto profileOnePath = directory / "profile-one.txt";
+    const auto profileTwoPath = directory / "profile-two.txt";
+    const auto partialPath = directory / "partial.txt";
+    const auto unknownPath = directory / "unknown.txt";
+    const auto duplicatePath = directory / "duplicate.txt";
+    std::string profileOne, profileTwo, partial, unknown, duplicate;
+    const bool fixturesReady = WriteHumanoidProfile(profileOnePath, "# 人型profile\r\nHips\troot\r\nLeftUpperLeg\tmiddle\r\nLeftLowerLeg\tend\r\n", profileOne) && WriteHumanoidProfile(profileTwoPath, "Hips\troot\nLeftUpperLeg\tend\nLeftLowerLeg\tmiddle\n", profileTwo) && WriteHumanoidProfile(partialPath, "Hips\troot\n", partial) && WriteHumanoidProfile(unknownPath, "Hips\troot\nLeftUpperLeg\tmissing\n", unknown) && WriteHumanoidProfile(duplicatePath, "Hips\troot\nHips\tmiddle\n", duplicate);
+    if (!fixturesReady)
+    {
+        fs::remove_all(directory);
+        fprintf(stderr, "humanoid profile fixtures could not be written\n");
+        return false;
+    }
+    const auto animation = CreateRigAnimation();
+    if (!animation.IsValid())
+    {
+        fs::remove_all(directory);
+        return false;
+    }
+    bool passed = true;
+    passed = gk::SetModelHumanoidBoneMap(model, profileOne.c_str()) == 0 && passed;
+    passed = gk::GetModelBoneRole(model, 0) == gk::EHumanoidBone::Hips && gk::GetModelBoneRole(model, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetModelBoneRole(model, 2) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, partial.c_str()) == 0 && passed;
+    passed = gk::GetModelBoneRole(model, 0) == gk::EHumanoidBone::Hips && gk::GetModelBoneRole(model, 1) == gk::EHumanoidBone::None && gk::GetModelBoneRole(model, 2) == gk::EHumanoidBone::None && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, profileOne.c_str()) == 0 && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, profileOne.c_str()) == 0 && passed;
+    passed = gk::GetAnimationBoneRole(animation, 0) == gk::EHumanoidBone::Hips && gk::GetAnimationBoneRole(animation, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetAnimationBoneRole(animation, 2) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, partial.c_str()) == 0 && passed;
+    passed = gk::GetAnimationBoneRole(animation, 0) == gk::EHumanoidBone::Hips && gk::GetAnimationBoneRole(animation, 1) == gk::EHumanoidBone::None && gk::GetAnimationBoneRole(animation, 2) == gk::EHumanoidBone::None && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, profileOne.c_str()) == 0 && passed;
+    passed = gk::SetModelHumanoidBoneMap({}, profileOne.c_str()) == -1 && gk::SetAnimationHumanoidBoneMap({}, profileOne.c_str()) == -1 && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, unknown.c_str()) == -1 && gk::SetModelHumanoidBoneMap(model, duplicate.c_str()) == -1 && passed;
+    passed = gk::GetModelBoneRole(model, 0) == gk::EHumanoidBone::Hips && gk::GetModelBoneRole(model, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetModelBoneRole(model, 2) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, unknown.c_str()) == -1 && gk::SetAnimationHumanoidBoneMap(animation, duplicate.c_str()) == -1 && passed;
+    passed = gk::GetAnimationBoneRole(animation, 0) == gk::EHumanoidBone::Hips && gk::GetAnimationBoneRole(animation, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetAnimationBoneRole(animation, 2) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::SetModelHumanoidBoneMap(instance, profileTwo.c_str()) == 0 && passed;
+    passed = gk::GetModelBoneRole(model, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetModelBoneRole(instance, 1) == gk::EHumanoidBone::LeftLowerLeg && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == 0 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 1 && gk::GetModelAnimationSourceBone(model, 2) == 2 && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, profileTwo.c_str()) == 0 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 1 && gk::GetModelAnimationSourceBone(model, 2) == 2 && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == 0 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 2 && gk::GetModelAnimationSourceBone(model, 2) == 1 && passed;
+    passed = gk::SetModelHumanoidBoneMap(model, profileOne.c_str()) == 0 && passed;
+    passed = gk::SetAnimationHumanoidBoneMap(animation, profileTwo.c_str()) == 0 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 1) == 2 && gk::GetModelAnimationSourceBone(model, 2) == 1 && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == 0 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 2 && gk::GetModelAnimationSourceBone(model, 2) == 1 && passed;
+    fs::remove(profileOnePath);
+    fs::remove(profileTwoPath);
+    fs::remove(partialPath);
+    fs::remove(unknownPath);
+    fs::remove(duplicatePath);
+    passed = gk::GetModelBoneRole(model, 1) == gk::EHumanoidBone::LeftUpperLeg && gk::GetAnimationBoneRole(animation, 1) == gk::EHumanoidBone::LeftLowerLeg && gk::GetAnimationBoneRole(animation, 2) == gk::EHumanoidBone::LeftUpperLeg && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 2 && gk::GetModelAnimationSourceBone(model, 2) == 1 && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == 0 && passed;
+    passed = gk::DeleteModelAnimation(animation) == 0 && passed;
+    passed = gk::ApplyModelAnimation(model, animation, 0, false) == -1 && passed;
+    passed = gk::GetModelAnimationSourceBone(model, 0) == 0 && gk::GetModelAnimationSourceBone(model, 1) == 2 && gk::GetModelAnimationSourceBone(model, 2) == 1 && passed;
+    fs::remove_all(directory);
+    if (!passed)
+        fprintf(stderr, "humanoid profile replacement, failure atomicity, instance isolation, or bind snapshot failed: %s\n", gk::GetLastErrorMessage());
+    return passed;
+}
+
+/**
  * blend後のposeへIKを適用し、予約済みframe snapshotが変わらないことを確認する。
  */
 bool TestBlendThenIkSnapshot()
@@ -173,7 +289,7 @@ bool TestBlendThenIkSnapshot()
     baseTransform.scale = { 1.0f, 1.0f, 1.0f };
     const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
     const auto instance = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
-    if (!transformAdded || !instance.IsValid() || gk::PlayModelAnimation(instance, 0, false) != 0 || gk::SetModelAnimationBlend(instance, 1, 0.5f) != 0)
+    if (!transformAdded || !instance.IsValid() || !TestHumanoidProfiles(model, instance) || gk::PlayModelAnimation(instance, 0, false) != 0 || gk::SetModelAnimationBlend(instance, 1, 0.5f) != 0)
     {
         fprintf(stderr, "animation rig playback setup failed: %s\n", gk::GetLastErrorMessage());
         if (instance.IsValid())

@@ -66,6 +66,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
     src/model/animation/HumanoidMapping.cpp
+    src/model/animation/HumanoidBoneMap.cpp
     src/text/Text.cpp
     src/text/TextLayout.cpp
     src/text/TextCache.cpp
@@ -131,6 +132,19 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_humanoid_mapping_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_humanoid_mapping_tests)
     add_test(NAME gkcore.model_humanoid_mapping COMMAND gkcore_model_humanoid_mapping_tests)
+
+    add_executable(gkcore_humanoid_bone_map_tests tests/humanoid_bone_map_tests.cpp
+        src/model/animation/HumanoidBoneMap.cpp src/resources/ResourceIO.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_humanoid_bone_map_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_humanoid_bone_map_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_humanoid_bone_map_tests)
+    add_test(NAME gkcore.humanoid_bone_map COMMAND gkcore_humanoid_bone_map_tests)
+
+    add_executable(gkcore_humanoid_map_options_tests tests/humanoid_map_options_tests.cpp examples/support/FHumanoidMapOptions.cpp)
+    target_compile_features(gkcore_humanoid_map_options_tests PRIVATE cxx_std_17)
+    gkcore_enable_warnings(gkcore_humanoid_map_options_tests)
+    add_test(NAME gkcore.humanoid_map_options COMMAND gkcore_humanoid_map_options_tests)
 
     # Arrayが通常境界を超える型を拒否し、意図した診断で止まることを確認する。
     set(_gkcore_foundation_alignment_compile_options)
@@ -884,12 +898,12 @@ if(GKCORE_BUILD_RUNTIME)
     add_executable(gkcore_model_lighting examples/model_lighting.cpp)
     target_compile_features(gkcore_model_lighting PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_lighting PRIVATE gkcore::gkcore)
-    add_executable(gkcore_model_viewer examples/model_viewer.cpp)
+    add_executable(gkcore_model_viewer examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp)
     target_compile_features(gkcore_model_viewer PRIVATE cxx_std_17)
     target_link_libraries(gkcore_model_viewer PRIVATE gkcore::gkcore)
     gkcore_enable_warnings(gkcore_model_viewer)
 
-    add_executable(gkcore_model_benchmark examples/model_viewer.cpp)
+    add_executable(gkcore_model_benchmark examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp)
     target_compile_features(gkcore_model_benchmark PRIVATE cxx_std_17)
     target_compile_definitions(gkcore_model_benchmark PRIVATE GKCORE_MODEL_BENCHMARK=1)
     if(TARGET gkcore_capture_runtime)
@@ -899,7 +913,7 @@ if(GKCORE_BUILD_RUNTIME)
     endif()
     gkcore_enable_warnings(gkcore_model_benchmark)
 
-    add_executable(gkcore_model_benchmark_visible examples/model_viewer.cpp)
+    add_executable(gkcore_model_benchmark_visible examples/model_viewer.cpp examples/support/FHumanoidMapOptions.cpp)
     target_compile_features(gkcore_model_benchmark_visible PRIVATE cxx_std_17)
     target_compile_definitions(gkcore_model_benchmark_visible PRIVATE GKCORE_MODEL_BENCHMARK=1)
     target_link_libraries(gkcore_model_benchmark_visible PRIVATE gkcore::gkcore)
@@ -1031,7 +1045,7 @@ if(GKCORE_BUILD_RUNTIME)
                 COMMAND gkcore_model_gpu_skinning_multi_tests "${CMAKE_CURRENT_BINARY_DIR}/model-fbx-animation-fixtures")
             set_tests_properties(gkcore.model_gpu_skinning_multi PROPERTIES LABELS "windows;gpu;fp64" TIMEOUT 60 RUN_SERIAL TRUE ENVIRONMENT "GKCORE_VERIFY_GPU_SKINNING=1")
             add_executable(gkcore_model_blend_capture_tests tests/model_blend_capture_tests.cpp)
-            add_executable(gkcore_real_model_capture_tests tests/real_model_capture_tests.cpp)
+            add_executable(gkcore_real_model_capture_tests tests/real_model_capture_tests.cpp examples/support/FHumanoidMapOptions.cpp)
             target_compile_features(gkcore_real_model_capture_tests PRIVATE cxx_std_17)
             target_link_libraries(gkcore_real_model_capture_tests PRIVATE gkcore_capture_runtime)
             gkcore_enable_warnings(gkcore_real_model_capture_tests)

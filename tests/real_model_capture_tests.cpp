@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include <gkcore.h>
 #include <gkcore/ModelAnimation.h>
+#include "examples/support/FHumanoidMapOptions.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -307,9 +308,17 @@ bool DrawFrame(gk::ModelHandle model, uint32_t frameIndex, uint32_t frameCount, 
  */
 int main(int argc, char** argv)
 {
+    // 人型bone対応表optionを先に除き、位置引数の並びを保つ。
+    gk::examples::FHumanoidMapOptions humanoidMapOptions{};
+    const char* humanoidMapError = nullptr;
+    if (!gk::examples::ParseHumanoidMapOptions(argc, argv, humanoidMapOptions, &humanoidMapError))
+    {
+        fprintf(stderr, "invalid humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "unknown error");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend] [motion paths] [--materials <config-file>]\n");
+        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -329,9 +338,9 @@ int main(int argc, char** argv)
     const bool externalBlendMode = requestedMode && strcmp(requestedMode, "external-blend") == 0;
     // modeごとの引数個数が正しいかを示す。
     const bool modeArgumentsValid = (externalMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
-    if (!ParseFloat(argv[2], scale) || !(scale > 0.0f) || !ParseFloat(argv[3], center[0]) || !ParseFloat(argv[4], center[1]) || !ParseFloat(argv[5], center[2]) || !ParseMode(requestedMode, mode, frameCount) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]))
+    if (!ParseFloat(argv[2], scale) || !(scale > 0.0f) || !ParseFloat(argv[3], center[0]) || !ParseFloat(argv[4], center[1]) || !ParseFloat(argv[5], center[2]) || !ParseMode(requestedMode, mode, frameCount) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
     {
-        fprintf(stderr, "invalid scale, center, or capture mode\n");
+        fprintf(stderr, "invalid scale, center, capture mode, or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "invalid arguments");
         return 2;
     }
     // 高解像度の細部確認はpreview modeだけで行う。
@@ -348,6 +357,10 @@ int main(int argc, char** argv)
         fprintf(stderr, "LoadModel: %s\n", gk::GetLastErrorMessage());
     if (passed && hasMaterialConfig)
         passed = ApplyMaterialConfig(model, materialConfigPath);
+    if (passed && humanoidMapOptions.modelPath)
+        passed = Check(gk::SetModelHumanoidBoneMap(model, humanoidMapOptions.modelPath), "SetModelHumanoidBoneMap");
+    if (passed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode))
+        passed = Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones");
     const gk::Vec3 cameraPosition{ 0.0f, 0.0f, 3.0f };
     const gk::Vec3 cameraTarget{ 0.0f, 0.0f, 0.0f };
     // 高解像度表示用のtone mappingとFXAAを有効にする。
@@ -375,7 +388,7 @@ int main(int argc, char** argv)
         else
         {
             externalDuration = gk::GetAnimationClipDuration(externalAnimation, 0);
-            passed = isfinite(externalDuration) && externalDuration > 0.0 && Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones") && Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)");
+            passed = isfinite(externalDuration) && externalDuration > 0.0 && (humanoidMapOptions.motionPath ? Check(gk::SetAnimationHumanoidBoneMap(externalAnimation, humanoidMapOptions.motionPath), "SetAnimationHumanoidBoneMap(primary)") : Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)"));
             if (passed)
                 printf("animation-map primary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(externalAnimation), externalDuration);
             passed = passed && Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)");
@@ -395,7 +408,7 @@ int main(int argc, char** argv)
             else
             {
                 secondaryDuration = gk::GetAnimationClipDuration(secondaryAnimation, 0);
-                passed = isfinite(secondaryDuration) && secondaryDuration > 0.0 && Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)");
+                passed = isfinite(secondaryDuration) && secondaryDuration > 0.0 && (humanoidMapOptions.blendPath ? Check(gk::SetAnimationHumanoidBoneMap(secondaryAnimation, humanoidMapOptions.blendPath), "SetAnimationHumanoidBoneMap(secondary)") : Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)"));
                 if (passed)
                     printf("animation-map secondary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(secondaryAnimation), secondaryDuration);
                 passed = passed && Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)");

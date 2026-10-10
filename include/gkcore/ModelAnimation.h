@@ -130,6 +130,16 @@ GKCORE_API int SetModelBoneRole(ModelHandle model, uint32_t bone, EHumanoidBone 
  */
 GKCORE_API int SetAnimationBoneRole(ModelAnimationHandle animation, uint32_t bone, EHumanoidBone role);
 /**
+ * UTF-8対応表からモデルinstanceの人型役割を全置換する。
+ * 行はRoleNameと骨名をtabで区切る。失敗時は以前の役割を保ち、適用済みclipは変えない。
+ */
+GKCORE_API int SetModelHumanoidBoneMap(ModelHandle model, const char* path);
+/**
+ * UTF-8対応表から外部モーションの人型役割を全置換する。
+ * 対応表は次の適用・ブレンド登録で使う。読込・骨名・役割の不正時は以前の設定を保つ。
+ */
+GKCORE_API int SetAnimationHumanoidBoneMap(ModelAnimationHandle animation, const char* path);
+/**
  * 一般的な人型ボーン名から役割を推定する。手動設定は保ち、曖昧な候補は拒否する。
  * 認識できるボーンがない場合は-1、成功は0。適用前に呼ぶ。
  */

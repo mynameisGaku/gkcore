@@ -47,3 +47,5 @@ GLB/FBX内のclipは`animate`または`blend`で、別ファイルのmotionは`e
 317骨のYUMEKA FBXと、66骨のMixamo `Silly Dancing.fbx`・`Capoeira.fbx`を組み合わせた実動作確認を行っています。自動推定で役割が付いた骨はそれぞれ53本と52本、共通して対応した骨は51本でした。左右の太もも・すね・足首・つま先を含め、単独再生とブレンドで確認しました。未対応の役割は初期姿勢のまま残り、必要に応じてAPIで手動設定します。この結果は該当モデルとmotionでの確認であり、モデルの見た目や衣服の重なりを含む画質改善を保証しません。
 
 検証に使ったCesium Manはローカル検証専用です。元データと付属するCC-BY-4.0 / Cesium LegalMarkの条件は[Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/edc7c9e67c639d230715049ee31f9a96a6babbbe/Models/CesiumMan)で確認できます。ユーザー提供のモデル・motionを含め、権利確認のない私有assetをSDKや他の配布物へ含めないでください。
+
+--model-bones、--motion-bones、--blend-bonesで人型の対応表を指定できます。既知の骨名に依存しない適用方法は[人型ボーンの対応表](humanoid-bone-map.md)を参照してください。

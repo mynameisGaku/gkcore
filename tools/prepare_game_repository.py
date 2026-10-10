@@ -40,6 +40,8 @@ EXAMPLE_FILES = (
     "examples/custom_post_effect.cpp",
     "examples/model_lighting.cpp",
     "examples/model_viewer.cpp",
+    "examples/support/FHumanoidMapOptions.h",
+    "examples/support/FHumanoidMapOptions.cpp",
     "examples/assets/model_lighting.glb",
     "examples/shaders/tint.hlsl",
     "examples/shaders/post_effect_tint.hlsl",
@@ -55,6 +57,7 @@ PRODUCT_DOCS = (
     "docs/custom-shader.md",
     "docs/post-effect-shader.md",
     "docs/model-animation.md",
+    "docs/humanoid-bone-map.md",
     "docs/package-layout.md",
     "docs/THIRD_PARTY_NOTICES.md",
 )

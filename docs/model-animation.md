@@ -119,3 +119,5 @@ FBXは固定ufbxのclip評価、skin、blend shapeを使います。右手系の
 spine_01/02/03、neck_01、ball_l/r、thumb/index/middle/ring/pinky_01/02/03_l/rの名前にも対応します。既存のspine1/spine2とは番号の意味を分け、追加の背骨・首・補助骨は役割を重複させません。[Unrealモデルのローカル表示](unreal-models.md)に実モデルの確認結果を記録しています。
 
 人型モーションの適用は特定の提供元に限定しません。GLB/FBXの骨格を共通の人型役割へ対応付け、初期姿勢と骨長の違いを補正します。自動推定できない名前はSetModelBoneRoleとSetAnimationBoneRoleで指定してください。元の名前が異なっても同じ役割で結び付きます。今回のUnreal由来のWalkをTrooperへ、IdleをClownへ移す両方向も確認しました。骨格を持たないOBJへ骨モーションを適用することはできません。
+
+骨名を毎回手動指定する代わりに、SetModelHumanoidBoneMap・SetAnimationHumanoidBoneMapで保存した対応表を読み込めます。対応の全置換、失敗時の保持、再適用の手順は[人型ボーンの対応表](humanoid-bone-map.md)を参照してください。

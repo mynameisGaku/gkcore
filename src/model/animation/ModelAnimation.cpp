@@ -4,6 +4,7 @@
 #include "model/animation/FModelPlayback.h"
 #include "model/animation/ModelAnimationBinding.h"
 #include "model/animation/HumanoidMapping.h"
+#include "model/animation/HumanoidBoneMap.h"
 #include "model/animation/ModelAnimationResources.h"
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelIk.h"
@@ -589,6 +590,49 @@ int SetAnimationBoneRole(ModelAnimationHandle handle, uint32_t bone, EHumanoidBo
     String error;
     if (!SetRole(asset->roles, GetAnimationBoneCount(handle), bone, role, error))
         return Failure(error);
+    detail::ClearError();
+    return 0;
+}
+
+int SetModelHumanoidBoneMap(ModelHandle handle, const char* path)
+{
+    auto* asset = Embedded(handle);
+    if (!asset || !asset->source)
+    {
+        return detail::SetError("model has no skeleton");
+    }
+    // 対応表が完成してからinstanceへ反映し、失敗時は既存設定を保つ。
+    Array<uint16_t> candidate;
+    String error;
+    if (!model::LoadHumanoidBoneMap(path, *asset->source, candidate, error))
+    {
+        return Failure(error);
+    }
+    auto* playback = Playback(handle, true);
+    if (!playback)
+    {
+        return -1;
+    }
+    playback->roles.MoveFrom(candidate);
+    detail::ClearError();
+    return 0;
+}
+
+int SetAnimationHumanoidBoneMap(ModelAnimationHandle handle, const char* path)
+{
+    auto* asset = model::FindAnimation(handle);
+    if (!asset || !asset->source)
+    {
+        return detail::SetError("invalid animation handle");
+    }
+    // 適用済みclipの対応表は維持し、次回の登録に使う役割だけを更新する。
+    Array<uint16_t> candidate;
+    String error;
+    if (!model::LoadHumanoidBoneMap(path, *asset->source, candidate, error))
+    {
+        return Failure(error);
+    }
+    asset->roles.MoveFrom(candidate);
     detail::ClearError();
     return 0;
 }
