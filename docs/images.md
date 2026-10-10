@@ -1,4 +1,4 @@
-# 画像の読み込みと描画
+﻿# 画像の読み込みと描画
 
 gkcoreではPNGまたはBMPを`gk::LoadImage()`で読み込み、`gk::DrawImage()`か`gk::DrawImageRotated()`でフレームへ追加します。
 描画命令を登録した後は、`gk::Present()`でそのフレームを表示します。
