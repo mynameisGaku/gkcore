@@ -1,4 +1,4 @@
-# モデルアニメーション
+﻿# モデルアニメーション
 
 GLBとFBXはファイル内のclip、OBJは同じ頂点・面順序の連番ファイルを再生します。位置・回転・大きさの設定と`DrawModel`は静的モデルと共通です。
 
@@ -89,14 +89,19 @@ flowchart LR
 ```
 
 ```cpp
+// モデルの役割対応を使い、骨番号を直接指定せず右腕を動かす。
+gk::SetModelHumanoidTwoBoneIk(character, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, target, elbowPole, 1.0f);
+// 骨番号を持っている場合は従来のAPIも使える。
 gk::SetModelTwoBoneIk(character, upperArm, lowerArm, hand, target, elbowPole, 1.0f);
 const uint32_t chain[] = { shoulder, upperArm, lowerArm, hand };
 gk::SetModelIkChain(character, chain, 4, target, 1.0f);
 ```
 
+SetModelHumanoidTwoBoneIkは現在のモデルの役割対応から3本の骨を選びます。事前にAutoMapModelHumanoidBones、SetModelBoneRole、またはSetModelHumanoidBoneMapで対応を設定してください。役割は呼び出し時に骨番号へ確定し、後から対応表を変更しても登録済みIKの対象は変わりません。None・重複・未設定の役割や、親子が直接連続しない骨は失敗し、既存のIK設定を保持します。補助骨を挟む場合は、補助骨を含めた連続列をSetModelIkChainへ渡してください。
+
 2ボーンは肘・膝などの曲げ方向をpoleで指定します。poleと目標方向が重なる場合は、現在の曲がり方か一定の軸で方向を決めます。汎用chainは親子が連続したボーン列をFABRIKで解きます。骨長を保ち、届かない目標は届く範囲へ近づけます。weightは0から1で、0なら元の姿勢を保ちます。
 
-同じrootへの設定は上書きし、異なるrootの設定は登録順に適用します。`ClearModelIk`ですべて解除します。ゼロ長の骨、循環・途切れた階層、非有限値、固定された形式上の補助変換は拒否します。IK対象と祖先のscaleは正の均一倍率が必要です。
+同じrootへの設定は上書きし、異なるrootの設定は登録順に適用します。`ClearModelIk`ですべて解除します。ゼロ長の骨、循環・途切れた階層、非有限値、固定された形式上の補助変換は拒否します。IK対象と祖先のscaleは正の均一倍率が必要です。float精度に近い軸差は、最大軸の16×FLT_EPSILON（約0.00000191倍）まで許容します。大きな軸差・ゼロ・負のscaleは拒否します。これは非一様scale全般への対応ではありません。
 
 ![endボーンに付けた三角形をIKで移動したGPU画像](images/model-animation-ik.png)
 

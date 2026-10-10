@@ -1,4 +1,4 @@
-# モデルviewer
+﻿# モデルviewer
 
 開発用`model_viewer`はOBJ・GLB・FBXモデルの位置、向き、アニメーション、材質を実画面で確認するサンプルです。ウィンドウは1280×720で、モデルの表示位置を引数で調整します。
 
@@ -14,7 +14,7 @@ model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--m
 - `animate`はモデル内の最初のclip、`blend`は2つ以上の埋め込みclipを再生・合成します。
 - `external <animation-file>`は別のGLB/FBXから最初のclipを読み、名前と人型役割からモデルへ対応付けます。対応に失敗した場合は診断を表示します。
 - `external-blend <animation-file-1> <animation-file-2>`は2つの外部motionを適用します。`B`キーで2本目の寄与を切り替えます。
-- `ik`と`chain`は右腕の骨名候補を探して、それぞれ2ボーンIKと連続chain IKを設定します。モデルに対応する右腕の骨がない場合は起動時に失敗します。
+- `ik`と`chain`は右上腕・右前腕・右手の役割から、それぞれ2ボーンIKと連続chain IKを設定します。`--model-bones`の対応表、または骨名の自動推定を使います。必要な役割がない場合や、3本が直接の親子として連続しない場合は起動時に失敗します。
 
 modeを省略すると`static`になります。`M`は再生を一時停止・再開し、`←`と`→`はモデルを回転します。`R`で回転を戻し、`Space`でBloomを切り替え、`Escape`で終了します。
 

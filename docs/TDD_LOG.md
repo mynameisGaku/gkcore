@@ -1,4 +1,4 @@
-# TDD 検証ログ
+﻿# TDD 検証ログ
 
 このログは実際に実行されたテスト結果を記録します。実装済みであることと、テストが実行済みであることを区別します。
 
@@ -1187,3 +1187,15 @@ CPU Debug56/56件（4.47秒）、Release56/56件（5.36秒）成功。実モデ�
 viewerは登録直後に診断を一度取得して表示文字列を保持し、毎frameの骨走査は増やしません。起動時に不足役割を表示します。UI追加の括弧不足をnativeビルドで修正し、日本語文字列はUTF-8で明示しました。
 
 実モデルの完全対応52/52、GLB由来の部分対応19/52、腰だけ1/52を各6姿勢でDebug/Release確認し、18画像が構成間一致しました。未対応役割の照会と全位置・法線のGPU/CPU一致も成功。testsなし308ファイルの公開構成をビルドし、新headerを含むinstall済みSDKと既存consumerのGPU起動・描画・終了が通りました。関連ログはmapping-report-{debug,release}-*.log、mapping-report-game-*.logです。
+
+## 人型役割を使うIK指定
+
+SetModelHumanoidTwoBoneIkを追加し、現在のinstanceの役割から3骨を解決して既存IKへ渡します。未設定・None・重複・範囲外の役割、無効handle・非有限入力・weight範囲外・非連続階層は失敗し、直前のIK命令を保ちます。登録後は骨番号を保持し、役割を解除しても登録済みIKは変わりません。viewerと実モデルcaptureのIK/chainも役割対応を使い、--model-bones指定または自動推定で解決します。
+
+API宣言前にrig API buildがC2039/C3861で失敗するREDをworkerが確認しました。この初回の出力はログファイルへ保存していません。初回GREEN検査は、試験側で前frameのPresent前にBeginFrameを呼んだため失敗し、frame終了の順序を修正しました。役割交換も既存の一意制約に合わせてNoneへ解除してから行います。骨名joint_a/b/cを持つ2instanceを異なる役割で設定し、独立した期待端点(1,1,0)、役割変更後の命令保持、削除済みhandle等を確認しました。
+
+Trooperの実IKは前腕scale=[0.999998987,1,1]が旧1e-6相対判定をわずかに超えて拒否されました。既存inspectへrestScaleを追加して実値を記録し、その値とroot+middle累積の回帰を先にREDにしました。正のほぼ一様scaleだけを16*FLT_EPSILON相対差まで許容し、全3solverの端点・節長誤差2e-5以内と全行列成分の有限性を検査します。差8e-6・2倍・ゼロ・負のscaleは拒否します。CCDの検査はfloat計算より細かい1e-7停止条件で収束しなかったため1e-6にし、64回でも未収束だったため既存上限256回で確認しました。公開のchain設定やsolver実装の反復回数は変えていません。ログはhumanoid-ik-scale-red-*、humanoid-ik-scale-green-*、最終のhumanoid-ik-geometry-{debug,release}-build.logです。
+
+CPU全56件はDebug4.71秒、Release4.43秒で成功しました。全行列検査を追加した後のfocused IKも両構成で成功。実モデルはSci-Fi Trooper、Clown Monster、Cesium Man、YUMEKAのstatic/IK/chainをDebug/Releaseで計24回実行し、12画像ペアが全画素一致、タイトル以外のモデル領域もIK/chainで変わりました。FBX3モデルは全位置・法線のGPU readbackで位置差0、法線最大差約1.19e-7、許容0.0005で成功。GLBは既存CPU skinningで描画し、GPU-only readbackは要求していません。実行環境はWindows 11 build26200、RTX4070 SUPER driver617.42、MSVC19.29/v14214.29、SDK10.0.22621.0です。commandはgkcore_real_model_capture_tests <model> <scale> <centerX> <centerY> <centerZ> <static|ik|chain>に材質/役割表optionを追加、GKCORE_TEST_CAPTURE_PATH・GKCORE_TEST_CAPTURE_FRAMES=1・FBXのIK/chainでGKCORE_VERIFY_GPU_SKINNING=1を指定しました。capture専用buildは非表示windowです。関連ログはhumanoid-ik-{debug,release}-<model>-<mode>.log、比較結果はhumanoid-ik-image-comparison.jsonです。
+
+公開用308ファイルの構成からRuntimeと5サンプルのRelease build、SDK install、新API宣言のinstall確認、install済みDLL/shaderを使う既存consumerのGPU起動・描画・終了に成功しました。CMake初回はPowerShellの未引用バージョン引数が分割されてSDK選択に失敗し、引数を引用して同じbuildへ再configureしました。ログはhumanoid-ik-game-{config,build,install,consumer-run}.logです。tests・開発記録・私有モデルはmainへ含めません。

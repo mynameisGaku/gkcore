@@ -162,15 +162,15 @@ bool ApplyMaterialConfig(gk::ModelHandle model, const char* configPath)
 }
 
 /**
- * モデルの骨格から既知の別名を順に検索する。
+ * 人型役割から対応するmodel bone番号を探す。
  */
-int32_t FindNamedBone(gk::ModelHandle model, const char* const* names, uint32_t count)
+int32_t FindModelRoleBone(gk::ModelHandle model, gk::EHumanoidBone role)
 {
-    for (uint32_t i = 0; i < count; ++i)
+    // 役割を確認するmodel bone番号。
+    for (uint32_t bone = 0; bone < gk::GetModelBoneCount(model); ++bone)
     {
-        const int32_t bone = gk::FindModelBone(model, names[i]);
-        if (bone >= 0)
-            return bone;
+        if (gk::GetModelBoneRole(model, bone) == role)
+            return static_cast<int32_t>(bone);
     }
     return -1;
 }
@@ -367,7 +367,9 @@ int main(int argc, char** argv)
         passed = ApplyMaterialConfig(model, materialConfigPath);
     if (passed && humanoidMapOptions.modelPath)
         passed = Check(gk::SetModelHumanoidBoneMap(model, humanoidMapOptions.modelPath), "SetModelHumanoidBoneMap");
-    if (passed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode))
+    // IKとchainも役割対応を使うため、手動表または自動判定を適用する。
+    const bool humanoidIkMode = strcmp(mode, "ik") == 0 || strcmp(mode, "chain") == 0;
+    if (passed && !humanoidMapOptions.modelPath && (externalMode || externalBlendMode || humanoidIkMode))
         passed = Check(gk::AutoMapModelHumanoidBones(model), "AutoMapModelHumanoidBones");
     const gk::Vec3 cameraPosition{ 0.0f, 0.0f, 3.0f };
     const gk::Vec3 cameraTarget{ 0.0f, 0.0f, 0.0f };
@@ -433,15 +435,12 @@ int main(int argc, char** argv)
     }
     if (passed && strcmp(mode, "ik") == 0)
     {
-        const char* const upperNames[] = { "右腕", "RightArm", "右肩", "Skeleton_arm_joint_R", "UpperArm_R" };
-        const char* const middleNames[] = { "右ひじ", "RightForeArm", "RightElbow", "Skeleton_arm_joint_R__2_", "LowerArm_R" };
-        const char* const endNames[] = { "右手首", "RightHand", "RightWrist", "Skeleton_arm_joint_R__3_", "Hand_R" };
-        const int32_t root = FindNamedBone(model, upperNames, sizeof(upperNames) / sizeof(upperNames[0]));
-        const int32_t middle = FindNamedBone(model, middleNames, sizeof(middleNames) / sizeof(middleNames[0]));
-        const int32_t end = FindNamedBone(model, endNames, sizeof(endNames) / sizeof(endNames[0]));
+        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
+        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
+        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
         if (root < 0 || middle < 0 || end < 0)
         {
-            fprintf(stderr, "ik mode requires a right-arm, elbow, and wrist bone\n");
+            fprintf(stderr, "ik mode requires RightUpperArm, RightLowerArm, and RightHand role mappings\n");
             passed = false;
         }
         else
@@ -449,20 +448,22 @@ int main(int argc, char** argv)
             const float inverseScale = 1.0f / scale;
             const gk::Vec3 target{ center[0] + 0.15f * inverseScale, center[1] + 0.08f * inverseScale, center[2] };
             const gk::Vec3 pole{ center[0], center[1], center[2] + 0.25f * inverseScale };
-            passed = Check(gk::SetModelTwoBoneIk(model, static_cast<uint32_t>(root), static_cast<uint32_t>(middle), static_cast<uint32_t>(end), target, pole), "SetModelTwoBoneIk") && passed;
+            passed = Check(gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::RightUpperArm, gk::EHumanoidBone::RightLowerArm, gk::EHumanoidBone::RightHand, target, pole), "SetModelHumanoidTwoBoneIk") && passed;
+            if (passed)
+            {
+                // 実モデル検証でIK入力と対応先を追跡できるよう記録する。
+                printf("ik-role RightUpperArm=%s[%d] RightLowerArm=%s[%d] RightHand=%s[%d] target=(%.6f,%.6f,%.6f) pole=(%.6f,%.6f,%.6f)\n", gk::GetModelBoneName(model, static_cast<uint32_t>(root)), root, gk::GetModelBoneName(model, static_cast<uint32_t>(middle)), middle, gk::GetModelBoneName(model, static_cast<uint32_t>(end)), end, target.x, target.y, target.z, pole.x, pole.y, pole.z);
+            }
         }
     }
     if (passed && strcmp(mode, "chain") == 0)
     {
-        const char* const upperNames[] = { "右腕", "RightArm", "右肩", "Skeleton_arm_joint_R", "UpperArm_R" };
-        const char* const middleNames[] = { "右ひじ", "RightForeArm", "RightElbow", "Skeleton_arm_joint_R__2_", "LowerArm_R" };
-        const char* const endNames[] = { "右手首", "RightHand", "RightWrist", "Skeleton_arm_joint_R__3_", "Hand_R" };
-        const int32_t root = FindNamedBone(model, upperNames, sizeof(upperNames) / sizeof(upperNames[0]));
-        const int32_t middle = FindNamedBone(model, middleNames, sizeof(middleNames) / sizeof(middleNames[0]));
-        const int32_t end = FindNamedBone(model, endNames, sizeof(endNames) / sizeof(endNames[0]));
+        const int32_t root = FindModelRoleBone(model, gk::EHumanoidBone::RightUpperArm);
+        const int32_t middle = FindModelRoleBone(model, gk::EHumanoidBone::RightLowerArm);
+        const int32_t end = FindModelRoleBone(model, gk::EHumanoidBone::RightHand);
         if (root < 0 || middle < 0 || end < 0)
         {
-            fprintf(stderr, "chain mode requires a right-arm, elbow, and wrist bone\n");
+            fprintf(stderr, "chain mode requires RightUpperArm, RightLowerArm, and RightHand role mappings\n");
             passed = false;
         }
         else

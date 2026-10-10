@@ -14,6 +14,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <math.h>
 #include <stdio.h>
 #include <string>
@@ -65,7 +66,7 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
     // IK検査用の親順3節骨格。
     gk::model::animation::FModelSkeleton skeleton;
     // 対応表検査ではtargetと異なる名前を使う。
-    const char* boneNames[3] = { "root", "middle", "end" };
+    const char* boneNames[3] = { "joint_a", "joint_b", "joint_c" };
 
     gk::model::EModelAnimationFormat Format() const override
     {
@@ -175,7 +176,7 @@ bool TestMappingDiagnostics(gk::ModelHandle model)
     const auto partialPath = directory / "partial.txt";
     const auto fullPath = directory / "full.txt";
     std::string target, partial, full;
-    const bool fixturesReady = WriteHumanoidProfile(targetPath, "Hips\troot\nLeftUpperLeg\tmiddle\nLeftLowerLeg\tend\n", target) && WriteHumanoidProfile(partialPath, "Hips\tsource_a\n", partial) && WriteHumanoidProfile(fullPath, "Hips\tsource_a\nLeftUpperLeg\tsource_b\nLeftLowerLeg\tsource_c\n", full);
+    const bool fixturesReady = WriteHumanoidProfile(targetPath, "Hips\tjoint_a\nLeftUpperLeg\tjoint_b\nLeftLowerLeg\tjoint_c\n", target) && WriteHumanoidProfile(partialPath, "Hips\tsource_a\n", partial) && WriteHumanoidProfile(fullPath, "Hips\tsource_a\nLeftUpperLeg\tsource_b\nLeftLowerLeg\tsource_c\n", full);
     if (!fixturesReady)
     {
         fs::remove_all(directory);
@@ -267,7 +268,7 @@ bool TestHumanoidProfiles(gk::ModelHandle model, gk::ModelHandle instance)
     const auto unknownPath = directory / "unknown.txt";
     const auto duplicatePath = directory / "duplicate.txt";
     std::string profileOne, profileTwo, partial, unknown, duplicate;
-    const bool fixturesReady = WriteHumanoidProfile(profileOnePath, "# 人型profile\r\nHips\troot\r\nLeftUpperLeg\tmiddle\r\nLeftLowerLeg\tend\r\n", profileOne) && WriteHumanoidProfile(profileTwoPath, "Hips\troot\nLeftUpperLeg\tend\nLeftLowerLeg\tmiddle\n", profileTwo) && WriteHumanoidProfile(partialPath, "Hips\troot\n", partial) && WriteHumanoidProfile(unknownPath, "Hips\troot\nLeftUpperLeg\tmissing\n", unknown) && WriteHumanoidProfile(duplicatePath, "Hips\troot\nHips\tmiddle\n", duplicate);
+    const bool fixturesReady = WriteHumanoidProfile(profileOnePath, "# 人型profile\r\nHips\tjoint_a\r\nLeftUpperLeg\tjoint_b\r\nLeftLowerLeg\tjoint_c\r\n", profileOne) && WriteHumanoidProfile(profileTwoPath, "Hips\tjoint_a\nLeftUpperLeg\tjoint_c\nLeftLowerLeg\tjoint_b\n", profileTwo) && WriteHumanoidProfile(partialPath, "Hips\tjoint_a\n", partial) && WriteHumanoidProfile(unknownPath, "Hips\tjoint_a\nLeftUpperLeg\tmissing\n", unknown) && WriteHumanoidProfile(duplicatePath, "Hips\tjoint_a\nHips\tjoint_b\n", duplicate);
     if (!fixturesReady)
     {
         fs::remove_all(directory);
@@ -323,6 +324,73 @@ bool TestHumanoidProfiles(gk::ModelHandle model, gk::ModelHandle instance)
     fs::remove_all(directory);
     if (!passed)
         fprintf(stderr, "humanoid profile replacement, failure atomicity, instance isolation, or bind snapshot failed: %s\n", gk::GetLastErrorMessage());
+    return passed;
+}
+
+/**
+ * 名前に依存しない役割指定、描画結果、失敗時保持、instanceごとの分離を確認する。
+ */
+bool TestHumanoidTwoBoneIk(gk::ModelHandle model, gk::ModelHandle instance)
+{
+    const gk::EHumanoidBone modelRoles[3] = { gk::EHumanoidBone::Hips, gk::EHumanoidBone::LeftUpperLeg, gk::EHumanoidBone::LeftLowerLeg };
+    const gk::EHumanoidBone instanceRoles[3] = { gk::EHumanoidBone::Spine, gk::EHumanoidBone::Chest, gk::EHumanoidBone::Neck };
+    for (uint32_t bone = 0; bone < 3; ++bone)
+    {
+        if (gk::SetModelBoneRole(model, bone, modelRoles[bone]) != 0 || gk::SetModelBoneRole(instance, bone, instanceRoles[bone]) != 0)
+            return false;
+    }
+    const gk::Vec3 pole{ 0.0f, 1.0f, 0.0f };
+    const gk::Vec3 target{ 1.0f, 1.0f, 0.0f };
+    bool passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], target, pole) == 0;
+    passed = gk::SetModelHumanoidTwoBoneIk(instance, instanceRoles[0], instanceRoles[1], instanceRoles[2], target, pole) == 0 && passed;
+    const auto* modelTransform = gk::detail::FindModelTransform(model);
+    const auto* instanceTransform = gk::detail::FindModelTransform(instance);
+    const auto* modelPlayback = modelTransform ? modelTransform->playback : nullptr;
+    const auto* instancePlayback = instanceTransform ? instanceTransform->playback : nullptr;
+    if (!modelPlayback || !instancePlayback || modelPlayback->ik.Count() != 1 || instancePlayback->ik.Count() != 1 || modelPlayback->ikBones.Count() != 3 || instancePlayback->ikBones.Count() != 3)
+        passed = false;
+    else
+        passed = modelPlayback->ikBones.At(0) == 0 && modelPlayback->ikBones.At(1) == 1 && modelPlayback->ikBones.At(2) == 2 && instancePlayback->ikBones.At(0) == 0 && instancePlayback->ikBones.At(1) == 1 && instancePlayback->ikBones.At(2) == 2 && passed;
+
+    // 違うinstanceにだけ割り当てた役割は、このmodelでは解決できない。
+    passed = gk::SetModelHumanoidTwoBoneIk(model, instanceRoles[0], instanceRoles[1], instanceRoles[2], { 0.0f, 1.0f, 0.0f }, pole) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(instance, modelRoles[0], modelRoles[1], modelRoles[2], { 0.0f, 1.0f, 0.0f }, pole) == -1 && passed;
+    // None、終端値、範囲外値、同じ役割の再指定は、既存IKを保つ。
+    passed = gk::SetModelHumanoidTwoBoneIk(model, gk::EHumanoidBone::None, modelRoles[1], modelRoles[2], {}, pole) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, static_cast<gk::EHumanoidBone>(gk::EHumanoidBone::Count), modelRoles[1], modelRoles[2], {}, pole) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, static_cast<gk::EHumanoidBone>(0xffffu), modelRoles[1], modelRoles[2], {}, pole) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[0], modelRoles[2], {}, pole) == -1 && passed;
+    // NaNの入力と範囲外weightも失敗し、直前のIKを保つ。
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], { std::numeric_limits<float>::quiet_NaN(), 1.0f, 0.0f }, pole) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], target, { 0.0f, std::numeric_limits<float>::quiet_NaN(), 0.0f }) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], target, pole, -0.01f) == -1 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], target, pole, 1.01f) == -1 && passed;
+    // 役割未設定の新instanceと、削除済みhandleを受け付けない。
+    const auto unmappedInstance = gk::CreateModelInstance(model);
+    passed = unmappedInstance.IsValid() && gk::SetModelHumanoidTwoBoneIk(unmappedInstance, modelRoles[0], modelRoles[1], modelRoles[2], target, pole) == -1 && passed;
+    const auto deletedInstance = unmappedInstance;
+    passed = gk::DeleteModel(unmappedInstance) == 0 && gk::SetModelHumanoidTwoBoneIk(deletedInstance, modelRoles[0], modelRoles[1], modelRoles[2], target, pole) == -1 && passed;
+    // 役割は割り当て済みでも、親子順でない3節は受け付けない。
+    passed = gk::SetModelBoneRole(model, 1, gk::EHumanoidBone::None) == 0 && gk::SetModelBoneRole(model, 2, gk::EHumanoidBone::None) == 0 && passed;
+    passed = gk::SetModelBoneRole(model, 1, modelRoles[2]) == 0 && gk::SetModelBoneRole(model, 2, modelRoles[1]) == 0 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk(model, modelRoles[0], modelRoles[1], modelRoles[2], {}, pole) == -1 && passed;
+    passed = gk::SetModelBoneRole(model, 1, gk::EHumanoidBone::None) == 0 && gk::SetModelBoneRole(model, 2, gk::EHumanoidBone::None) == 0 && passed;
+    passed = gk::SetModelBoneRole(model, 1, modelRoles[1]) == 0 && gk::SetModelBoneRole(model, 2, modelRoles[2]) == 0 && passed;
+    // 呼び出し失敗は直前の目標と役割列を変えない。
+    modelTransform = gk::detail::FindModelTransform(model);
+    modelPlayback = modelTransform ? modelTransform->playback : nullptr;
+    passed = modelPlayback && modelPlayback->ik.Count() == 1 && modelPlayback->ikBones.Count() == 3 && modelPlayback->ik.At(0).target[0] == target.x && modelPlayback->ik.At(0).target[1] == target.y && modelPlayback->ik.At(0).target[2] == target.z && modelPlayback->ikBones.At(0) == 0 && modelPlayback->ikBones.At(1) == 1 && modelPlayback->ikBones.At(2) == 2 && passed;
+    passed = gk::SetModelHumanoidTwoBoneIk({}, modelRoles[0], modelRoles[1], modelRoles[2], target, pole) == -1 && passed;
+
+    // 成功後に役割を解除しても、確定済みの骨番号で到達点を維持する。
+    for (uint32_t bone = 0; bone < 3; ++bone)
+        passed = gk::SetModelBoneRole(model, bone, gk::EHumanoidBone::None) == 0 && gk::SetModelBoneRole(instance, bone, gk::EHumanoidBone::None) == 0 && passed;
+    // 独立した幾何期待値として、2節長が1の鎖の到達点を描画頂点で確認する。
+    passed = gk::BeginFrame() == 0 && gk::DrawModel(model) == 0 && gk::DrawModel(instance) == 0 && passed;
+    const auto& draws = gk::detail::GetContext().frame.draws;
+    passed = draws.Count() == 2 && Near(draws.At(0).model->vertices.At(2).position[0], 1.0f) && Near(draws.At(0).model->vertices.At(2).position[1], 1.0f) && Near(draws.At(0).model->vertices.At(2).position[2], 0.0f) && Near(draws.At(1).model->vertices.At(2).position[0], 1.0f) && Near(draws.At(1).model->vertices.At(2).position[1], 1.0f) && Near(draws.At(1).model->vertices.At(2).position[2], 0.0f) && passed;
+    if (!passed)
+        fprintf(stderr, "humanoid two-bone IK role resolution, failure atomicity, isolation, or endpoint contract failed: %s\n", gk::GetLastErrorMessage());
     return passed;
 }
 
@@ -409,6 +477,21 @@ bool TestBlendThenIkSnapshot()
         const auto* transform = gk::detail::FindModelTransform(instance);
         const auto* command = transform && transform->playback && transform->playback->ik.Count() ? &transform->playback->ik.At(0) : nullptr;
         fprintf(stderr, "queued animation snapshot changed: target=(%.3f,%.3f) first=(%.3f,%.3f) second root=(%.3f,%.3f) middle=(%.3f,%.3f) end=(%.3f,%.3f) count=%u\n", command ? command->target[0] : -99.0f, command ? command->target[1] : -99.0f, draws.Count() > 0 ? draws.At(0).model->vertices.At(2).position[0] : -99.0f, draws.Count() > 0 ? draws.At(0).model->vertices.At(2).position[1] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(0).position[0] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(0).position[1] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(1).position[0] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(1).position[1] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(2).position[0] : -99.0f, draws.Count() > 1 ? draws.At(1).model->vertices.At(2).position[1] : -99.0f, draws.Count());
+        gk::DeleteModel(instance);
+        gk::DeleteModel(model);
+        gk::Shutdown();
+        return false;
+    }
+    if (gk::Present() != 0 || gk::ClearModelIk(model) != 0 || gk::ClearModelIk(instance) != 0)
+    {
+        fprintf(stderr, "animation rig snapshot presentation or IK reset failed: %s\n", gk::GetLastErrorMessage());
+        gk::DeleteModel(instance);
+        gk::DeleteModel(model);
+        gk::Shutdown();
+        return false;
+    }
+    if (!TestHumanoidTwoBoneIk(model, instance))
+    {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);
         gk::Shutdown();

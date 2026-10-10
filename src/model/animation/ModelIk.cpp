@@ -219,13 +219,15 @@ bool PrepareIk(const FModelSkeleton& skeleton, const FModelPose& source, const u
             error.Assign("Model IK bones are not a continuous parent-child chain");
             return false;
         }
-        // IKは逆変換できる正の一様scaleを持つ階層に限定する。
+        // IKは正の一様scaleに限定し、float精度に近い軸差だけを許容する。
         for (int32_t ancestor = static_cast<int32_t>(bone); ancestor >= 0; ancestor = skeleton.parents.At(static_cast<uint32_t>(ancestor)))
         {
             const FModelBoneTransform& transform = source.localTransforms.At(static_cast<uint32_t>(ancestor));
             const float largest = fmaxf(transform.scale[0], fmaxf(transform.scale[1], transform.scale[2]));
             const float smallest = fminf(transform.scale[0], fminf(transform.scale[1], transform.scale[2]));
-            if (!(smallest > 0.0f) || largest - smallest > largest * 1.0e-6f)
+            // 変換時の小さな軸差に対する相対誤差の上限。
+            constexpr float scaleTolerance = 16.0f * FLT_EPSILON;
+            if (!(smallest > 0.0f) || largest - smallest > largest * scaleTolerance)
             {
                 error.Assign("Model IK does not support zero, negative, or non-uniform ancestor scale");
                 return false;

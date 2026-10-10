@@ -173,6 +173,13 @@ bool Inspect(const char* path)
                     putchar(',');
                 PrintJsonNumber(local.position[axis]);
             }
+            fputs("],\"restScale\":[", stdout);
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                if (axis)
+                    putchar(',');
+                PrintJsonNumber(local.scale[axis]);
+            }
             fputs("],\"restWorld\":[", stdout);
             if (haveWorldPose && (bone + 1) * 16 <= worldMatrices.Count())
             {
@@ -287,6 +294,14 @@ bool InspectAnimation(const char* path)
             if (axis)
                 putchar(',');
             PrintJsonNumber(local.position[axis]);
+        }
+        fputs("],\"restScale\":[", stdout);
+        // 親基準の休止scaleを3軸で書き出す。
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            if (axis)
+                putchar(',');
+            PrintJsonNumber(local.scale[axis]);
         }
         fputs("],\"restWorld\":[", stdout);
         if (haveWorldPose && (bone + 1) * 16 <= worldMatrices.Count())

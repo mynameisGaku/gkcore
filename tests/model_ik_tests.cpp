@@ -50,6 +50,9 @@ bool EndPosition(const FModelSkeleton& skeleton, const FModelPose& pose, float o
     gk::String error;
     if (!EvaluateModelPose(skeleton, pose, matrices, error) || matrices.Count() != 48)
         return false;
+    for (uint32_t index = 0; index < matrices.Count(); ++index)
+        if (!isfinite(matrices.At(index)))
+            return false;
     output[0] = matrices.At(44);
     output[1] = matrices.At(45);
     output[2] = matrices.At(46);
@@ -86,6 +89,73 @@ bool CheckSolvedChain(const FModelSkeleton& skeleton, const FModelPose& pose, co
     const double expectedFirst = sqrt(static_cast<double>(skeleton.restLocalTransforms.At(1).position[0]) * skeleton.restLocalTransforms.At(1).position[0] + static_cast<double>(skeleton.restLocalTransforms.At(1).position[1]) * skeleton.restLocalTransforms.At(1).position[1] + static_cast<double>(skeleton.restLocalTransforms.At(1).position[2]) * skeleton.restLocalTransforms.At(1).position[2]);
     const double expectedSecond = sqrt(static_cast<double>(skeleton.restLocalTransforms.At(2).position[0]) * skeleton.restLocalTransforms.At(2).position[0] + static_cast<double>(skeleton.restLocalTransforms.At(2).position[1]) * skeleton.restLocalTransforms.At(2).position[1] + static_cast<double>(skeleton.restLocalTransforms.At(2).position[2]) * skeleton.restLocalTransforms.At(2).position[2]);
     return fabs(firstLength - expectedFirst) <= tolerance * expectedFirst + 1.0e-30 && fabs(secondLength - expectedSecond) <= tolerance * expectedSecond + 1.0e-30 && distance <= tolerance * (firstLength + secondLength) + 1.0e-30;
+}
+
+/**
+ * float丸め範囲のほぼ一様なscaleで、端点と各節長を保つ。
+ */
+bool CheckNearlyUniformScaleResult(const FModelSkeleton& skeleton, const FModelPose& pose, const float target[3], double expectedFirst, double expectedSecond)
+{
+    gk::Array<float> matrices;
+    gk::String error;
+    if (!EvaluateModelPose(skeleton, pose, matrices, error) || matrices.Count() != 48)
+        return false;
+    // 位置だけでなく姿勢行列の全成分が有限であることを確認する。
+    for (uint32_t index = 0; index < matrices.Count(); ++index)
+    {
+        if (!isfinite(matrices.At(index)))
+        {
+            return false;
+        }
+    }
+    // FK結果からroot、中間、endの位置を取り出す。
+    const float root[3] = { matrices.At(12), matrices.At(13), matrices.At(14) };
+    const float middle[3] = { matrices.At(28), matrices.At(29), matrices.At(30) };
+    const float end[3] = { matrices.At(44), matrices.At(45), matrices.At(46) };
+    double firstSquared = 0.0, secondSquared = 0.0;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const double firstDelta = static_cast<double>(middle[axis]) - root[axis];
+        const double secondDelta = static_cast<double>(end[axis]) - middle[axis];
+        firstSquared += firstDelta * firstDelta;
+        secondSquared += secondDelta * secondDelta;
+        if (!isfinite(end[axis]) || fabsf(end[axis] - target[axis]) > 2.0e-5f)
+            return false;
+    }
+    // 中間boneのX scaleは子boneの長さに反映される。
+    return fabs(sqrt(firstSquared) - expectedFirst) <= 2.0e-5 && fabs(sqrt(secondSquared) - expectedSecond) <= 2.0e-5;
+}
+
+/**
+ * float丸め誤差内のscale差を持つchainを3種類のsolverで解く。
+ */
+bool TestNearlyUniformScaleCase(float rootScale, float middleScale, double expectedFirst, double expectedSecond)
+{
+    FModelSkeleton skeleton;
+    FModelPose source, twoBone, fabrik, ccd;
+    gk::String error;
+    const float target[3] = { 1.0f, 1.0f, 0.0f };
+    const float pole[3] = { 0.0f, 1.0f, 0.0f };
+    const uint32_t chain[3] = { 0, 1, 2 };
+    if (!MakeChain(skeleton) || !MakePose(source))
+        return Fail("nearly uniform-scale fixture allocation failed");
+    source.localTransforms.At(0).scale[0] = rootScale;
+    source.localTransforms.At(1).scale[0] = middleScale;
+    if (!SolveTwoBoneIk(skeleton, source, 0, 1, 2, target, pole, 1.0f, twoBone, error) || !SolveFabrikIk(skeleton, source, chain, 3, target, 1.0f, 1.0e-6f, 256, fabrik, error) || !SolveCcdIk(skeleton, source, chain, 3, target, 1.0f, 1.0e-6f, 256, ccd, error))
+        return Fail(error.CStr());
+    if (!CheckNearlyUniformScaleResult(skeleton, twoBone, target, expectedFirst, expectedSecond) || !CheckNearlyUniformScaleResult(skeleton, fabrik, target, expectedFirst, expectedSecond) || !CheckNearlyUniformScaleResult(skeleton, ccd, target, expectedFirst, expectedSecond))
+        return Fail("nearly uniform-scale IK changed bone lengths, produced non-finite output, or missed its target");
+    return true;
+}
+
+/**
+ * 実モデルで観測したscale差と、rootから積み上がる同じ差を確認する。
+ */
+bool TestNearlyUniformScaleRounding()
+{
+    const float scale = 0.999998987f;
+    const double expectedSecond = static_cast<double>(scale) * scale;
+    return TestNearlyUniformScaleCase(1.0f, scale, 1.0, scale) && TestNearlyUniformScaleCase(scale, scale, scale, expectedSecond);
 }
 
 /**
@@ -280,16 +350,27 @@ bool TestInvalidIkInputsAreAtomic()
 
     FModelPose negativeScale;
     FModelPose nonUniformScale;
-    if (!MakePose(negativeScale) || !MakePose(nonUniformScale))
+    FModelPose outsideRoundingBudget;
+    if (!MakePose(negativeScale) || !MakePose(nonUniformScale) || !MakePose(outsideRoundingBudget))
         return Fail("scale validation fixture allocation failed");
     negativeScale.localTransforms.At(0).scale[0] = -1.0f;
     nonUniformScale.localTransforms.At(0).scale[1] = 2.0f;
+    outsideRoundingBudget.localTransforms.At(1).scale[0] = 0.999992f;
     error.Clear();
     if (SolveCcdIk(skeleton, negativeScale, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
         return Fail("negative IK scale changed output or omitted its diagnostic");
     error.Clear();
     if (SolveCcdIk(skeleton, nonUniformScale, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
         return Fail("non-uniform IK scale changed output or omitted its diagnostic");
+    error.Clear();
+    if (SolveTwoBoneIk(skeleton, outsideRoundingBudget, 0, 1, 2, target, pole, 1.0f, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+        return Fail("scale outside the float-rounding budget changed output or was accepted");
+    error.Clear();
+    if (SolveFabrikIk(skeleton, outsideRoundingBudget, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+        return Fail("FABRIK accepted scale outside the float-rounding budget");
+    error.Clear();
+    if (SolveCcdIk(skeleton, outsideRoundingBudget, chain, 3, target, 1.0f, 0.001f, 8, output, error) || output.localTransforms.At(0).position[0] != 9.0f || error.Empty())
+        return Fail("CCD accepted scale outside the float-rounding budget");
     return true;
 }
 
@@ -297,5 +378,5 @@ bool TestInvalidIkInputsAreAtomic()
 
 int main()
 {
-    return TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() ? 0 : 1;
+    return TestTwoBonePoleAndWeight() && TestUnreachableTargetAndChainSolvers() && TestInvalidIkInputsAreAtomic() && TestNearlyUniformScaleRounding() && TestScaledAndRotatedChains() && TestCollinearPoleFallback() && TestTranslatedRootTarget() ? 0 : 1;
 }

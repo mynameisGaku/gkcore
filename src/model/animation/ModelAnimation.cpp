@@ -649,6 +649,49 @@ int SetModelTwoBoneIk(ModelHandle handle, uint32_t root, uint32_t middle, uint32
     return StoreIk(handle, bones, 3, target, pole, weight, true);
 }
 
+int SetModelHumanoidTwoBoneIk(ModelHandle handle, EHumanoidBone root, EHumanoidBone middle, EHumanoidBone end, Vec3 target, Vec3 pole, float weight)
+{
+    // 設定済みの役割だけを借用し、解決に失敗しても再生状態を作らない。
+    auto* asset = Embedded(handle);
+    auto* playback = Playback(handle, false);
+    if (!asset || !asset->source || !playback || playback->roles.Count() != asset->source->Skeleton().parents.Count())
+    {
+        return detail::SetError("model humanoid roles are not configured");
+    }
+    // 3つの役割を骨番号へ確定してから、既存のIK検証へ渡す。
+    const EHumanoidBone roles[3] = { root, middle, end };
+    uint32_t bones[3]{};
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        if (roles[index] == EHumanoidBone::None || roles[index] >= EHumanoidBone::Count)
+        {
+            return detail::SetError("invalid humanoid IK role");
+        }
+        for (uint32_t previous = 0; previous < index; ++previous)
+        {
+            if (roles[index] == roles[previous])
+            {
+                return detail::SetError("humanoid IK roles must be distinct");
+            }
+        }
+        bool found = false;
+        for (uint32_t bone = 0; bone < playback->roles.Count(); ++bone)
+        {
+            if (playback->roles.At(bone) == static_cast<uint16_t>(roles[index]))
+            {
+                bones[index] = bone;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            return detail::SetError("requested humanoid IK role is not assigned");
+        }
+    }
+    return StoreIk(handle, bones, 3, target, pole, weight, true);
+}
+
 /**
  * 推定結果の空振りを検査し、成功後だけ役割配列を置き換える。
  */
