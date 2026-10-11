@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include "foundation/FVector3d.h"
 #include "foundation/String.h"
+#include "model/animation/FPreparedSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 
 namespace gk
@@ -53,6 +54,21 @@ bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollis
  */
 bool CheckSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error);
 
+/**
+ * 身体形状を線分半径込みで準備し、再利用できる候補配列へ原子的に保存する。
+ */
+bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error);
+
+/**
+ * 準備済み身体形状から自由線分を投影する。失敗時は両端を保つ。
+ */
+bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
+
+/**
+ * 準備済み身体形状に対する自由線分の接触を検査する。
+ */
+bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error);
+
 #if defined(GKCORE_TESTING)
 /**
  * 接触形状の軸距離計算回数を0へ戻す。
@@ -83,6 +99,16 @@ void ResetSecondaryMotionCollisionPrepareCount();
  * 接触形状の準備回数を返す。
  */
 uint64_t GetSecondaryMotionCollisionPrepareCount();
+
+/**
+ * 半径拡張処理の呼び出し回数を0へ戻す。
+ */
+void ResetSecondaryMotionCollisionExpansionCount();
+
+/**
+ * 半径拡張処理の呼び出し回数を返す。
+ */
+uint64_t GetSecondaryMotionCollisionExpansionCount();
 #endif
 
 }

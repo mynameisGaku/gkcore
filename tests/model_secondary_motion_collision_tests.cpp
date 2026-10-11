@@ -656,6 +656,46 @@ bool TestNoColliderMatchesLegacyStep()
 }
 
 /**
+ * 同じ形状配列を再利用して拡張を一度にし、結果stateを保つ。
+ */
+bool TestCollisionShapeExpansionReuseBudget()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape shape = Shape({ 20.0f, 0.0f, 0.0f }, { 20.0f, 0.0f, 0.0f }, 0.25f);
+    const gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    FModelSecondaryMotionChainState sharedPointerState;
+    FModelSecondaryMotionChainState sharedPointerSnapshot;
+    FModelSecondaryMotionChainState separatePointerState;
+    FModelSecondaryMotionChainState separatePointerSnapshot;
+    FModelSecondaryMotionChainState zeroRadiusState;
+    FModelSecondaryMotionChainState zeroRadiusSnapshot;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 2, sharedPointerState, error) || !CopyState(sharedPointerState, sharedPointerSnapshot) || !ResetSecondaryMotionChain(targets, 2, separatePointerState, error) || !CopyState(separatePointerState, separatePointerSnapshot) || !ResetSecondaryMotionChain(targets, 2, zeroRadiusState, error) || !CopyState(zeroRadiusState, zeroRadiusSnapshot))
+        return Fail("could not initialize expansion-budget states");
+
+    ResetSecondaryMotionCollisionExpansionCount();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &shape, &shape, 1, sharedPointerState, error, 0.1f))
+        return Fail(error.CStr());
+    if (GetSecondaryMotionCollisionExpansionCount() != 1 || !SameState(sharedPointerState, sharedPointerSnapshot))
+        return Fail("identical previous/current shape pointers were expanded more than once or changed state");
+
+    const FModelSecondaryMotionCollisionShape previousShape = shape;
+    const FModelSecondaryMotionCollisionShape currentShape = shape;
+    ResetSecondaryMotionCollisionExpansionCount();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &previousShape, &currentShape, 1, separatePointerState, error, 0.1f))
+        return Fail(error.CStr());
+    if (GetSecondaryMotionCollisionExpansionCount() != 2 || !SameState(separatePointerState, separatePointerSnapshot) || !SameState(sharedPointerState, separatePointerState))
+        return Fail("separate equal shape arrays did not expand independently or changed the quiet state");
+
+    ResetSecondaryMotionCollisionExpansionCount();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &shape, &shape, 1, zeroRadiusState, error))
+        return Fail(error.CStr());
+    if (GetSecondaryMotionCollisionExpansionCount() != 0 || !SameState(zeroRadiusState, zeroRadiusSnapshot) || !SameState(sharedPointerState, zeroRadiusState))
+        return Fail("zero-radius collision path expanded shapes or changed the quiet state");
+    return true;
+}
+
+/**
  * 接触を解消しつつ骨長と最大曲げ角を保つ。
  */
 bool TestFeasibleContactWithLengthAndAngle()
@@ -1135,6 +1175,119 @@ bool TestFreeSegmentValidationAndAtomicity()
 }
 
 /**
+ * 準備済み形状を再利用し、raw経路と同じ接触結果および失敗時の保持を確かめる。
+ */
+bool TestPreparedFreeSegmentShapeReuseAndAtomicity()
+{
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ -0.75f, 0.0f, 0.0f }, { -0.75f, 0.0f, 0.0f }, 0.25f), Shape({ 0.75f, -0.5f, 0.0f }, { 0.75f, 0.5f, 0.0f }, 0.2f) };
+    const float pointRadius = 0.1f;
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!PrepareSecondaryMotionFreeSegmentShapes(shapes, 2, pointRadius, prepared, error) || !error.Empty() || prepared.Count() != 2)
+        return Fail("prepared free-segment shapes were not created");
+    if (GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("preparing two free-segment shapes did not perform exactly two preparations");
+
+    const gk::FVector3d referenceFirst = Point(-2.0, 0.0, 0.0);
+    const gk::FVector3d referenceSecond = Point(2.0, 0.0, 0.0);
+    gk::FVector3d preparedFirst = referenceFirst;
+    gk::FVector3d preparedSecond = referenceSecond;
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), referenceFirst, referenceSecond, preparedFirst, preparedSecond, error))
+        return Fail(error.CStr());
+    if (!IsFreeSegmentClear(shapes, 2, pointRadius, preparedFirst, preparedSecond) || !CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), preparedFirst, preparedSecond, error))
+        return Fail("prepared projection did not clear every shape by the independent distance check");
+    if (GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("prepared projection or check rebuilt its shape data");
+
+    gk::FVector3d rawFirst = referenceFirst;
+    gk::FVector3d rawSecond = referenceSecond;
+    if (!ProjectSecondaryMotionFreeSegmentContacts(shapes, 2, pointRadius, referenceFirst, referenceSecond, rawFirst, rawSecond, error))
+        return Fail(error.CStr());
+    if (memcmp(&preparedFirst, &rawFirst, sizeof(rawFirst)) != 0 || memcmp(&preparedSecond, &rawSecond, sizeof(rawSecond)) != 0)
+        return Fail("prepared and raw free-segment projection results differed");
+
+    gk::Array<FPreparedSecondaryMotionCollisionShape> largerPrepared;
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!PrepareSecondaryMotionFreeSegmentShapes(shapes, 2, 0.2f, largerPrepared, error) || largerPrepared.Count() != 2 || GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("a second point radius did not produce an independent prepared shape set");
+    if (fabs(largerPrepared.At(0).radius - (static_cast<double>(shapes[0].radius) + 0.2)) > 1.0e-7 || fabs(largerPrepared.At(1).radius - (static_cast<double>(shapes[1].radius) + 0.2)) > 1.0e-7)
+        return Fail("prepared radii did not include the requested point radius");
+
+    FPreparedSecondaryMotionCollisionShape sentinel{};
+    sentinel.start = Point(17.0, 18.0, 19.0);
+    sentinel.end = Point(-4.0, -5.0, -6.0);
+    sentinel.axis = Point(1.0, 2.0, 3.0);
+    sentinel.axisLengthSquared = 23.0;
+    sentinel.radius = 29.0;
+    sentinel.tolerance = 31.0;
+    sentinel.boundsLow[0] = 37.0;
+    sentinel.boundsLow[1] = 41.0;
+    sentinel.boundsLow[2] = 43.0;
+    sentinel.boundsHigh[0] = 47.0;
+    sentinel.boundsHigh[1] = 53.0;
+    sentinel.boundsHigh[2] = 59.0;
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preserved;
+    if (!preserved.Append(sentinel))
+        return Fail("could not initialize prepared-shape atomicity sentinel");
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const FModelSecondaryMotionCollisionShape invalid = Shape({ nan, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.5f);
+    FModelSecondaryMotionCollisionShape tooMany[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+        tooMany[index] = shapes[0];
+    if (PrepareSecondaryMotionFreeSegmentShapes(&invalid, 1, pointRadius, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("invalid shape preparation was accepted or changed the previous output");
+    if (PrepareSecondaryMotionFreeSegmentShapes(tooMany, 65, pointRadius, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("oversized shape preparation was accepted or changed the previous output");
+    if (PrepareSecondaryMotionFreeSegmentShapes(nullptr, 1, pointRadius, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("null shape preparation was accepted or changed the previous output");
+    if (PrepareSecondaryMotionFreeSegmentShapes(shapes, 2, -0.1f, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("negative radius preparation was accepted or changed the previous output");
+
+    const gk::FVector3d center = Point(0.75, 0.0, 0.0);
+    const gk::FVector3d zero = Point(0.0, 0.0, 0.0);
+    gk::FVector3d projectedFirst = center;
+    gk::FVector3d projectedSecond = center;
+    gk::FVector3d repeatedFirst = center;
+    gk::FVector3d repeatedSecond = center;
+    const FModelSecondaryMotionCollisionShape centerSphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> centerPrepared;
+    if (!PrepareSecondaryMotionFreeSegmentShapes(&centerSphere, 1, 0.1f, centerPrepared, error))
+        return Fail(error.CStr());
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), centerPrepared.Count(), zero, zero, projectedFirst, projectedSecond, error) || !ProjectPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), centerPrepared.Count(), zero, zero, repeatedFirst, repeatedSecond, error))
+        return Fail(error.CStr());
+    if (memcmp(&projectedFirst, &repeatedFirst, sizeof(projectedFirst)) != 0 || memcmp(&projectedSecond, &repeatedSecond, sizeof(projectedSecond)) != 0 || !IsFreeSegmentClear(&centerSphere, 1, 0.1f, projectedFirst, projectedSecond))
+        return Fail("prepared zero-length fallback was not deterministic and clear");
+
+    const gk::FVector3d emptyFirst = Point(8.0, 9.0, 10.0);
+    const gk::FVector3d emptySecond = Point(11.0, 12.0, 13.0);
+    gk::FVector3d emptyProjectedFirst = emptyFirst;
+    gk::FVector3d emptyProjectedSecond = emptySecond;
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContacts(nullptr, 0, emptyFirst, emptySecond, emptyProjectedFirst, emptyProjectedSecond, error) || !error.Empty() || memcmp(&emptyProjectedFirst, &emptyFirst, sizeof(emptyFirst)) != 0 || memcmp(&emptyProjectedSecond, &emptySecond, sizeof(emptySecond)) != 0)
+        return Fail("empty prepared projection changed its endpoints or failed");
+    if (!CheckPreparedSecondaryMotionFreeSegmentContacts(nullptr, 0, emptyFirst, emptySecond, error) || !error.Empty())
+        return Fail("empty prepared check failed");
+
+    const gk::FVector3d nonFinite = Point(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0);
+    const gk::FVector3d savedFirst = Point(3.0, 4.0, 5.0);
+    const gk::FVector3d savedSecond = Point(6.0, 7.0, 8.0);
+    projectedFirst = savedFirst;
+    projectedSecond = savedSecond;
+    if (ProjectPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), centerPrepared.Count(), nonFinite, savedSecond, projectedFirst, projectedSecond, error) || error.Empty() || memcmp(&projectedFirst, &savedFirst, sizeof(savedFirst)) != 0 || memcmp(&projectedSecond, &savedSecond, sizeof(savedSecond)) != 0)
+        return Fail("invalid prepared projection changed its endpoints or omitted an error");
+    if (ProjectPreparedSecondaryMotionFreeSegmentContacts(nullptr, 1, savedFirst, savedSecond, projectedFirst, projectedSecond, error) || error.Empty() || memcmp(&projectedFirst, &savedFirst, sizeof(savedFirst)) != 0 || memcmp(&projectedSecond, &savedSecond, sizeof(savedSecond)) != 0)
+        return Fail("null prepared projection input was accepted or changed endpoints");
+    if (ProjectPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), 65, savedFirst, savedSecond, projectedFirst, projectedSecond, error) || error.Empty() || memcmp(&projectedFirst, &savedFirst, sizeof(savedFirst)) != 0 || memcmp(&projectedSecond, &savedSecond, sizeof(savedSecond)) != 0)
+        return Fail("oversized prepared projection input was accepted or changed endpoints");
+    gk::FVector3d aliasedEndpoint = savedFirst;
+    if (ProjectPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), centerPrepared.Count(), savedFirst, savedSecond, aliasedEndpoint, aliasedEndpoint, error) || error.Empty() || memcmp(&aliasedEndpoint, &savedFirst, sizeof(savedFirst)) != 0)
+        return Fail("aliased prepared projection outputs were accepted or changed the endpoint");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(nullptr, 1, savedFirst, savedSecond, error) || error.Empty())
+        return Fail("null prepared check input was accepted");
+    return true;
+}
+
+/**
  * float保存後にも固定長と角度coneを保つか、崩れる配置をatomicに拒否する。
  */
 bool TestFloatRoundingPreservesLengthAndAngle()
@@ -1168,8 +1321,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

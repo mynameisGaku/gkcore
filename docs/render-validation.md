@@ -236,3 +236,9 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 別鎖の自由bone原点を半径付き接触線分で結び、単一接続/10本輪状接続を0秒・3.35秒開始、Debug/Release各120frameで確認しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0。合計960GPU frameがCPU位置/法線参照と一致し、構成間48画像がbyte一致。接続OFFの240frameも成功し、旧実装24画像がbyte一致しました。輪状接続のloop最大侵入深さは.030013→.020639、平均点数16.517→15.833で、侵入は残ります。
 
 拡大画像はbuild/native-validation/secondary-links-quality-{none,ring,debug}.png、切抜きは同名-crop.pngです。2560×1920・3.35秒開始・frame81を接続なし/輪状/形状表示で比較し、PNG保存後のpixel一致を確認しました。後ろ側や他motion、skin面全体の品質を合格とする結果ではありません。生のPPMは保存一致を記録後に片づけます。詳細はsecondary-links-image-comparison.json、secondary-links-off-image-comparison.json、bone-link-coverage-analysis.jsonです。
+
+## 接続準備の共有前後を比較する
+
+YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖＋8身体形状＋輪状10接続、半径.038、頂点補正OFFの設定を保持して、接続端点と同半径の身体形状を各Update内で共有しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0で0秒・3.35秒開始を各120frame、Debug/Releaseで順番に実行し、480frameのGPU位置/法線と全Skirt点の参照一致を確認しました。
+
+24姿勢の両構成48画像は旧実装とbyte一致し、構成間24組も一致しました。接続OFFのRelease120frame/12画像も従来と一致しています。最大位置差9.314e-10、normal1.789e-7、loopの侵入点平均15.833/最大深さ.020639 model unitを保持しました。見た目や侵入を改善する変更ではありません。記録はbuild/native-validation/link-cache-image-comparison.json、link-cache-off-image-comparison.jsonです。

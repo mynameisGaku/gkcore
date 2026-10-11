@@ -1419,3 +1419,19 @@ START14は既存.038骨球/身体8形状に、スカートの2番目の自由bon
 通常表示Release1280×720、VSyncなし、標準効果、3000frame/warmup300を同batchで完走。接続OFF207.058FPS、p95 5.378ms、secondary1.551ms。輪状ON177.136FPS、p95 6.869ms、Draw .397/Present2.232/IK .508/secondary2.450ms。接触条件の違うON/OFFを速度最適化とは扱いません。300FPS未達です。最新記録はsecondary-links-final-{debug,release}-test.log、secondary-links-image-comparison.json、secondary-links-off-image-comparison.json、secondary-links-{off,ring}-benchmark.log、bone-link-coverage-analysis.json、secondary-links-quality-images.json。
 
 最終format後のCPU Debug60/60（6.89秒）、Release60/60（4.72秒）成功。ゲーム構築用351ファイルのcurated treeからRuntimeと5sampleのRelease build成功、Runtime SDK57ファイルがallowlistに一致し、新APIを参照した外部consumerのGPU Init→Present→Shutdownが成功しました。通常viewerの接続debug表示30frameとSTART -CheckOnlyも成功。公開ABIの既存settings layoutは保持し、新しい値型と関数を追加しています。独立read-onlyレビューでもcoreに重大な指摘はありません。tests・開発記録・私有assetをmainへ含めません。最新記録はsecondary-links-game-{build,install,package,consumer-build,consumer-run}.logとgame/SDK manifestです。使用後の生成PPM・重複Debug/旧版画像・調査scriptを片づけ、最新Release画像・lossless拡大PNG・失敗記録・現build・元assetを保持しました。cleanup manifestに削除前hashと試行configを残しています。
+
+## 接続の端点と形状準備を更新内で共有する
+
+ConstrainSecondaryMotionLinksの開始時に、接続端点を一度だけ鎖内の点へ解決し、完全一致するfloat半径ごとに身体形状を拡張・準備します。従来のExpandとPrepareの結果を保存し、投影と反復後Checkで再利用します。更新をまたぐcacheではなく、同じUpdate候補の寿命に限ります。最大1024接続×64形状の確保失敗は候補を確定する前に返します。pass/link/shape順、毎回の鎖Step0、float保存、最終描画FK検査を維持します。既存の準備値型をFPreparedSecondaryMotionCollisionShape.hへ分離し、SDK公開型とAPIのlayoutは変更しません。
+
+同じprevious/current shape pointerを渡す鎖更新では、半径拡張を1配列だけ作りCoreの両入力で共有します。別配列と半径0の経路、Core本体の式と積分順は保持します。prepared shapeは生成関数の出力だけを使う内部契約で、各投影の端点範囲・alias検査は続けます。
+
+REDはprepared API stub、端点/準備回数stub、正radiusの同一pointer拡張2回 expected1で確認。prepared APIは独立線分距離、raw結果byte一致、複数shape、ゼロ長、空/null/count超過/alias/不正入力と失敗出力保持を検査。同半径2接続・2bodyで端点解決2回/shape準備2件、別半径を足した3接続では3回/4件を確認しました。接続なし/shape0では両counter0、確保失敗は位置を保ちます。test counterはGKCORE_TESTINGだけで、通常Runtime/SDKには入りません。準備値は接触計算のmoduleで管理します。
+
+最終CPU MSVC19.51のDebug60/60（4.75秒）、Release60/60（4.30秒）成功。同じbuild directoryでDebug/Releaseの全targetを同時buildしたとき、FBX fixture生成が競合してRelease buildだけ失敗しました。順番に再buildして成功を確認し、最終Release全60testを再実行しました。記録はlink-cache-concurrent-fixture-build-failure.logです。今後同じdirectoryの構成buildは並行実行しません。
+
+Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0、YUMEKA/Silly Dancing+Capoeira blend/右腕IK/13鎖/8body/接続10本/.038/頂点補正OFFで、0秒・3.35秒開始を各120frame、Debug/Releaseで実行。480frameのGPU位置/法線とSkirt1314点のCPU参照がvalid。24姿勢の両構成48画像は変更前とbyte一致し、構成間24組も一致。Releaseの接続OFF120frameと12画像も旧版と一致。Debug2区間は最終的に順番に実行しました。loop侵入平均15.833/最大深さ.020639 model unitは保持しています。侵入を減らす変更ではありません。
+
+固定delta1/60のRelease区間計測（初期20frame除外後100sample）はsolver3.309927→3.260583ms、全Update3.924160→3.865686ms。通常可視Release1280×720、標準効果、VSyncなし、debug表示OFF、3000frame/warmup300は176.127→174.119FPS、secondary2.462→2.436ms、後p95 6.968ms、Draw .421/Present2.314/IK .512ms。揺れ更新の短縮は小さく、FPS改善は確認できず300FPS未達です。prepared共有だけの中間runは171.800FPSで、最終結果とは分けます。ログはlink-cache-{before,after,final}-benchmark.log、区間と画像はlink-cache-image-comparison.json、OFFはlink-cache-off-image-comparison.jsonです。
+
+ゲーム構築用352ファイルを既存curated treeへ反映し、Runtimeと5sampleのRelease build成功。Runtime SDK57ファイルがallowlistに一致し、payloadを更新した外部consumerのGPU Init→Present→Shutdownも成功しました。公開API/SDKファイル数は保持し、追加headerはソース内の接触計算用です。test counter・tests・開発記録・私有assetはmain/SDKへ含めません。独立read-onlyレビューで重大な問題は見つからず、prepared lifetimeは各Update内に限ること、shape/link/pass順と最終FK検査を維持することを確認しました。全480frameのskin検証JSONも旧版と一致しました。生成画像はhash一致を確認した後、重複するDebug/旧版/中間画像を片づけ、最新Releaseと最新の検証記録、元assetを保持しました。記録はlink-cache-game-{build,install,package,consumer-build,consumer-run}.log、game/SDK manifest、link-cache-cleanup.jsonです。

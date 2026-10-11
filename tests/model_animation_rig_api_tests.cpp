@@ -16,6 +16,9 @@
 #include "model/animation/ModelIk.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
+#include "model/animation/ModelSecondaryMotionLinks.h"
+#include "model/animation/ModelSecondaryMotionSolver.h"
+#include "foundation/Memory.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
@@ -1445,7 +1448,9 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         gk::Vec3 solvedPositions[7]{};
         for (uint32_t iteration = 0; iteration < 3 && contactReady; ++iteration)
         {
+            gk::model::ResetSecondaryMotionLinkPreparationCounts();
             contactReady = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, allBones, 7, solvedPositions) == 0 && LinkAndChainConstraintsHold(solvedPositions);
+            ReportLinkStage(gk::model::GetSecondaryMotionLinkResolutionCount() == 1 && gk::model::GetSecondaryMotionLinkShapePreparationCount() == 1, "a link resolves once and prepares one body shape across all constraint passes");
         }
         ReportLinkStage(contactReady, "body sphere pushes the free-bone link clear while preserving roots, lengths, angles, and finite velocity");
 
@@ -2654,7 +2659,70 @@ bool TestBlendThenIkSnapshot()
 
 }
 
+/**
+ * 複数接続の形状準備が半径の種類数だけになり、接続なしでは増えないことを確かめる。
+ */
+static bool TestSecondaryMotionLinkPreparationBudget()
+{
+    gk::model::FModelSecondaryMotionState candidate;
+    gk::model::FModelSecondaryMotionState previous;
+    gk::String error;
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        auto* chain = new gk::model::FModelSecondaryMotionChain;
+        const uint32_t bones[2] = { index * 2, index * 2 + 1 };
+        const float origin = static_cast<float>(index * 3);
+        const gk::Vec3 targets[3] = { { origin, 0.0f, 0.0f }, { origin + 1.0f, 0.0f, 0.0f }, { origin + 2.0f, 0.0f, 0.0f } };
+        chain->settings.endOffset = { 1.0f, 0.0f, 0.0f };
+        chain->settings.gravity = {};
+        if (!chain->bones.AppendRange(bones, 2) || !gk::model::animation::ResetSecondaryMotionChain(targets, 3, chain->simulation, error) || !candidate.chains.Append(chain))
+        {
+            delete chain;
+            return false;
+        }
+    }
+    const gk::model::animation::FModelSecondaryMotionCollisionShape bodies[2] = { { { 100.0f, 0.0f, 0.0f }, { 100.0f, 1.0f, 0.0f }, 0.5f }, { { 200.0f, 0.0f, 0.0f }, { 200.0f, 0.0f, 0.0f }, 0.5f } };
+    if (!candidate.links.Append(gk::FModelSecondaryMotionLink{ 1, 3, 0.1f }) || !candidate.links.Append(gk::FModelSecondaryMotionLink{ 3, 5, 0.1f }))
+    {
+        return false;
+    }
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 2 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 2)
+    {
+        fprintf(stderr, "same-radius links did not reuse two prepared bodies: %s\n", error.CStr());
+        return false;
+    }
+    if (!candidate.links.Append(gk::FModelSecondaryMotionLink{ 5, 1, 0.2f }))
+    {
+        return false;
+    }
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 3 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 4)
+    {
+        fprintf(stderr, "different link radii did not prepare separate body groups: %s\n", error.CStr());
+        return false;
+    }
+    const gk::Vec3 before = candidate.chains.At(0)->simulation.points.At(1).position;
+    error.Assign("temporary capacity for the expected allocation-failure diagnostic, retained when the prepared-link stage clears this message");
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool allocationRejected = !gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error);
+    gk::ResetAllocationFailureForTesting();
+    if (!allocationRejected || error.Empty() || memcmp(&before, &candidate.chains.At(0)->simulation.points.At(1).position, sizeof(before)) != 0)
+    {
+        fprintf(stderr, "link-cache allocation failure changed position or lost the error: %s\n", error.CStr());
+        return false;
+    }
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, nullptr, 0, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 0 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 0)
+    {
+        return false;
+    }
+    candidate.links.Clear();
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    return gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) && gk::model::GetSecondaryMotionLinkResolutionCount() == 0 && gk::model::GetSecondaryMotionLinkShapePreparationCount() == 0;
+}
+
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() ? 0 : 1;
 }
