@@ -65,9 +65,9 @@ bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisio
 bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
 
 /**
- * 準備済み身体形状に対する自由線分の接触を検査する。
+ * 準備済み身体形状に対する自由線分の接触を検査する。許容幅の割合は0から1。
  */
-bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error);
+bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0);
 
 /**
  * 準備済み形状で節位置を投影する。失敗時はpositionsを保つ。

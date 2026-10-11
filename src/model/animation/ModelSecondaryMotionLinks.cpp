@@ -11,6 +11,8 @@ namespace
 {
 // 接続設定の上限。setterでだけ重複を検査する。
 const uint32_t MaximumLinks = 1024;
+// 候補の接触誤差に使う割合。残り半分は姿勢をFKへ戻す丸めの余白に残す。
+const double CandidateContactToleranceFraction = 0.5;
 
 /**
  * 1回の更新中だけ保持する接続端点と形状配列の参照位置。
@@ -181,7 +183,8 @@ bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolv
         const auto& link = links.At(index);
         const auto& first = state.chains.At(link.firstChain)->simulation.points.At(link.firstPoint).position;
         const auto& second = state.chains.At(link.secondChain)->simulation.points.At(link.secondPoint).position;
-        if (!animation::CheckPreparedSecondaryMotionFreeSegmentContacts(shapes.Data() + link.shapeOffset, shapeCount, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error))
+        // 接触許容幅の半分をFKの丸め用に残し、鎖の長さを戻す交互補正も有限回で確定する。
+        if (!animation::CheckPreparedSecondaryMotionFreeSegmentContacts(shapes.Data() + link.shapeOffset, shapeCount, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error, CandidateContactToleranceFraction))
         {
             LinkFailure(index, error);
             return false;

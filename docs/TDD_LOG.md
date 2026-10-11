@@ -1455,3 +1455,17 @@ SDK57ファイルがallowlistに一致し、現在DLLを置いた外部consumer�
 重複した旧版/中間/Debug画像と、一時legacy captureのソース・project・object・DLLをworkspace内の生成物と確認して片づけました。240ファイル、110,587,791byteを削除し、最新Release画像・元asset・現build・SDK・成功/失敗ログ・再現用trace1/2とjitter入力・削除前hashを保持しています。整理記録はreference-cache-cleanup.jsonです。
 
 最後のread-onlyレビューで見つかったreplay行内NULの見落としもRED後に修正。binary読取のftell差と文字列長を照合し、NUL入りEOF行をInit前exit2で拒否しました。通常のCRLF10行は実モデルで完走。ログはconstraint-invalid-nul-{red,green}.log、constraint-valid-crlf-green.logです。
+
+## 接続候補に姿勢変換の誤差分を残す
+
+2026-10-12。以前の実時間warmup失敗は、その時のdeltaと段階を記録できておらず、原因は未確定です。変更前の可視trace 4回×1200frameと既存trace 2回×3300frameでは失敗しませんでした。自由線分の球・カプセル投影を独立な距離計算で50000ケース調べても失敗せず、純粋な5骨姿勢をOrient→FKへ戻す調査では境界跨ぎを再現しました。候補距離.000999011700787、最終閾値.000999011561042、FK後.000999011337969です。差は約3.63e-10ですが、候補を許容帯の端まで受け入れると最終検査だけが失敗します。このfixtureと元のshape5/link8失敗を同一原因とは扱いません。
+
+prepared自由線分Checkへ有限な0〜1の許容割合を追加し、接続候補を0.5、最終FKは従来の1.0で検査します。候補側で全許容幅を使わず、半分を姿勢変換の丸め用に残します。投影式、身体半径、骨長・角度、32回上限、最終許容幅、失敗時の確定状態保持は変更しません。折半は誤差予算の配分であり、任意の座標尺度・骨深度に対する数学的保証値ではありません。最終FK検査を省略せず、超過時は失敗を返します。
+
+REDは許容割合を渡さないprepared Checkと、既存APIの候補が許容帯の後半まで入る独立距離oracleで確認しました。割合0では有効なsphere設定でも鎖長復元との交互補正が32回以内に収束せず、割合0.5でGREENとなりました。純Orient→Evaluate fixtureで丸めによる閾値跨ぎ、割合0.5による危険候補の拒否、半幅以内の候補が内向き半幅移動後も最終幅を満たす条件、不正割合を確認しています。固定の距離ログへの狭い一致assertは外し、独立計算の境界不等式で確認します。最終MSVC19.51 CPU Debug60/60（5.03秒）、Release60/60（4.63秒）が成功しました。
+
+Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・輪状接続10本、頂点補正OFFの0秒/3.35秒開始をDebug/Release各120frame、計480frame実行しました。GPU位置/法線と全Skirt1314点のCPU参照が有効です。最大位置誤差9.314e-10、法線1.789e-7。構成間24組の画像と各120件のskin記録は一致しました。変更前48画像とは異なり、差は24〜96pixel/640×480で、鎖の確定位置が少し変わっています。loop侵入点平均15.833・最大深さ.020639は残り、布面の品質改善とは扱いません。
+
+新しい候補判定は追加反復を要し、固定120frameの参照計算総数はstart25880→27480、loop28160→29920でした。通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300は完走し、162.817FPS、p95 7.897ms、secondary2.687msです。300FPSは未達で、前回173.519FPSからの改善も確認できません。既存実測3300frame＋変動1200frameの可視replay、新しい実時間trace1200frameも完走し、今回の通常計測を含む9000frameで接触失敗は出ていません。これを元のwarmup失敗の原因同定とは扱わず、この区切りのmain反映は引き続き保留します。
+
+Runtime SDK57ファイルがallowlistに一致し、更新DLLを使ったinstall済みSDK consumerのGPU Init→Present→Shutdownも成功しました。記録はlink-roundtrip-final-{debug,release}-test.log、link-roundtrip-{Release,Debug}-{start,loop}.log、link-roundtrip-image-comparison.json、link-roundtrip-benchmark.log、link-roundtrip-realtime-trace.log、constraint-delta-{trace-1,jitter}-visible.logです。純pose/projection調査の生成buildと一時script、重複Debug画像はhashを残して片づけ、最新Release画像、比較PNG、delta、失敗記録、現build、元assetを保持します。次の削減候補は、接続投影で位置が変わらない鎖への再制約です。floatの再正規化は再実行で値が変わり得るため、更新順と接触結果を比較してから採用します。

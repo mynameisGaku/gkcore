@@ -1370,9 +1370,14 @@ bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisio
     return PrepareSecondaryMotionCollisionShapes(expandedShapes.Data(), shapeCount, output, error);
 }
 
-bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
+bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction)
 {
     error.Clear();
+    if (!isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
+    {
+        error.Assign("Secondary motion free-segment tolerance fraction is invalid");
+        return false;
+    }
     if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
     {
         error.Assign("Secondary motion prepared collision shape count is invalid");
@@ -1385,7 +1390,7 @@ bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMot
         error.Clear();
         return true;
     }
-    return CheckFreeSegmentPrepared(shapes, shapeCount, first, second, error);
+    return CheckFreeSegmentPrepared(shapes, shapeCount, first, second, error, toleranceFraction);
 }
 
 bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)

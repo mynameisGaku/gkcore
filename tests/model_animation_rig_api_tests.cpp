@@ -16,6 +16,7 @@
 #include "model/animation/ModelIk.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
+#include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "foundation/Memory.h"
@@ -1409,7 +1410,22 @@ bool TestSecondaryMotionPoseEvaluationBudget()
             const double amount = axisLengthSquared > 0.0 ? fmax(0.0, fmin(1.0, Dot3(centerOffset, linkAxis) / axisLengthSquared)) : 0.0;
             const gk::Vec3 closest{ linkFirst.x + static_cast<float>(amount) * linkAxis.x, linkFirst.y + static_cast<float>(amount) * linkAxis.y, linkFirst.z + static_cast<float>(amount) * linkAxis.z };
             const double bodyDistance = Distance3(bodyCenter, closest);
-            const double requiredDistance = state->previousCollisionShapes.At(0).radius + state->links.At(0).radius;
+            const double requiredDistance = static_cast<double>(state->previousCollisionShapes.At(0).radius) + state->links.At(0).radius;
+            // 候補の接触誤差は許容幅の半分以下に収め、残りをFKの丸めに残す。
+            const auto& simulationFirst = state->chains.At(0)->simulation.points.At(1).position;
+            const auto& simulationSecond = state->chains.At(1)->simulation.points.At(1).position;
+            const double ax = static_cast<double>(simulationSecond.x) - simulationFirst.x, ay = static_cast<double>(simulationSecond.y) - simulationFirst.y, az = static_cast<double>(simulationSecond.z) - simulationFirst.z;
+            const double ox = static_cast<double>(bodyCenter.x) - simulationFirst.x, oy = static_cast<double>(bodyCenter.y) - simulationFirst.y, oz = static_cast<double>(bodyCenter.z) - simulationFirst.z;
+            const double simulationDenominator = ax * ax + ay * ay + az * az;
+            const double simulationAmount = simulationDenominator > 0.0 ? fmax(0.0, fmin(1.0, (ox * ax + oy * ay + oz * az) / simulationDenominator)) : 0.0;
+            const double dx = ox - simulationAmount * ax;
+            const double dy = oy - simulationAmount * ay;
+            const double dz = oz - simulationAmount * az;
+            if (sqrt(dx * dx + dy * dy + dz * dz) < requiredDistance * (1.0 - 0.0005))
+            {
+                fprintf(stderr, "candidate link entered the numerical tolerance band: distance %.17g radius %.17g\n", sqrt(dx * dx + dy * dy + dz * dz), requiredDistance);
+                return false;
+            }
             if (bodyDistance + 0.001 < requiredDistance || !NearVector(positions[1], contactReference[1]) || !NearVector(positions[3], contactReference[3]))
             {
                 return false;
@@ -2722,7 +2738,107 @@ static bool TestSecondaryMotionLinkPreparationBudget()
     return gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) && gk::model::GetSecondaryMotionLinkResolutionCount() == 0 && gk::model::GetSecondaryMotionLinkShapePreparationCount() == 0;
 }
 
+/**
+ * 姿勢の向き補正をFKへ戻した線分が、投影候補の許容境界を跨ぐことを確認する。
+ */
+static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
+{
+    using namespace gk::model::animation;
+    FModelSkeleton skeleton;
+    const int32_t parents[5] = { -1, 0, 1, 0, 3 };
+    FModelBoneTransform transforms[5]{};
+    transforms[0].position[0] = 1.0f;
+    transforms[1].position[1] = 0.02f;
+    transforms[2].position[1] = 0.01f;
+    transforms[3].position[1] = -0.02f;
+    transforms[4].position[1] = -0.01f;
+    gk::String error;
+    if (!skeleton.parents.AppendRange(parents, 5) || !skeleton.restLocalTransforms.AppendRange(transforms, 5))
+    {
+        fprintf(stderr, "could not create the FK-roundtrip skeleton\n");
+        return false;
+    }
+
+    FModelPose basePose;
+    if (!InitializeModelPose(skeleton, basePose, error))
+    {
+        fprintf(stderr, "could not initialize the FK-roundtrip pose: %s\n", error.CStr());
+        return false;
+    }
+    const uint32_t firstBones[2] = { 1, 2 };
+    const uint32_t secondBones[2] = { 3, 4 };
+    const gk::Vec3 firstPoints[3] = { { 1.0f, 0.02f, 0.0f }, { 1.00963557f, 0.0226749871f, 0.0f }, { 1.00963557f + static_cast<float>(sin(1.3) * 0.01), 0.0226749871f + static_cast<float>(cos(1.3) * 0.01), 0.0f } };
+    const gk::Vec3 secondPoints[3] = { { 1.0f, -0.02f, 0.0f }, { 0.990400016f, -0.0228000209f, 0.0f }, { 0.990400016f + static_cast<float>(sin(1.2869999999999999) * 0.01), -0.0228000209f + static_cast<float>(cos(1.2869999999999999) * 0.01), 0.0f } };
+    const FModelPoseChain chains[2] = { { firstBones, 2, { 0.0f, 0.01f, 0.0f }, firstPoints }, { secondBones, 2, { 0.0f, 0.01f, 0.0f }, secondPoints } };
+    FModelPose orientedPose;
+    if (!OrientModelPoseChains(skeleton, basePose, chains, 2, orientedPose, error))
+    {
+        fprintf(stderr, "could not orient the FK-roundtrip chains: %s\n", error.CStr());
+        return false;
+    }
+    gk::Array<float> renderedMatrices;
+    if (!EvaluateModelPose(skeleton, orientedPose, renderedMatrices, error))
+    {
+        fprintf(stderr, "could not evaluate the FK-roundtrip pose: %s\n", error.CStr());
+        return false;
+    }
+
+    const FModelSecondaryMotionCollisionShape sphere = { { 0.999097705f, 0.00032666701f, 0.0f }, { 0.999097705f, 0.00032666701f, 0.0f }, 0.00100001157f };
+    const gk::FVector3d candidateFirst{ { firstPoints[1].x, firstPoints[1].y, firstPoints[1].z } };
+    const gk::FVector3d candidateSecond{ { secondPoints[1].x, secondPoints[1].y, secondPoints[1].z } };
+    const gk::FVector3d renderedFirst{ { renderedMatrices.At(2u * 16u + 12u), renderedMatrices.At(2u * 16u + 13u), renderedMatrices.At(2u * 16u + 14u) } };
+    const gk::FVector3d renderedSecond{ { renderedMatrices.At(4u * 16u + 12u), renderedMatrices.At(4u * 16u + 13u), renderedMatrices.At(4u * 16u + 14u) } };
+    const gk::FVector3d center{ { sphere.start.x, sphere.start.y, sphere.start.z } };
+    const auto SphereSegmentDistance = [](const gk::FVector3d& first, const gk::FVector3d& second, const gk::FVector3d& point)
+    {
+        const double x = second.value[0] - first.value[0];
+        const double y = second.value[1] - first.value[1];
+        const double z = second.value[2] - first.value[2];
+        const double denominator = x * x + y * y + z * z;
+        const double amount = denominator > 0.0 ? fmax(0.0, fmin(1.0, ((point.value[0] - first.value[0]) * x + (point.value[1] - first.value[1]) * y + (point.value[2] - first.value[2]) * z) / denominator)) : 0.0;
+        const double dx = first.value[0] + amount * x - point.value[0];
+        const double dy = first.value[1] + amount * y - point.value[1];
+        const double dz = first.value[2] + amount * z - point.value[2];
+        return sqrt(dx * dx + dy * dy + dz * dz);
+    };
+    const double candidateDistance = SphereSegmentDistance(candidateFirst, candidateSecond, center);
+    const double renderedDistance = SphereSegmentDistance(renderedFirst, renderedSecond, center);
+    const double threshold = static_cast<double>(sphere.radius) * 0.999;
+    const double distanceShift = candidateDistance - renderedDistance;
+    if (!(candidateDistance >= threshold) || !(renderedDistance < threshold) || !(distanceShift > 0.0) || distanceShift >= static_cast<double>(sphere.radius) * 0.0005)
+    {
+        fprintf(stderr, "FK-roundtrip oracle did not cross the expected boundary: candidate=%.17g threshold=%.17g rendered=%.17g shift=%.17g\n", candidateDistance, threshold, renderedDistance, distanceShift);
+        return false;
+    }
+
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    if (!PrepareSecondaryMotionCollisionShapes(&sphere, 1, prepared, error) || prepared.Count() != 1)
+    {
+        fprintf(stderr, "could not prepare the FK-roundtrip body sphere: %s\n", error.CStr());
+        return false;
+    }
+    if (!CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 1.0) || CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 0.5))
+    {
+        fprintf(stderr, "candidate did not pass the regular and fail the strict prepared check: %s\n", error.CStr());
+        return false;
+    }
+
+    gk::model::FModelSecondaryMotionState state;
+    const gk::FModelSecondaryMotionLink link{ 2, 4, 0.0f };
+    if (!state.links.Append(link))
+    {
+        fprintf(stderr, "could not create the FK-roundtrip rendered link\n");
+        return false;
+    }
+    if (gk::model::CheckRenderedSecondaryMotionLinks(state, renderedMatrices, &sphere, 1, error) || error.Empty() || std::strstr(error.CStr(), "(rendered link)") == nullptr)
+    {
+        fprintf(stderr, "rendered FK link was not rejected with its context: %s\n", error.CStr());
+        return false;
+    }
+    return true;
+}
+
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

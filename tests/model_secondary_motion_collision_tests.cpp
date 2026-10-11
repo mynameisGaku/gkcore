@@ -1424,6 +1424,51 @@ bool TestPreparedFreeSegmentShapeReuseAndAtomicity()
 }
 
 /**
+ * float保存された候補と描画FKの再構成が許容境界を跨ぐことを確認する。
+ */
+bool TestPreparedFreeSegmentToleranceBoundaryRoundTrip()
+{
+    const FModelSecondaryMotionCollisionShape sphere = Shape({ 0.999097705f, 0.00032666701f, 0.0f }, { 0.999097705f, 0.00032666701f, 0.0f }, 0.00100001157f);
+    const gk::FVector3d candidateFirst = Point(1.00963557f, 0.0226749871f, 0.0f);
+    const gk::FVector3d candidateSecond = Point(0.990400016f, -0.0228000209f, 0.0f);
+    const gk::FVector3d renderedFirst = Point(1.00963557f, 0.0226749908f, 0.0f);
+    const gk::FVector3d renderedSecond = Point(0.990400016f, -0.0228000227f, 0.0f);
+    const gk::FVector3d center = Point(sphere.start.x, sphere.start.y, sphere.start.z);
+    const double tolerance = static_cast<double>(sphere.radius) * 1.0e-3;
+    const double threshold = static_cast<double>(sphere.radius) - tolerance;
+    const double candidateDistance = SegmentDistance(candidateFirst, candidateSecond, center, center);
+    const double renderedDistance = SegmentDistance(renderedFirst, renderedSecond, center, center);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&sphere, 1, prepared, error) || prepared.Count() != 1)
+        return Fail("could not prepare the FK-roundtrip sphere");
+    if (!(candidateDistance >= threshold) || !(candidateDistance < sphere.radius) || !(renderedDistance < threshold) || !(candidateDistance - renderedDistance > 0.0))
+        return Fail("independent segment-distance oracle did not reproduce the candidate/FK tolerance crossing");
+    if (!CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 1.0) || !error.Empty())
+        return Fail("the projected float candidate was not accepted inside the regular tolerance band");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 0.0) || error.Empty())
+        return Fail("strict candidate checking did not reject the sub-radius gap");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 0.5) || error.Empty())
+        return Fail("candidate checking did not reserve half of the tolerance for FK");
+    const double safeDistance = static_cast<double>(sphere.radius) - tolerance * 0.25;
+    const gk::FVector3d safeFirst = Point(center.value[0] - 0.02, center.value[1] + safeDistance, 0.0);
+    const gk::FVector3d safeSecond = Point(center.value[0] + 0.02, center.value[1] + safeDistance, 0.0);
+    const gk::FVector3d shiftedFirst = Point(safeFirst.value[0], safeFirst.value[1] - tolerance * 0.5, 0.0);
+    const gk::FVector3d shiftedSecond = Point(safeSecond.value[0], safeSecond.value[1] - tolerance * 0.5, 0.0);
+    if (SegmentDistance(safeFirst, safeSecond, center, center) < static_cast<double>(sphere.radius) - tolerance * 0.5 || SegmentDistance(shiftedFirst, shiftedSecond, center, center) < threshold || !CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), safeFirst, safeSecond, error, 0.5) || !CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), shiftedFirst, shiftedSecond, error))
+        return Fail("the reserved half-band did not preserve the final acceptance after an inward shift");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), renderedFirst, renderedSecond, error, 1.0) || error.Empty())
+        return Fail("the FK-roundtrip line remained inside the regular contact tolerance");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, -1.0) || error.Empty())
+        return Fail("negative prepared free-segment tolerance fraction was accepted");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, std::numeric_limits<double>::quiet_NaN()) || error.Empty())
+        return Fail("non-finite prepared free-segment tolerance fraction was accepted");
+    if (CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), candidateFirst, candidateSecond, error, 1.01) || error.Empty())
+        return Fail("oversized prepared free-segment tolerance fraction was accepted");
+    return true;
+}
+
+/**
  * 準備済み形状でroot例外と複数shapeを保ち、raw経路と同じ座標へ投影する。
  */
 bool TestPreparedPointContactsReuseAndRootException()
@@ -1561,8 +1606,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

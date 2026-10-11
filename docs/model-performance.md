@@ -111,3 +111,11 @@ devではsubstep内の一定な目標方向・骨長と、半径ガード後の�
 固定delta1/60のcaptureでは、参照計算平均2216.88→241.20、solver3.292944→2.967918ms、全Update3.898166→3.572878msでした。通常可視Release1280×720、VSyncなし、標準効果、debug表示/頂点補正OFF、YUMEKAと2motion・右腕IK・13鎖・身体8形状・接続10本、3000frame/warmup300の完走結果は171.990→173.519FPS、secondary2.437→2.288msです。captureを通常FPSへ換算しません。300FPSは未達で、布面の貫通も保持しています。
 
 最初の可視計測はwarmup中の接触失敗で未完走でした。失敗を調べるdelta trace/replayを追加し、同じ実測3300frameと変動1200frameを変更前後で再生して双方完走しましたが、元の失敗は再現できていません。この区切りのmain反映は保留です。ログはreference-cache-{before,retry}-benchmark.log、reference-cache-final-benchmark-failed.log、constraint-delta-{trace-1,jitter}-{replay,legacy}.logです。
+
+## 接続候補の誤差余白
+
+接続候補の接触判定では既存許容幅の半分を使い、残りを姿勢をFKへ戻す丸め用に残します。最終描画の許容幅と反復上限は保持します。追加補正が必要になり、固定120frameの参照計算はstart25880→27480、loop28160→29920でした。接触の安定性のための変更で、処理速度の改善ではありません。
+
+通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示と頂点補正OFFの3000frame/warmup300は162.817FPS、p95 7.897ms、Draw .417/Present2.428/IK .550/secondary2.687msで完走しました。前回173.519FPSからの改善は確認できず、300FPSは未達です。別batchの計測なので差をすべて変更の費用とは断定しません。
+
+候補とFKの接触境界を跨ぐ純poseテストを固定しましたが、以前のwarmup失敗の原因同定は未完了です。変更後の実測/変動delta再生4500frame、実時間trace1200frame、通常計測3300frameは完走しました。ログはlink-roundtrip-benchmark.log、link-roundtrip-realtime-trace.log、constraint-delta-{trace-1,jitter}-visible.logです。この区切りのmain反映は保留を続けます。次は接続投影で位置が変わらない鎖への再制約を調べ、丸めや接触結果を保って減らせる処理を選びます。
