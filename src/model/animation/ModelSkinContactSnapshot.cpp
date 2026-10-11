@@ -6,6 +6,11 @@
 #include "model/animation/ModelPose.h"
 #include <float.h>
 #include <math.h>
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+#include <windows.h>
+#include <stdlib.h>
+#include <stdio.h>
+#endif
 
 /**
  * 予約した描画だけが所有する頂点接触の補正値を作る処理。
@@ -113,6 +118,19 @@ bool BuildModelSkinContactSnapshot(const AModelAnimationSource& source, const FM
         error.Assign("vertex contacts require the supported zero-morph FBX skinning path");
         return false;
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    // 検証用DLLだけで区間時間を記録し、通常SDKへ計測処理を含めない。
+    const char* profileSetting = getenv("GKCORE_PROFILE_SKIN_CONTACTS");
+    const bool profile = profileSetting && profileSetting[0] == '1' && profileSetting[1] == '\0';
+    LARGE_INTEGER frequency{}, begin{}, shapeEnd{}, skinBegin{}, skinEnd{}, contactEnd{}, finish{};
+    int64_t skinTicks = 0;
+    int64_t contactTicks = 0;
+    if (profile && (!QueryPerformanceFrequency(&frequency) || !QueryPerformanceCounter(&begin)))
+    {
+        error.Assign("skin contact profile clock failed");
+        return false;
+    }
+#endif
     // 現在のposeから身体形状を作り、前回更新の形状へ依存しない。
     Array<float> boneMatrices;
     Array<animation::FModelSecondaryMotionCollisionShape> shapes;
@@ -126,6 +144,12 @@ bool BuildModelSkinContactSnapshot(const AModelAnimationSource& source, const FM
         error.Assign("vertex contact selection does not match the model geometry");
         return false;
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile)
+    {
+        QueryPerformanceCounter(&shapeEnd);
+    }
+#endif
     const auto& ids = state->skinContactPositionIds;
     Array<animation::FModelSkinPointCorrection> candidate;
     uint32_t first = 0;
@@ -134,10 +158,34 @@ bool BuildModelSkinContactSnapshot(const AModelAnimationSource& source, const FM
         const uint32_t count = ids.Count() - first > 8192 ? 8192 : ids.Count() - first;
         Array<FVector3d> points;
         Array<FVector3d> corrected;
-        if (!animation::EvaluateModelSkinPoints(*geometry, matrices, ids.Data() + first, count, points, error) || !animation::ProjectModelSkinPoints(points.Data(), points.Count(), shapes.Data(), shapes.Count(), 64, corrected, error))
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (profile)
+        {
+            QueryPerformanceCounter(&skinBegin);
+        }
+#endif
+        if (!animation::EvaluateModelSkinPoints(*geometry, matrices, ids.Data() + first, count, points, error))
         {
             return false;
         }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (profile)
+        {
+            QueryPerformanceCounter(&skinEnd);
+        }
+#endif
+        if (!animation::ProjectModelSkinPoints(points.Data(), points.Count(), shapes.Data(), shapes.Count(), 64, corrected, error))
+        {
+            return false;
+        }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (profile)
+        {
+            QueryPerformanceCounter(&contactEnd);
+            skinTicks += skinEnd.QuadPart - skinBegin.QuadPart;
+            contactTicks += contactEnd.QuadPart - skinEnd.QuadPart;
+        }
+#endif
         for (uint32_t item = 0; item < count; ++item)
         {
             const auto& value = corrected.At(item);
@@ -165,6 +213,14 @@ bool BuildModelSkinContactSnapshot(const AModelAnimationSource& source, const FM
         }
         first += count;
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile)
+    {
+        QueryPerformanceCounter(&finish);
+        const double milliseconds = 1000.0 / static_cast<double>(frequency.QuadPart);
+        fprintf(stderr, "{\"type\":\"gkcore_skin_contact_profile\",\"selectedPoints\":%u,\"changedPoints\":%u,\"shapeMs\":%.6f,\"skinMs\":%.6f,\"projectMs\":%.6f,\"totalMs\":%.6f}\n", ids.Count(), candidate.Count(), (shapeEnd.QuadPart - begin.QuadPart) * milliseconds, skinTicks * milliseconds, contactTicks * milliseconds, (finish.QuadPart - begin.QuadPart) * milliseconds);
+    }
+#endif
     output.MoveFrom(candidate);
     error.Clear();
     return true;

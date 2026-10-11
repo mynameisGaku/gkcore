@@ -17,6 +17,11 @@ namespace gk::model::animation
 namespace
 {
 
+#if defined(GKCORE_TESTING)
+// 正確な点・形状距離を計算した回数。
+uint64_t modelSkinContactExactDistanceCount = 0;
+#endif
+
 /**
  * 3成分が有限か確認する。
  */
@@ -56,6 +61,9 @@ struct FPreparedSkinContactShape
     double axisLength;
     // 接触形状の半径。
     double radius;
+    // 軸に半径を足して外側へ広げたAABB。
+    double minimum[3];
+    double maximum[3];
     // 中心軸での退化時に使う決定論的な法線。
     double fallbackNormal[3];
 };
@@ -65,6 +73,9 @@ struct FPreparedSkinContactShape
  */
 bool ClosestShapeAxisPoint(const gk::FVector3d& point, const FPreparedSkinContactShape& shape, double closest[3], double& distance)
 {
+#if defined(GKCORE_TESTING)
+    ++modelSkinContactExactDistanceCount;
+#endif
     const double offset[3] = { point.value[0] - shape.start[0], point.value[1] - shape.start[1], point.value[2] - shape.start[2] };
     if (!IsFinite3(offset))
     {
@@ -87,6 +98,18 @@ bool ClosestShapeAxisPoint(const gk::FVector3d& point, const FPreparedSkinContac
     const double delta[3] = { point.value[0] - closest[0], point.value[1] - closest[1], point.value[2] - closest[2] };
     distance = Length3(delta);
     return IsFinite3(closest) && isfinite(distance);
+}
+
+/**
+ * AABBの外側と確実に分かる点だけ距離計算を省く。
+ */
+bool IsOutsideShapeAabb(const gk::FVector3d& point, const FPreparedSkinContactShape& shape)
+{
+    if (fabs(point.value[0]) > FLT_MAX || fabs(point.value[1]) > FLT_MAX || fabs(point.value[2]) > FLT_MAX)
+    {
+        return false;
+    }
+    return point.value[0] < shape.minimum[0] || point.value[0] > shape.maximum[0] || point.value[1] < shape.minimum[1] || point.value[1] > shape.maximum[1] || point.value[2] < shape.minimum[2] || point.value[2] > shape.maximum[2];
 }
 
 /**
@@ -171,6 +194,10 @@ bool IsOutsideAllShapes(const gk::FVector3d& point, const FPreparedSkinContactSh
 {
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
+        if (IsOutsideShapeAabb(point, shapes[shapeIndex]))
+        {
+            continue;
+        }
         double closest[3]{};
         double distance = 0.0;
         if (!ClosestShapeAxisPoint(point, shapes[shapeIndex], closest, distance) || distance < shapes[shapeIndex].radius)
@@ -214,6 +241,18 @@ bool ToFloatVector(const double value[3], FModelSparsePoseGeometry::FModelVector
 
 }
 
+#if defined(GKCORE_TESTING)
+void ResetModelSkinContactWorkForTesting()
+{
+    modelSkinContactExactDistanceCount = 0;
+}
+
+uint64_t GetModelSkinContactExactDistanceCountForTesting()
+{
+    return modelSkinContactExactDistanceCount;
+}
+#endif
+
 /**
  * skin位置群を球またはカプセルの外へ投影する。
  */
@@ -254,6 +293,12 @@ bool ProjectModelSkinPoints(const gk::FVector3d* points, uint32_t count, const F
             prepared.unit[1] = prepared.axis[1] / prepared.axisLength;
             prepared.unit[2] = prepared.axis[2] / prepared.axisLength;
         }
+        prepared.minimum[0] = nextafter(fmin(shape.start.x, shape.end.x) - prepared.radius, -HUGE_VAL);
+        prepared.minimum[1] = nextafter(fmin(shape.start.y, shape.end.y) - prepared.radius, -HUGE_VAL);
+        prepared.minimum[2] = nextafter(fmin(shape.start.z, shape.end.z) - prepared.radius, -HUGE_VAL);
+        prepared.maximum[0] = nextafter(fmax(shape.start.x, shape.end.x) + prepared.radius, HUGE_VAL);
+        prepared.maximum[1] = nextafter(fmax(shape.start.y, shape.end.y) + prepared.radius, HUGE_VAL);
+        prepared.maximum[2] = nextafter(fmax(shape.start.z, shape.end.z) + prepared.radius, HUGE_VAL);
         if (!MakeFallbackNormal(prepared.unit, prepared.axisLength, prepared.fallbackNormal))
         {
             error.Assign("model skin point projection shape axis is invalid");
@@ -287,6 +332,10 @@ bool ProjectModelSkinPoints(const gk::FVector3d* points, uint32_t count, const F
             for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
             {
                 const FPreparedSkinContactShape& shape = preparedShapes[shapeIndex];
+                if (IsOutsideShapeAabb(point, shape))
+                {
+                    continue;
+                }
                 double closest[3]{};
                 double distance = 0.0;
                 if (!ClosestShapeAxisPoint(point, shape, closest, distance))
@@ -334,6 +383,10 @@ bool ProjectModelSkinPoints(const gk::FVector3d* points, uint32_t count, const F
             double deepestClosest[3]{};
             for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
             {
+                if (IsOutsideShapeAabb(point, preparedShapes[shapeIndex]))
+                {
+                    continue;
+                }
                 double closest[3]{};
                 double distance = 0.0;
                 if (!ClosestShapeAxisPoint(point, preparedShapes[shapeIndex], closest, distance))
@@ -380,6 +433,10 @@ bool ProjectModelSkinPoints(const gk::FVector3d* points, uint32_t count, const F
             uint32_t deepestShape = shapeCount;
             for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
             {
+                if (IsOutsideShapeAabb(candidate.At(pointIndex), preparedShapes[shapeIndex]))
+                {
+                    continue;
+                }
                 double closest[3]{};
                 double distance = 0.0;
                 if (!ClosestShapeAxisPoint(candidate.At(pointIndex), preparedShapes[shapeIndex], closest, distance))

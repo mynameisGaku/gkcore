@@ -27,6 +27,18 @@ bool ProjectModelSkinPoints(const gk::FVector3d* points, uint32_t count, const F
  */
 bool EvaluateModelSkinContactGeometry(const FModelGpuSkinningGeometry& geometry, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, const FModelSkinPointCorrection* corrections, uint32_t correctionCount, FModelSparsePoseGeometry& output, gk::String& error);
 
+#if defined(GKCORE_TESTING)
+/**
+ * 接触計算量の検査用カウンターを0へ戻す。
+ */
+void ResetModelSkinContactWorkForTesting();
+
+/**
+ * 接触形状との正確な距離評価回数を返す。
+ */
+uint64_t GetModelSkinContactExactDistanceCountForTesting();
+#endif
+
 }
 
 #endif

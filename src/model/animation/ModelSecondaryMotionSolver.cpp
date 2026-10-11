@@ -490,9 +490,24 @@ bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk:
     return StepSecondaryMotionChainCore(targets, count, settings, delta, nullptr, nullptr, 0, state, error);
 }
 
-bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error)
+bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius)
 {
-    return StepSecondaryMotionChainCore(targets, count, settings, delta, previousShapes, currentShapes, shapeCount, state, error);
+    if (!isfinite(pointRadius) || pointRadius < 0.0f)
+    {
+        error.Assign("Secondary motion skin point radius is invalid");
+        return false;
+    }
+    if (pointRadius == 0.0f)
+    {
+        return StepSecondaryMotionChainCore(targets, count, settings, delta, previousShapes, currentShapes, shapeCount, state, error);
+    }
+    gk::Array<FModelSecondaryMotionCollisionShape> expandedPreviousShapes;
+    gk::Array<FModelSecondaryMotionCollisionShape> expandedCurrentShapes;
+    if (!ExpandSecondaryMotionCollisionShapes(previousShapes, shapeCount, pointRadius, expandedPreviousShapes, error) || !ExpandSecondaryMotionCollisionShapes(currentShapes, shapeCount, pointRadius, expandedCurrentShapes, error))
+    {
+        return false;
+    }
+    return StepSecondaryMotionChainCore(targets, count, settings, delta, expandedPreviousShapes.Data(), expandedCurrentShapes.Data(), shapeCount, state, error);
 }
 
 }

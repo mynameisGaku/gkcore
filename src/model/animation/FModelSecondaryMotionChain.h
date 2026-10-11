@@ -20,6 +20,8 @@ struct FModelSecondaryMotionChain
     Array<uint32_t> bones;
     // この鎖のばね・減衰・外力。
     FModelSecondaryMotionSettings settings;
+    // 各節の球と隣接節間の太さ。model空間で指定し、0は従来の節接触。
+    float collisionRadius = 0.0f;
     // 前回更新の節位置と速度。
     animation::FModelSecondaryMotionChainState simulation;
     // bonesと同じ順の確定回転。位置とscaleは適用しない。

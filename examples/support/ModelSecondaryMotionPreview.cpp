@@ -2,6 +2,9 @@
 #include "examples/support/ModelSecondaryMotionPreview.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#include <float.h>
 
 namespace gk::examples
 {
@@ -126,6 +129,9 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
             continue;
         }
         FModelSecondaryMotionSettings settings;
+        // 11番目の数値があるときだけ鎖の小球半径を設定する。
+        bool hasCollisionRadius = false;
+        float collisionRadius = 0.0f;
         int namesOffset = -1;
         if (sscanf(cursor, "%f %f %f %f %f %f %f %f %f %n", &settings.frequencyHz, &settings.dampingRatio, &settings.maxAngleDegrees, &settings.endOffset.x, &settings.endOffset.y, &settings.endOffset.z, &settings.gravity.x, &settings.gravity.y, &settings.gravity.z, &namesOffset) != 9 || namesOffset < 0)
         {
@@ -157,6 +163,23 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
             {
                 ++cursor;
             }
+        }
+        if (*cursor != '|')
+        {
+            char* radiusEnd = nullptr;
+            const double radius = strtod(cursor, &radiusEnd);
+            if (radiusEnd == cursor || !isfinite(radius) || radius < 0.0 || radius > FLT_MAX)
+            {
+                passed = false;
+                break;
+            }
+            cursor = radiusEnd;
+            while (*cursor == ' ' || *cursor == '\t')
+            {
+                ++cursor;
+            }
+            collisionRadius = static_cast<float>(radius);
+            hasCollisionRadius = true;
         }
         if (*cursor++ != '|')
         {
@@ -195,6 +218,10 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
         if (passed)
         {
             passed = SetModelSecondaryMotionChain(model, bones, count, settings) == 0;
+            if (passed && hasCollisionRadius)
+            {
+                passed = SetModelSecondaryMotionChainCollisionRadius(model, bones[0], collisionRadius) == 0;
+            }
             if (!passed)
             {
                 fprintf(stderr, "secondary motion chain rejected: %s\n", count > 0 ? GetModelBoneName(model, bones[0]) : "empty");
