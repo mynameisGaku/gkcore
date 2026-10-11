@@ -2703,9 +2703,16 @@ static bool TestSecondaryMotionLinkPreparationBudget()
         return false;
     }
     gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    gk::model::animation::ResetSecondaryMotionCollisionPrepareCount();
     if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 2 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 2 || gk::model::GetSecondaryMotionLinkChainConstraintCount() != 3)
     {
         fprintf(stderr, "same-radius links did not reuse two prepared bodies: %s\n", error.CStr());
+        return false;
+    }
+    // 接続用2件、共有guard形状2件、保存後のraw検査2件×3鎖だけを準備する。
+    if (gk::model::animation::GetSecondaryMotionCollisionPrepareCount() != 10)
+    {
+        fprintf(stderr, "linked chains did not share their step-shape preparation: count=%llu\n", static_cast<unsigned long long>(gk::model::animation::GetSecondaryMotionCollisionPrepareCount()));
         return false;
     }
     if (!candidate.links.Append(gk::FModelSecondaryMotionLink{ 5, 1, 0.2f }))

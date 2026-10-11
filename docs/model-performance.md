@@ -127,3 +127,11 @@ devではsubstep内の一定な目標方向・骨長と、半径ガード後の�
 通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示/頂点補正OFFの3000frame/warmup300を同batchで前後とも完走しました。168.090→168.347FPS、揺れ更新2.499→2.382ms、後p95 6.879ms、Draw .526/Present2.458/IK .517msです。揺れ更新は短くなりましたが、全体FPSの改善は小さく、300FPSには届いていません。記録はconstraint-dirty-{before,after}-benchmark.logです。
 
 Debug/Release各2区間×120frameのGPU・Skirt点参照はすべて有効でした。構成間24組の画像と全skin記録が一致し、変更前との差も保存画像で最大3pixelでした。布の侵入は残ります。実測と変動deltaの4500frame再生も完走しましたが、以前のwarmup停止の原因は未確定です。次は同じStep0内で繰り返す形状・目標線分の準備を調べます。
+
+## 同じ半径の身体形状準備を共有する
+
+接続補正のStep0で使う身体形状を、同じ更新内の節半径ごとに一度準備します。元の半径拡張・補間・guard・float化の順序を保持し、最終raw/FK検査も続けます。同半径3鎖・2bodyの準備は14→10件となりました。
+
+通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示/頂点補正OFFの3000frame/warmup300を前後とも完走しました。170.854→175.739FPS、揺れ更新2.384→2.317ms、後p95 6.643ms、Draw .430/Present2.370/IK .516msです。改善は小さく、300FPSには届いていません。ログはstep-shapes-{before,after}-benchmark.logです。
+
+Debug/Release計480frameのGPU・Skirt点参照が有効で、全skin記録と48画像が変更前と一致しました。布面の貫通は保持されています。実測delta3300frameの隠し再生と変動1200frameの可視再生も完走しました。以前のwarmup停止の原因は未確定です。次は隣接鎖の間隔を保つ距離制約を検討します。

@@ -7,6 +7,7 @@
 #include "foundation/String.h"
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelSecondaryMotionChainState.h"
+#include "model/animation/FModelSecondaryMotionStepShapes.h"
 
 namespace gk::model::animation
 {
@@ -26,6 +27,11 @@ bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk:
  * 形状は前回と今回で同数。高速な更新間移動の連続接触は保証しない。
  */
 bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius = 0.0f);
+
+/**
+ * cacheのGetが返したshape viewを用いて時間0の接触・鎖制約を解く。viewの数と各配列を検証し、失敗時はstateを保つ。
+ */
+bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error);
 
 #if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
 /**

@@ -264,3 +264,9 @@ YUMEKAの接続10本設定を保持して、目標方向/長さと接触形状�
 構成間24組の画像と240件のskin記録は一致しました。変更前の48画像では34枚がbyte一致し、残る14枚の差は各1〜3pixel/640×480です。侵入点数は全frame同じで、深さ差は最大8.36e-8 model unitです。loop平均15.833/最大深さ.020639の侵入は残り、布面の品質改善とは扱いません。比較はconstraint-dirty-image-comparison.json、constraint-dirty-skin-config-comparison.json、目視画像はconstraint-dirty-quality.pngです。
 
 可視benchmarkの変更前後は各3000frame/warmup300、変更後のdelta replayは実測3300＋変動1200frameが完走しました。以前のwarmup失敗の原因同定とは区別します。元assetと現在のbuild、最新Release画像、検証ログ、delta、失敗記録を保持し、調査用build/scriptと重複画像は片づけます。
+
+## 半径別のstep形状を共有する
+
+同じ接続更新内で、鎖の節半径ごとの拡張・guard・prepared形状を共有しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本・頂点補正OFFで、0秒/3.35秒開始をDebug/Release各120frame、計480frame検証しました。GPU位置/法線とSkirt1314点が全frame有効、最大位置誤差9.314e-10、法線1.789e-7です。
+
+変更前の全480skin記録と48画像が一致し、Debug/Release間の24組もbyte一致。loop侵入平均15.833/最大深さ.020639も保持しており、画質改善とは扱いません。比較はstep-shapes-image-comparison.json、目視画像はstep-shapes-quality.pngです。実測delta3300frameの隠し再生と変動1200frameの可視再生も完走しました。最初の可視実測再生はAPIエラーなく295frameで途中終了し、step-shapes-trace-1-replay-incomplete.logへ分けています。

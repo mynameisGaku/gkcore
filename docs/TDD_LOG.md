@@ -1483,3 +1483,19 @@ REDは接触だけの2鎖で復元4回、遠い接続鎖を追加した4鎖で8�
 固定120frameの参照計算総数はstart27480→24616、loop29920→25332。初期20frame除外後の平均は235.20→207.36、254.00→212.76です。通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300を同batchで前後とも完走し、168.090→168.347FPS、secondary2.499→2.382ms、後p95 6.879ms、Draw .526/Present2.458/IK .517msでした。更新の削減は確認しましたが全体FPSの改善は小さく、300FPS未達です。実測3300＋変動1200deltaの可視replayも4500frame完走しました。元のwarmup停止の原因同定とは扱わず、この区切りのmain反映は保留を続けます。
 
 Runtime SDK57ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdownも成功。記録はconstraint-dirty-{red-debug-test,green-debug-test,final-debug-test,final-release-test,before-benchmark,after-benchmark,trace-1-replay,jitter-replay}.log、constraint-dirty-{Release,Debug}-{start,loop}.log、constraint-dirty-image-comparison.json、constraint-dirty-skin-config-comparison.jsonです。現在のRelease画像とlossless PNG、最新検証記録、元assetを保持し、重複画像・調査用build/scriptはhashとfixture仕様を残して片づけます。次は、同じ更新内の鎖Step0が繰り返し準備する一定の半径拡張・形状・目標線分を、既存の計算順と検査を保って共有する範囲を調べます。
+
+## 接続更新内で鎖の身体形状準備を共有する
+
+2026-10-12。ユーザー指定のKawaiiPhysics公式source feee5fe727261ba9cfe725c4af280aa9e381c31dを読み、シミュレーションstepの前に接触形状の派生値をまとめる構成と骨間距離XPBD制約を確認しました。参照元とMIT本文はTHIRD_PARTY_NOTICES.mdへ記録。今回の計算共有は既存gkcoreの数学とfoundationの配列で実装し、Unreal Engineの型や依存物は導入していません。公式の最後に骨長を1度戻す処理へ全置換せず、gkcoreの接触再検査と失敗時の確定状態保持を続けます。公式の骨間距離制約はスカート鎖の間隔を保つ機能であり、現在の身体接触線分とは別です。距離制約は次の候補にします。
+
+ConstrainSecondaryMotionLinksの寿命内にFModelSecondaryMotionStepShapeCacheを置き、同じfloat節半径ごとに、半径拡張済みraw body、delta0補間/1.001 guard済みraw、prepared shapeを一度作ります。flat arraysとgroup offsetはfoundation Arrayで所有し、source bodyは更新中不変の借用です。FModelSecondaryMotionStepShapesは次のGetまでに使い切る参照descriptorで、物理stateや次Updateには保存しません。Get失敗時は出力descriptorと登録済み内容を保ち、確保で内部配列位置が変わり得ることをheaderへ明記しました。
+
+新internal StepSecondaryMotionChainWithPreparedCollisionsはdelta0だけを既存Coreで処理します。Step shapeの生成・準備だけを共有し、raw Avoidにはguarded、Project/Checkにはprepared、保存後のraw Checkにはexpandedを使います。参照方向/長さ計算、投影・親子順・角度制限・float検算・最終FK検査は維持し、通常delta pathも従来の構築順です。GetはCoreより先に形状を準備するため、形状とsettings/targetsがともに不正な場合の診断優先順位は変わり得ます。このprivate経路の失敗時state保持は確認しています。
+
+REDはcache stubで初回Get失敗、cache実装後のraw-delegate prepared stubでguard形状の再準備2件が残る失敗、リンク統合前の準備14件 expected10を順に取得。GREENでは同半径3鎖・2bodyの接続用2件＋共有guard2件＋保存後raw検査6件、計10件となりました。独立oracleで拡張の最小外向きfloat丸めとguardのnearest float cast、signed zeroのraw保持/補間後+0、preparedとrawの3回連続state byte一致を確認。異なる半径/再Get/空body/null/count65/NaN/guard overflow、preparedで投影非収束時の参照計算0回とstate保持、allocation failure allow0〜12で出力保持・既存group再取得・retry成功を確認しました。保存後raw Check/RawAvoidの計数は残るため、prepared stepのprepare数0という期待は使いません。独立read-onlyレビューでも重大な不具合は見つかりませんでした。
+
+最終CPU MSVC19.51 Debug60/60（5.10秒）、Release60/60（4.82秒）成功。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・輪状接続10本、頂点補正OFFの0秒/3.35秒開始をDebug/Release各120frame、計480frame実行。GPU位置/法線とSkirt1314点が全frame有効、最大位置誤差9.314e-10、法線1.789e-7。変更前と全480skin記録/48画像が一致し、構成間24組もbyte一致しました。loopの侵入平均15.833/最大深さ.020639は保持しており、布面の品質改善とは扱いません。
+
+通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300は変更前170.854FPS/secondary2.384ms、後175.739FPS/secondary2.317ms、後p95 6.643ms、Draw .430/Present2.370/IK .516msで双方完走。差は小さく300FPS未達です。delta replayは実測3300frameを隠しcapture DLL、変動1200frameを通常可視DLLで完走しました。最初の可視実測replayは295frame・completed=false・exit0で途中終了。APIエラーはなく、イベント/終了入力の経路と判別できるため、完走成功にも接触失敗の再現にも数えません。未完走logを残して隠しwindowで再実行しました。以前のwarmup接触失敗の原因同定とは区別し、今回もmain反映は保留します。
+
+Runtime SDK57ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdownも成功。記録はstep-shapes-{red-debug-test,prepared-red-test,links-red-test,links-green-test,debug-test,release-test,before-benchmark,after-benchmark,trace-1-replay,jitter-replay}.log、step-shapes-{Release,Debug}-{start,loop}.log、step-shapes-image-comparison.json、step-shapes-native-results.jsonです。現在のRelease画像とlossless PNG、delta、失敗記録、現build、元assetを保持し、一時検証scriptと重複画像はhashを残して片づけます。公式reference checkoutは次の骨間距離制約の調査にも使うため.devtools内へ固定revisionのまま保持します。

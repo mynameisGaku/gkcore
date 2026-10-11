@@ -2,6 +2,7 @@
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
+#include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 #include <float.h>
 #include <math.h>
 #include <string.h>
@@ -270,6 +271,8 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
     {
         return false;
     }
+    // 身体形状は更新中に変わらないため、鎖の節半径ごとに前処理を共有する。
+    animation::FModelSecondaryMotionStepShapeCache chainShapeCache(shapes, shapeCount);
     // 前の点との差ではなく、既存Stepへ加えた接触補正だけを速度へ戻す。
     Array<Vec3> beforePositions;
     Array<uint32_t> offsets;
@@ -332,10 +335,16 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
                 continue;
             }
             auto& entry = *candidate.chains.At(chain);
+            // viewは次のcache取得までに使い切り、鎖や次の更新へ保持しない。
+            animation::FModelSecondaryMotionStepShapes chainShapes;
+            if (!chainShapeCache.Get(entry.collisionRadius, chainShapes, error))
+            {
+                return false;
+            }
 #if defined(GKCORE_TESTING)
             ++secondaryMotionLinkChainConstraintCount;
 #endif
-            if (!animation::StepSecondaryMotionChainWithCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, 0.0, shapes, shapes, shapeCount, entry.simulation, error, entry.collisionRadius))
+            if (!animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error))
             {
                 return false;
             }

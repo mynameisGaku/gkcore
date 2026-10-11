@@ -60,6 +60,7 @@ set(GKCORE_CORE_SOURCES
     ${GKCORE_MODEL_ANIMATION_LOADER_SOURCES}
     src/model/animation/ModelIk.cpp
     src/model/animation/ModelSecondaryMotionSolver.cpp
+    src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/ModelSecondaryMotionCollision.cpp
     src/model/animation/ModelSecondaryMotionColliders.cpp
     src/model/animation/ModelSecondaryMotion.cpp
@@ -131,14 +132,14 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_ik_tests PRIVATE GKCORE_TESTING=1)
     target_compile_definitions(gkcore_model_pose_tests PRIVATE GKCORE_TESTING=1)
     add_executable(gkcore_model_secondary_motion_tests tests/model_secondary_motion_tests.cpp
-        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_secondary_motion_tests)
     add_test(NAME gkcore.model_secondary_motion COMMAND gkcore_model_secondary_motion_tests)
     add_executable(gkcore_model_secondary_motion_collision_tests tests/model_secondary_motion_collision_tests.cpp
-        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_collision_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_collision_tests PRIVATE include src)

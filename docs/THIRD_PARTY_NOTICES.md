@@ -1,4 +1,4 @@
-# 第三者コンポーネントと配布条件
+﻿# 第三者コンポーネントと配布条件
 
 この文書は、Runtime の許可リストにある第三者ファイルと、固定した The Forge checkout / DXC package のライセンス文書を照合した記録です。確認できた許諾、条件付きの許諾、条件を特定できていない項目を分けて記します。
 
@@ -63,3 +63,35 @@ hidapi の pinned checkout には `windows/hid.c` と `hidapi.h` がある一方
 Runtime allowlist は依存の DLL とライセンス/notice ファイルを列挙するもので、配布許諾を自動的に証明するものではありません。MIT と Apache-2.0 の本文が確認できること、Microsoft/NVIDIA 条件に配布先契約が必要なこと、固定版 WinPix の条項が未確認であることを区別します。静的ライブラリが実際に含む第三者 object も未確認です。gkcore 自身のライセンスも未決定です。
 
 WinPix `1.0.200127001` が参照する WebPI EULA と配布条件の、版を特定できる Microsoft 資料は見つかっていません。後年 MIT と明記された `1.0.240308001` へ更新する場合も、The Forge との互換性と checksum を別途確認する必要があります。Agility/DXC/NVAPI の再配布時に必要な利用者契約の扱いも未解決です。依存一覧、該当する原文、Runtime に入れるファイルは [配布物と開発物](package-layout.md) も参照してください。
+
+## KawaiiPhysics の参照資料
+
+- 参照元: [pafuhana1213/KawaiiPhysics](https://github.com/pafuhana1213/KawaiiPhysics)
+- 確認commit: [`feee5fe727261ba9cfe725c4af280aa9e381c31d`](https://github.com/pafuhana1213/KawaiiPhysics/commit/feee5fe727261ba9cfe725c4af280aa9e381c31d)
+- [LICENSE](https://github.com/pafuhana1213/KawaiiPhysics/blob/feee5fe727261ba9cfe725c4af280aa9e381c31d/LICENSE): MIT License、Copyright (c) 2019-2026 pafuhana1213
+
+シミュレーションstepごとに接触形状の派生値をまとめて準備する構成と、骨間の距離制約を確認しました。gkcoreの前処理共有は、既存の形状計算とfoundationの配列で実装しています。Unreal Engineの型や依存物は同梱しません。参照元のライセンス本文を以下に記録します。
+
+```text
+MIT License
+
+Copyright (c) 2019-2026 pafuhana1213
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

@@ -1,8 +1,10 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
+#include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 
 #include "foundation/Array.h"
+#include "foundation/Memory.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1573,6 +1575,230 @@ bool TestPreparedPointContactsValidationAndAtomicity()
 }
 
 /**
+ * 更新中の形状準備を半径別に再利用し、失敗時にviewを保つ。
+ */
+bool TestStepShapeCacheReuseAndAtomicity()
+{
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ 0.9f, 0.0f, 0.0f }, { 0.9f, 0.0f, 0.0f }, 0.2f), Shape({ 3.0f, 3.0f, 3.0f }, { 3.0f, 4.0f, 3.0f }, 0.15f) };
+    FModelSecondaryMotionStepShapeCache cache(shapes, 2);
+    FModelSecondaryMotionStepShapes firstView{};
+    gk::String error;
+    ResetSecondaryMotionCollisionExpansionCount();
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!cache.Get(0.1f, firstView, error) || !error.Empty() || firstView.count != 2 || !firstView.expanded || !firstView.guarded || !firstView.prepared)
+        return Fail("step-shape cache did not prepare the first radius group");
+    if (GetSecondaryMotionCollisionExpansionCount() != 1 || GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("first step-shape cache group did not expand once and prepare each body once");
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+        const double radiusSum = static_cast<double>(shapes[index].radius) + 0.1;
+        float expectedExpandedRadius = static_cast<float>(radiusSum);
+        if (static_cast<double>(expectedExpandedRadius) < radiusSum)
+            expectedExpandedRadius = nextafterf(expectedExpandedRadius, INFINITY);
+        const float expectedGuardedRadius = static_cast<float>(static_cast<double>(expectedExpandedRadius) * 1.001);
+        const double expectedPreparedRadius = expectedGuardedRadius;
+        if (memcmp(&firstView.expanded[index].start, &shapes[index].start, sizeof(gk::Vec3)) != 0 || memcmp(&firstView.expanded[index].end, &shapes[index].end, sizeof(gk::Vec3)) != 0 || memcmp(&firstView.expanded[index].radius, &expectedExpandedRadius, sizeof(float)) != 0 || memcmp(&firstView.guarded[index].radius, &expectedGuardedRadius, sizeof(float)) != 0 || memcmp(&firstView.prepared[index].radius, &expectedPreparedRadius, sizeof(double)) != 0)
+            return Fail("step-shape cache expansion or nearest guard rounding differed from the independent oracle");
+    }
+
+    FModelSecondaryMotionStepShapes repeatedView{};
+    if (!cache.Get(0.1f, repeatedView, error) || repeatedView.expanded != firstView.expanded || repeatedView.guarded != firstView.guarded || repeatedView.prepared != firstView.prepared || repeatedView.count != firstView.count)
+        return Fail("same-radius step-shape lookup did not reuse its view");
+    if (GetSecondaryMotionCollisionExpansionCount() != 1 || GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("same-radius step-shape lookup repeated expansion or preparation");
+
+    FModelSecondaryMotionStepShapes secondRadiusView{};
+    if (!cache.Get(0.2f, secondRadiusView, error) || secondRadiusView.count != 2 || fabs(secondRadiusView.expanded[0].radius - 0.4f) > 1.0e-6f)
+        return Fail("different-radius step-shape lookup did not create a distinct group");
+    if (GetSecondaryMotionCollisionExpansionCount() != 2 || GetSecondaryMotionCollisionPrepareCount() != 4)
+        return Fail("different-radius group did not expand once and prepare each body once");
+    // 別groupの確保後はviewを取り直し、現在の配列内で別の範囲を指すことを確認する。
+    if (!cache.Get(0.1f, firstView, error) || firstView.expanded == secondRadiusView.expanded || firstView.prepared == secondRadiusView.prepared || fabs(firstView.expanded[0].radius - 0.3f) > 1.0e-6f)
+        return Fail("radius groups did not remain distinct after reacquiring the first view");
+
+    const FModelSecondaryMotionStepShapes preservedView = firstView;
+    const auto SameView = [](const FModelSecondaryMotionStepShapes& first, const FModelSecondaryMotionStepShapes& second) { return first.expanded == second.expanded && first.guarded == second.guarded && first.prepared == second.prepared && first.count == second.count; };
+    if (cache.Get(std::numeric_limits<float>::quiet_NaN(), firstView, error) || error.Empty() || !SameView(firstView, preservedView))
+        return Fail("invalid point radius changed an existing step-shape view");
+    if (GetSecondaryMotionCollisionExpansionCount() != 2 || GetSecondaryMotionCollisionPrepareCount() != 4)
+        return Fail("invalid point radius changed cached shape preparation counts");
+
+    FModelSecondaryMotionCollisionShape tooMany[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+        tooMany[index] = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.1f);
+    FModelSecondaryMotionStepShapeCache oversizedCache(tooMany, 65);
+    if (oversizedCache.Get(0.0f, firstView, error) || error.Empty() || !SameView(firstView, preservedView))
+        return Fail("oversized step-shape cache input was accepted or changed output");
+    FModelSecondaryMotionStepShapeCache nullCache(nullptr, 1);
+    if (nullCache.Get(0.0f, firstView, error) || error.Empty() || !SameView(firstView, preservedView))
+        return Fail("null step-shape cache input was accepted or changed output");
+
+    const FModelSecondaryMotionCollisionShape nearFloatLimit = Shape({}, {}, std::numeric_limits<float>::max() / 1.0005f);
+    FModelSecondaryMotionStepShapeCache guardOverflowCache(&nearFloatLimit, 1);
+    if (guardOverflowCache.Get(0.0f, firstView, error) || error.Empty() || !SameView(firstView, preservedView))
+        return Fail("guard-radius overflow was accepted or changed output");
+
+    FModelSecondaryMotionStepShapeCache emptyCache(nullptr, 0);
+    FModelSecondaryMotionStepShapes emptyView{ shapes, shapes, nullptr, 2 };
+    if (!emptyCache.Get(0.0f, emptyView, error) || !error.Empty() || emptyView.count != 0 || emptyView.expanded || emptyView.guarded || emptyView.prepared)
+        return Fail("empty step-shape cache did not return an empty view");
+
+    const FModelSecondaryMotionCollisionShape signedZeroShape = Shape({ -0.0f, -0.0f, -0.0f }, { -0.0f, -0.0f, -0.0f }, 0.2f);
+    FModelSecondaryMotionStepShapeCache signedZeroCache(&signedZeroShape, 1);
+    FModelSecondaryMotionStepShapes signedZeroView{};
+    const float pointRadius = 0.1f;
+    if (!signedZeroCache.Get(pointRadius, signedZeroView, error) || memcmp(&signedZeroView.expanded[0].start, &signedZeroShape.start, sizeof(gk::Vec3)) != 0 || memcmp(&signedZeroView.expanded[0].end, &signedZeroShape.end, sizeof(gk::Vec3)) != 0)
+        return Fail("radius expansion did not preserve signed-zero body coordinates");
+    const float positiveZero = 0.0f;
+    const float guardedStart[3] = { signedZeroView.guarded[0].start.x, signedZeroView.guarded[0].start.y, signedZeroView.guarded[0].start.z };
+    const float guardedEnd[3] = { signedZeroView.guarded[0].end.x, signedZeroView.guarded[0].end.y, signedZeroView.guarded[0].end.z };
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        if (memcmp(&guardedStart[axis], &positiveZero, sizeof(float)) != 0 || memcmp(&guardedEnd[axis], &positiveZero, sizeof(float)) != 0)
+            return Fail("guarded body coordinates did not match the Core zero-step positive-zero interpolation");
+    return true;
+}
+
+/**
+ * 新しい半径groupの各確保段階が失敗しても既存groupと出力viewを保つ。
+ */
+bool TestStepShapeCacheAllocationFailureAtomicity()
+{
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.2f), Shape({ 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.3f) };
+    bool sawFailure = false;
+    bool reachedSuccess = false;
+    for (uint32_t allowedAllocations = 0; allowedAllocations <= 12; ++allowedAllocations)
+    {
+        FModelSecondaryMotionStepShapeCache cache(shapes, 2);
+        FModelSecondaryMotionStepShapes originalView{};
+        gk::String error;
+        if (!cache.Get(0.1f, originalView, error))
+            return Fail("could not seed the allocation-failure cache");
+        const FModelSecondaryMotionStepShapes outputBefore = originalView;
+        if (!error.Assign("preallocated diagnostic buffer for deterministic allocation failure checks"))
+            return Fail("could not reserve diagnostic string storage before allocation injection");
+        FModelSecondaryMotionStepShapes output = outputBefore;
+        gk::SetAllocationFailureAfterForTesting(allowedAllocations);
+        const bool created = cache.Get(0.2f, output, error);
+        gk::ResetAllocationFailureForTesting();
+        if (created)
+        {
+            if (!error.Empty() || output.count != 2 || fabs(output.expanded[0].radius - 0.4f) > 1.0e-6f)
+                return Fail("allocation sweep success returned an invalid new radius group");
+            reachedSuccess = true;
+            break;
+        }
+
+        sawFailure = true;
+        if (error.Empty() || output.expanded != outputBefore.expanded || output.guarded != outputBefore.guarded || output.prepared != outputBefore.prepared || output.count != outputBefore.count)
+            return Fail("failed cache allocation changed the caller view or omitted a diagnostic");
+        // Reserveが既存配列を移動し得るため、古いviewは参照せず同じradiusを取り直す。
+        FModelSecondaryMotionStepShapes recoveredOriginal{};
+        if (!cache.Get(0.1f, recoveredOriginal, error) || recoveredOriginal.count != 2 || fabs(recoveredOriginal.expanded[0].radius - 0.3f) > 1.0e-6f || fabs(recoveredOriginal.expanded[1].radius - 0.4f) > 1.0e-6f)
+            return Fail("failed cache allocation lost an existing radius group");
+        FModelSecondaryMotionStepShapes retried{};
+        if (!cache.Get(0.2f, retried, error) || retried.count != 2 || fabs(retried.expanded[0].radius - 0.4f) > 1.0e-6f)
+            return Fail("cache could not retry a radius group after allocation failure");
+    }
+    if (!sawFailure || !reachedSuccess)
+        return Fail("allocation-failure sweep did not cover both failures and successful cache creation");
+    return true;
+}
+
+/**
+ * 準備済みviewのstepをraw経路とbyte単位で比べ、再準備を防ぐ。
+ */
+bool TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ 0.9f, 0.0f, 0.0f }, { 0.9f, 0.0f, 0.0f }, 0.2f), Shape({ 3.0f, 3.0f, 3.0f }, { 3.0f, 4.0f, 3.0f }, 0.15f) };
+    const float pointRadius = 0.15f;
+    const gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    FModelSecondaryMotionStepShapeCache cache(shapes, 2);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    ResetSecondaryMotionCollisionExpansionCount();
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!cache.Get(pointRadius, view, error) || view.count != 2 || GetSecondaryMotionCollisionExpansionCount() != 1 || GetSecondaryMotionCollisionPrepareCount() != 2)
+        return Fail("could not create the prepared solver-step view");
+
+    FModelSecondaryMotionChainState preparedState;
+    FModelSecondaryMotionChainState rawState;
+    FModelSecondaryMotionChainState preparedSnapshot;
+    if (!ResetSecondaryMotionChain(targets, 2, preparedState, error) || !ResetSecondaryMotionChain(targets, 2, rawState, error))
+        return Fail("could not initialize prepared and raw solver states");
+    const auto SameStateBytes = [](const FModelSecondaryMotionChainState& first, const FModelSecondaryMotionChainState& second) { return first.points.Count() == second.points.Count() && first.previousTargets.Count() == second.previousTargets.Count() && memcmp(first.points.Data(), second.points.Data(), static_cast<size_t>(first.points.Count()) * sizeof(FModelSecondaryMotionPoint)) == 0 && memcmp(first.previousTargets.Data(), second.previousTargets.Data(), static_cast<size_t>(first.previousTargets.Count()) * sizeof(gk::Vec3)) == 0; };
+    for (uint32_t iteration = 0; iteration < 3; ++iteration)
+    {
+        const uint64_t preparedCountBefore = GetSecondaryMotionCollisionPrepareCount();
+        if (!StepSecondaryMotionChainWithPreparedCollisions(targets, 2, settings, view, preparedState, error))
+            return Fail("prepared solver step failed");
+        const uint64_t preparedStepCount = GetSecondaryMotionCollisionPrepareCount() - preparedCountBefore;
+        const uint64_t rawCountBefore = GetSecondaryMotionCollisionPrepareCount();
+        if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, shapes, shapes, 2, rawState, error, pointRadius))
+            return Fail(error.CStr());
+        // raw回避と保存後のraw検査は残し、guard形状の準備2件だけを省く。
+        if (GetSecondaryMotionCollisionPrepareCount() - rawCountBefore != preparedStepCount + 2u)
+            return Fail("prepared solver did not remove only the two guarded-shape preparations");
+        if (!SameStateBytes(preparedState, rawState))
+            return Fail("prepared and raw collision steps differed byte-for-byte");
+    }
+    const gk::FVector3d solvedPositions[2] = { ToDouble(preparedState.points.At(0).position), ToDouble(preparedState.points.At(1).position) };
+    if (!IsFinite(preparedState) || !IsFreeSegmentClear(shapes, 2, pointRadius, solvedPositions[0], solvedPositions[1]))
+        return Fail("prepared step did not preserve finite point-radius contact geometry");
+
+    if (!CopyState(preparedState, preparedSnapshot))
+        return Fail("could not snapshot prepared solver state");
+    FModelSecondaryMotionStepShapes invalidView = view;
+    invalidView.prepared = nullptr;
+    if (StepSecondaryMotionChainWithPreparedCollisions(targets, 2, settings, invalidView, preparedState, error) || error.Empty() || !SameStateBytes(preparedState, preparedSnapshot))
+        return Fail("prepared solver accepted a missing prepared-shape pointer or changed state");
+    FModelSecondaryMotionCollisionShape oversizedExpanded[65]{};
+    FModelSecondaryMotionCollisionShape oversizedGuarded[65]{};
+    FPreparedSecondaryMotionCollisionShape oversizedPrepared[65]{};
+    invalidView = { oversizedExpanded, oversizedGuarded, oversizedPrepared, 65 };
+    if (StepSecondaryMotionChainWithPreparedCollisions(targets, 2, settings, invalidView, preparedState, error) || error.Empty() || !SameStateBytes(preparedState, preparedSnapshot))
+        return Fail("prepared solver accepted an oversized shape view or changed state");
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    gk::FModelSecondaryMotionSettings invalidSettings = settings;
+    invalidSettings.frequencyHz = nan;
+    if (StepSecondaryMotionChainWithPreparedCollisions(targets, 2, invalidSettings, view, preparedState, error) || error.Empty() || !SameStateBytes(preparedState, preparedSnapshot))
+        return Fail("prepared solver accepted invalid settings or changed state");
+    if (StepSecondaryMotionChainWithPreparedCollisions(nullptr, 2, settings, view, preparedState, error) || error.Empty() || !SameStateBytes(preparedState, preparedSnapshot))
+        return Fail("prepared solver accepted null targets or changed state");
+
+    FModelSecondaryMotionStepShapeCache emptyCache(nullptr, 0);
+    FModelSecondaryMotionStepShapes emptyView{};
+    if (!emptyCache.Get(0.0f, emptyView, error))
+        return Fail("could not create the empty prepared collision view");
+    FModelSecondaryMotionChainState emptyPreparedState;
+    FModelSecondaryMotionChainState emptyRawState;
+    if (!ResetSecondaryMotionChain(targets, 2, emptyPreparedState, error) || !ResetSecondaryMotionChain(targets, 2, emptyRawState, error) || !StepSecondaryMotionChainWithPreparedCollisions(targets, 2, settings, emptyView, emptyPreparedState, error) || !StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, nullptr, nullptr, 0, emptyRawState, error) || !SameStateBytes(emptyPreparedState, emptyRawState))
+        return Fail("empty prepared collision view differed from the no-collider solver path");
+    return true;
+}
+
+/**
+ * 準備済み形状の投影が収束しない場合は参照方向を計算せずstateを保つ。
+ */
+bool TestPreparedProjectionFailureSkipsReferenceWork()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 0.1f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape overlapping[2] = { Shape({ -0.5f, 0.0f, 0.0f }, { -0.5f, 0.0f, 0.0f }, 0.8f), Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.8f) };
+    FModelSecondaryMotionStepShapeCache cache(overlapping, 2);
+    FModelSecondaryMotionStepShapes view{};
+    FModelSecondaryMotionChainState state;
+    FModelSecondaryMotionChainState snapshot;
+    const gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || !ResetSecondaryMotionChain(targets, 2, state, error) || !CopyState(state, snapshot))
+        return Fail("could not initialize the prepared projection-failure fixture");
+    ResetSecondaryMotionReferenceCalculationCount();
+    if (StepSecondaryMotionChainWithPreparedCollisions(targets, 2, settings, view, state, error) || error.Empty() || GetSecondaryMotionReferenceCalculationCount() != 0 || !SameState(state, snapshot))
+        return Fail("prepared projection failure calculated reference segments or changed the old state");
+    return true;
+}
+
+/**
  * float保存後にも固定長と角度coneを保つか、崩れる配置をatomicに拒否する。
  */
 bool TestFloatRoundingPreservesLengthAndAngle()
@@ -1606,8 +1832,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {
