@@ -1469,3 +1469,17 @@ Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、
 新しい候補判定は追加反復を要し、固定120frameの参照計算総数はstart25880→27480、loop28160→29920でした。通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300は完走し、162.817FPS、p95 7.897ms、secondary2.687msです。300FPSは未達で、前回173.519FPSからの改善も確認できません。既存実測3300frame＋変動1200frameの可視replay、新しい実時間trace1200frameも完走し、今回の通常計測を含む9000frameで接触失敗は出ていません。これを元のwarmup失敗の原因同定とは扱わず、この区切りのmain反映は引き続き保留します。
 
 Runtime SDK57ファイルがallowlistに一致し、更新DLLを使ったinstall済みSDK consumerのGPU Init→Present→Shutdownも成功しました。記録はlink-roundtrip-final-{debug,release}-test.log、link-roundtrip-{Release,Debug}-{start,loop}.log、link-roundtrip-image-comparison.json、link-roundtrip-benchmark.log、link-roundtrip-realtime-trace.log、constraint-delta-{trace-1,jitter}-visible.logです。純pose/projection調査の生成buildと一時script、重複Debug画像はhashを残して片づけ、最新Release画像、比較PNG、delta、失敗記録、現build、元assetを保持します。次の削減候補は、接続投影で位置が変わらない鎖への再制約です。floatの再正規化は再実行で値が変わり得るため、更新順と接触結果を比較してから採用します。
+
+## 位置が変わらない接続鎖の再制約を省く
+
+2026-10-12。delta0の再実行が同じfloat状態を返すか、独立MSVC19.51 Debug CPU probeで4配置を各6回調べました。無接触短鎖とsphere短鎖は初回後に安定しましたが、capsule6点鎖では以後も3成分が最大7.7e-10、sphere24度制限8点鎖では4成分が最大4.7e-10ずつ変化しました。速度とpreviousTargetsは不変です。したがって全結果のbit同一を前提にはせず、初回で保存状態の長さ・角度・接触を必ず検査した上で、省く処理を決めます。fixtureとtoolchainはconstraint-repeat-probe/probe-manifest.txtとdebug-repeat-results.logへ記録しました。
+
+ConstrainSecondaryMotionLinksに更新内だけのrestorePending配列を加えました。投影→float保存後に端点の12byteが変わった鎖を予約し、初回は従来どおり全接続鎖へStep0します。後続は予約がある鎖だけ復元します。全linkの投影を終えてから鎖順にStepし、同じ鎖が複数linkに出ても1回/passです。Step成功時に予約を消し、CheckCandidateで全linkを調べて、全不成立linkの両端鎖を次passへ再予約します。投影のfloat丸めで端点が変わらない場合も、未解決成分の再Stepを維持します。最初の診断を保持し、後続判定の診断は別Stringへ出します。速度用のaffectedは従来の累積対象のままです。target/settings/body/radius、半幅の候補判定、32回上限、最終float/FK検査、API失敗時の確定状態保持は維持します。
+
+REDは接触だけの2鎖で復元4回、遠い接続鎖を追加した4鎖で8回となることを確認。期待値は初回だけを加えた6回です。GREENでは6回となり、接触鎖の全物理状態が追加鎖の有無で一致しました。独立距離・骨長/角度・root/targets/有限値、初回の崩れた長さ修復、初回invalid settings/state拒否、正deltaでの遠い鎖の非零速度維持と -0 + 0 の符号、共有鎖3本の1回/pass、同時sphere2成分の接触成立も検査しました。counterはGKCORE_TESTINGだけで、通常Runtime/SDKには入りません。全不成立linkの予約とscratch String失敗時の制御は独立read-onlyレビューでも確認し、重大な問題は見つかりませんでした。丸め停滞を直接起こす専用の片側端点fixtureは未確立です。
+
+最終CPU MSVC19.51 Debug60/60（4.96秒）、Release60/60（5.21秒）成功。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0、YUMEKA・Silly Dancing/Capoeira blend・右腕IK・13鎖・身体8形状・輪状接続10本、頂点補正OFFの0秒/3.35秒開始をDebug/Release各120frame、計480frame実行しました。GPU位置/法線とSkirt1314点の全参照が有効で、最大位置誤差9.314e-10、法線1.789e-7です。構成間24組の画像と240件のskin記録が一致。変更前48画像のうち34枚がbyte一致し、残りも各640×480の1〜3pixel差です。skin記録自体は完全一致ではありませんが、各frameの侵入点数は同一、深さ差の最大はstart8.36e-8/loop6.12e-8 model unitです。loop平均15.833・最大深さ.020639の侵入は残り、画質改善とは扱いません。
+
+固定120frameの参照計算総数はstart27480→24616、loop29920→25332。初期20frame除外後の平均は235.20→207.36、254.00→212.76です。通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300を同batchで前後とも完走し、168.090→168.347FPS、secondary2.499→2.382ms、後p95 6.879ms、Draw .526/Present2.458/IK .517msでした。更新の削減は確認しましたが全体FPSの改善は小さく、300FPS未達です。実測3300＋変動1200deltaの可視replayも4500frame完走しました。元のwarmup停止の原因同定とは扱わず、この区切りのmain反映は保留を続けます。
+
+Runtime SDK57ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdownも成功。記録はconstraint-dirty-{red-debug-test,green-debug-test,final-debug-test,final-release-test,before-benchmark,after-benchmark,trace-1-replay,jitter-replay}.log、constraint-dirty-{Release,Debug}-{start,loop}.log、constraint-dirty-image-comparison.json、constraint-dirty-skin-config-comparison.jsonです。現在のRelease画像とlossless PNG、最新検証記録、元assetを保持し、重複画像・調査用build/scriptはhashとfixture仕様を残して片づけます。次は、同じ更新内の鎖Step0が繰り返し準備する一定の半径拡張・形状・目標線分を、既存の計算順と検査を保って共有する範囲を調べます。

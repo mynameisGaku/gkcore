@@ -4,6 +4,7 @@
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include <float.h>
 #include <math.h>
+#include <string.h>
 
 namespace gk::model
 {
@@ -46,6 +47,8 @@ struct FLinkShapeGroup
 // 接続solver内で解決した端点組と、準備した形状の数。
 uint64_t secondaryMotionLinkResolutionCount = 0;
 uint64_t secondaryMotionLinkShapePreparationCount = 0;
+// 接続投影後に鎖の長さ・角度・接触を復元した呼び出し数。
+uint64_t secondaryMotionLinkChainConstraintCount = 0;
 #endif
 
 /**
@@ -174,23 +177,32 @@ bool PrepareLinks(const FModelSecondaryMotionState& state, const animation::FMod
 }
 
 /**
- * 同じ更新で確定した接続端点と身体形状を使い、全線分を検査する。
+ * 全線分を検査し、不成立線分の両端鎖を次の復元対象へ予約する。
  */
-bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, String& error)
+bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, Array<uint8_t>& restorePending, String& error)
 {
+    // 最初の失敗をerrorに保ち、残りの線分も次の反復へ必要な鎖を集める。
+    bool clear = true;
+    String remainingError;
     for (uint32_t index = 0; index < links.Count(); ++index)
     {
         const auto& link = links.At(index);
         const auto& first = state.chains.At(link.firstChain)->simulation.points.At(link.firstPoint).position;
         const auto& second = state.chains.At(link.secondChain)->simulation.points.At(link.secondPoint).position;
         // 接触許容幅の半分をFKの丸め用に残し、鎖の長さを戻す交互補正も有限回で確定する。
-        if (!animation::CheckPreparedSecondaryMotionFreeSegmentContacts(shapes.Data() + link.shapeOffset, shapeCount, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error, CandidateContactToleranceFraction))
+        String& diagnostic = clear ? error : remainingError;
+        if (!animation::CheckPreparedSecondaryMotionFreeSegmentContacts(shapes.Data() + link.shapeOffset, shapeCount, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, diagnostic, CandidateContactToleranceFraction))
         {
-            LinkFailure(index, error);
-            return false;
+            restorePending.At(link.firstChain) = 1;
+            restorePending.At(link.secondChain) = 1;
+            if (clear)
+            {
+                LinkFailure(index, error);
+            }
+            clear = false;
         }
     }
-    return true;
+    return clear;
 }
 }
 
@@ -228,6 +240,7 @@ void ResetSecondaryMotionLinkPreparationCounts()
 {
     secondaryMotionLinkResolutionCount = 0;
     secondaryMotionLinkShapePreparationCount = 0;
+    secondaryMotionLinkChainConstraintCount = 0;
 }
 uint64_t GetSecondaryMotionLinkResolutionCount()
 {
@@ -236,6 +249,10 @@ uint64_t GetSecondaryMotionLinkResolutionCount()
 uint64_t GetSecondaryMotionLinkShapePreparationCount()
 {
     return secondaryMotionLinkShapePreparationCount;
+}
+uint64_t GetSecondaryMotionLinkChainConstraintCount()
+{
+    return secondaryMotionLinkChainConstraintCount;
 }
 #endif
 
@@ -257,10 +274,12 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
     Array<Vec3> beforePositions;
     Array<uint32_t> offsets;
     Array<uint8_t> affected;
+    // 投影で変わった鎖と、前回の不成立線分が要求する鎖の復元予約。
+    Array<uint8_t> restorePending;
     for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
     {
         const auto* entry = candidate.chains.At(chain);
-        if (!entry || entry->simulation.points.Count() != entry->bones.Count() + 1 || entry->simulation.previousTargets.Count() != entry->simulation.points.Count() || !offsets.Append(beforePositions.Count()) || !affected.Append(0))
+        if (!entry || entry->simulation.points.Count() != entry->bones.Count() + 1 || entry->simulation.previousTargets.Count() != entry->simulation.points.Count() || !offsets.Append(beforePositions.Count()) || !affected.Append(0) || !restorePending.Append(0))
         {
             error.Assign("secondary link chain state is invalid or allocation failed");
             return false;
@@ -285,6 +304,8 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             auto& second = secondState.points.At(link.secondPoint).position;
             const auto& referenceFirst = firstState.previousTargets.At(link.firstPoint);
             const auto& referenceSecond = secondState.previousTargets.At(link.secondPoint);
+            // float保存後の位置を比べ、符号付きゼロを含む変化も復元対象にする。
+            const Vec3 firstBefore = first, secondBefore = second;
             FVector3d projectedFirst{ { first.x, first.y, first.z } }, projectedSecond{ { second.x, second.y, second.z } };
             if (!animation::ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data() + link.shapeOffset, shapeCount, { { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, projectedFirst, projectedSecond, error) || !StorePosition(projectedFirst, first, error) || !StorePosition(projectedSecond, second, error))
             {
@@ -294,21 +315,33 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             }
             affected.At(link.firstChain) = 1;
             affected.At(link.secondChain) = 1;
+            if (memcmp(&firstBefore, &first, sizeof(first)) != 0)
+            {
+                restorePending.At(link.firstChain) = 1;
+            }
+            if (memcmp(&secondBefore, &second, sizeof(second)) != 0)
+            {
+                restorePending.At(link.secondChain) = 1;
+            }
         }
-        // 接続の押し出しで変わった鎖だけ、同じ目標へ長さと角度を戻す。
+        // 初回は接続鎖をすべて検証し、以後は変更または不成立が残る鎖だけ復元する。
         for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
         {
-            if (!affected.At(chain))
+            if (!affected.At(chain) || (pass > 0 && !restorePending.At(chain)))
             {
                 continue;
             }
             auto& entry = *candidate.chains.At(chain);
+#if defined(GKCORE_TESTING)
+            ++secondaryMotionLinkChainConstraintCount;
+#endif
             if (!animation::StepSecondaryMotionChainWithCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, 0.0, shapes, shapes, shapeCount, entry.simulation, error, entry.collisionRadius))
             {
                 return false;
             }
+            restorePending.At(chain) = 0;
         }
-        if (CheckCandidate(candidate, resolvedLinks, preparedShapes, shapeCount, error))
+        if (CheckCandidate(candidate, resolvedLinks, preparedShapes, shapeCount, restorePending, error))
         {
             // 既存の最後の小刻み更新と同じ秒数で、接触補正分を速度へ足す。
             const double step = delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0;

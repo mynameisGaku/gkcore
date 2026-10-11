@@ -256,3 +256,11 @@ YUMEKAの接続10本設定を保持して、目標方向/長さと接触形状�
 構成間24組の画像と全skin記録が一致しました。変更前とは確定位置が少し変わり、48画像の差は640×480の24〜96pixelです。loop侵入平均15.833、最大深さ.020639は残ります。保存画像の目視でも面の非貫通や全motionの品質を合格とする結果ではありません。比較はlink-roundtrip-image-comparison.json、目視画像はlink-roundtrip-quality.pngです。
 
 変更後の可視delta replay4500frame、実時間trace1200frame、通常計測3300frameは接触失敗なく完走しました。純poseの境界跨ぎは再現できましたが、以前のwarmup失敗の原因はまだ同定できていません。調査用build/scriptと重複画像は比較hashを残して片づけ、最新Releaseの24画像とdelta、失敗記録、比較PNGを保持します。
+
+## 接続が成立した鎖への再計算を減らす
+
+初回の制約検査後、投影で変わった鎖と不成立linkの両端鎖を復元対象にしました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本・頂点補正OFFで、0秒/3.35秒開始をDebug/Release各120frame、計480frame確認しました。GPU位置/法線とSkirt1314点の参照は全frame有効、最大位置誤差9.314e-10、法線1.789e-7です。
+
+構成間24組の画像と240件のskin記録は一致しました。変更前の48画像では34枚がbyte一致し、残る14枚の差は各1〜3pixel/640×480です。侵入点数は全frame同じで、深さ差は最大8.36e-8 model unitです。loop平均15.833/最大深さ.020639の侵入は残り、布面の品質改善とは扱いません。比較はconstraint-dirty-image-comparison.json、constraint-dirty-skin-config-comparison.json、目視画像はconstraint-dirty-quality.pngです。
+
+可視benchmarkの変更前後は各3000frame/warmup300、変更後のdelta replayは実測3300＋変動1200frameが完走しました。以前のwarmup失敗の原因同定とは区別します。元assetと現在のbuild、最新Release画像、検証ログ、delta、失敗記録を保持し、調査用build/scriptと重複画像は片づけます。

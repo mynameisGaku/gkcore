@@ -2703,7 +2703,7 @@ static bool TestSecondaryMotionLinkPreparationBudget()
         return false;
     }
     gk::model::ResetSecondaryMotionLinkPreparationCounts();
-    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 2 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 2)
+    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 2 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 2 || gk::model::GetSecondaryMotionLinkChainConstraintCount() != 3)
     {
         fprintf(stderr, "same-radius links did not reuse two prepared bodies: %s\n", error.CStr());
         return false;
@@ -2713,7 +2713,7 @@ static bool TestSecondaryMotionLinkPreparationBudget()
         return false;
     }
     gk::model::ResetSecondaryMotionLinkPreparationCounts();
-    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 3 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 4)
+    if (!gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkResolutionCount() != 3 || gk::model::GetSecondaryMotionLinkShapePreparationCount() != 4 || gk::model::GetSecondaryMotionLinkChainConstraintCount() != 3)
     {
         fprintf(stderr, "different link radii did not prepare separate body groups: %s\n", error.CStr());
         return false;
@@ -2736,6 +2736,284 @@ static bool TestSecondaryMotionLinkPreparationBudget()
     candidate.links.Clear();
     gk::model::ResetSecondaryMotionLinkPreparationCounts();
     return gk::model::ConstrainSecondaryMotionLinks(candidate, previous, bodies, 2, 0.0, error) && gk::model::GetSecondaryMotionLinkResolutionCount() == 0 && gk::model::GetSecondaryMotionLinkShapePreparationCount() == 0;
+}
+
+/**
+ * 接触鎖と遠い線分鎖を同じlink更新へ登録する検査状態を作る。
+ */
+static bool MakeSelectiveLinkConstraintFixture(gk::model::FModelSecondaryMotionState& state, uint32_t chainCount)
+{
+    if (chainCount != 2 && chainCount != 4)
+    {
+        return false;
+    }
+    for (uint32_t index = 0; index < chainCount; ++index)
+    {
+        auto* chain = new gk::model::FModelSecondaryMotionChain;
+        const uint32_t bones[2] = { index * 2u, index * 2u + 1u };
+        const float originX = index < 2 ? 1.0f : 10.0f;
+        const float laneY = static_cast<float>(index % 2u);
+        const gk::Vec3 targets[3] = { { originX, laneY, 0.0f }, { originX + 1.0f, laneY, 0.0f }, { originX + 2.0f, laneY, 0.0f } };
+        chain->settings.gravity = {};
+        chain->settings.maxAngleDegrees = 90.0f;
+        chain->settings.endOffset = { 1.0f, 0.0f, 0.0f };
+        chain->settings.constraintIterations = 8;
+        gk::String error;
+        const bool chainReady = chain->bones.AppendRange(bones, 2) && gk::model::animation::ResetSecondaryMotionChain(targets, 3, chain->simulation, error) && state.chains.Append(chain);
+        if (!chainReady)
+        {
+            delete chain;
+            return false;
+        }
+    }
+    const gk::FModelSecondaryMotionLink contactLink{ 1, 3, 0.02f };
+    if (!state.links.Append(contactLink))
+    {
+        return false;
+    }
+    if (chainCount == 4)
+    {
+        const gk::FModelSecondaryMotionLink clearLink{ 5, 7, 0.02f };
+        if (!state.links.Append(clearLink))
+        {
+            return false;
+        }
+    }
+    state.linkIterations = 32;
+    return true;
+}
+
+/**
+ * 遠いlinkでは初回だけ制約を解き、接触鎖の結果は追加鎖の有無で変えない。
+ */
+static bool TestSecondaryMotionLinkConstraintOnlyChangedChains()
+{
+    using namespace gk::model::animation;
+    gk::model::FModelSecondaryMotionState contactOnly;
+    gk::model::FModelSecondaryMotionState combined;
+    if (!MakeSelectiveLinkConstraintFixture(contactOnly, 2) || !MakeSelectiveLinkConstraintFixture(combined, 4))
+    {
+        fprintf(stderr, "could not initialize selective-link constraint fixtures\n");
+        return false;
+    }
+    const FModelSecondaryMotionCollisionShape body = { { 2.0f, 0.5f, 0.0f }, { 2.0f, 0.5f, 0.0f }, 0.2f };
+    gk::String error;
+    gk::model::FModelSecondaryMotionState previous;
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(contactOnly, previous, &body, 1, 0.0, error))
+    {
+        fprintf(stderr, "contact-only link fixture did not converge: %s\n", error.CStr());
+        return false;
+    }
+    const uint64_t contactOnlyCalls = gk::model::GetSecondaryMotionLinkChainConstraintCount();
+    if (contactOnlyCalls < 4)
+    {
+        fprintf(stderr, "contact-only link fixture did not require multiple passes: calls=%llu\n", static_cast<unsigned long long>(contactOnlyCalls));
+        return false;
+    }
+
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(combined, previous, &body, 1, 0.0, error))
+    {
+        fprintf(stderr, "combined selective-link fixture did not converge: %s\n", error.CStr());
+        return false;
+    }
+    const uint64_t combinedCalls = gk::model::GetSecondaryMotionLinkChainConstraintCount();
+    if (combinedCalls != contactOnlyCalls + 2u)
+    {
+        fprintf(stderr, "clear-link chains were constrained on later passes: contact-only=%llu combined=%llu\n", static_cast<unsigned long long>(contactOnlyCalls), static_cast<unsigned long long>(combinedCalls));
+        return false;
+    }
+
+    const auto SameChainSimulation = [](const gk::model::FModelSecondaryMotionChain& first, const gk::model::FModelSecondaryMotionChain& second) { return first.simulation.points.Count() == second.simulation.points.Count() && first.simulation.previousTargets.Count() == second.simulation.previousTargets.Count() && memcmp(first.simulation.points.Data(), second.simulation.points.Data(), static_cast<size_t>(first.simulation.points.Count()) * sizeof(FModelSecondaryMotionPoint)) == 0 && memcmp(first.simulation.previousTargets.Data(), second.simulation.previousTargets.Data(), static_cast<size_t>(first.simulation.previousTargets.Count()) * sizeof(gk::Vec3)) == 0; };
+    if (!SameChainSimulation(*contactOnly.chains.At(0), *combined.chains.At(0)) || !SameChainSimulation(*contactOnly.chains.At(1), *combined.chains.At(1)))
+    {
+        fprintf(stderr, "far clear-link chains changed the connected contact-chain state\n");
+        return false;
+    }
+
+    const auto Distance3 = [](gk::Vec3 first, gk::Vec3 second)
+    {
+        const double x = static_cast<double>(first.x) - second.x;
+        const double y = static_cast<double>(first.y) - second.y;
+        const double z = static_cast<double>(first.z) - second.z;
+        return sqrt(x * x + y * y + z * z);
+    };
+    const auto Dot3 = [](gk::Vec3 first, gk::Vec3 second) { return static_cast<double>(first.x) * second.x + static_cast<double>(first.y) * second.y + static_cast<double>(first.z) * second.z; };
+    for (uint32_t chainIndex = 0; chainIndex < 4; ++chainIndex)
+    {
+        const auto& chain = *combined.chains.At(chainIndex);
+        const float originX = chainIndex < 2 ? 1.0f : 10.0f;
+        const float laneY = static_cast<float>(chainIndex % 2u);
+        const gk::Vec3 expectedTargets[3] = { { originX, laneY, 0.0f }, { originX + 1.0f, laneY, 0.0f }, { originX + 2.0f, laneY, 0.0f } };
+        if (chain.simulation.points.Count() != 3 || chain.simulation.previousTargets.Count() != 3)
+        {
+            fprintf(stderr, "selective-link chain state has an invalid point count: chain=%u\n", chainIndex);
+            return false;
+        }
+        for (uint32_t point = 0; point < 3; ++point)
+        {
+            const auto& value = chain.simulation.points.At(point);
+            const auto& target = chain.simulation.previousTargets.At(point);
+            if (!isfinite(value.position.x) || !isfinite(value.position.y) || !isfinite(value.position.z) || !isfinite(value.velocity.x) || !isfinite(value.velocity.y) || !isfinite(value.velocity.z) || memcmp(&target, &expectedTargets[point], sizeof(target)) != 0)
+            {
+                fprintf(stderr, "selective-link chain has invalid values or changed targets: chain=%u point=%u\n", chainIndex, point);
+                return false;
+            }
+            if (chainIndex >= 2 && (memcmp(&value.position, &expectedTargets[point], sizeof(value.position)) != 0 || value.velocity.x != 0.0f || value.velocity.y != 0.0f || value.velocity.z != 0.0f))
+            {
+                fprintf(stderr, "far clear-link chain position or velocity changed: chain=%u point=%u\n", chainIndex, point);
+                return false;
+            }
+        }
+        for (uint32_t segment = 1; segment < 3; ++segment)
+        {
+            const auto& first = chain.simulation.points.At(segment - 1u).position;
+            const auto& second = chain.simulation.points.At(segment).position;
+            const auto& firstTarget = chain.simulation.previousTargets.At(segment - 1u);
+            const auto& secondTarget = chain.simulation.previousTargets.At(segment);
+            const double solvedLength = Distance3(first, second);
+            const double targetLength = Distance3(firstTarget, secondTarget);
+            const gk::Vec3 solvedAxis{ second.x - first.x, second.y - first.y, second.z - first.z };
+            const gk::Vec3 targetAxis{ secondTarget.x - firstTarget.x, secondTarget.y - firstTarget.y, secondTarget.z - firstTarget.z };
+            if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot3(solvedAxis, targetAxis) / (solvedLength * targetLength) < -0.002)
+            {
+                fprintf(stderr, "selective-link chain violated length or angle: chain=%u segment=%u\n", chainIndex, segment);
+                return false;
+            }
+        }
+        const gk::FVector3d points[3] = { { { chain.simulation.points.At(0).position.x, chain.simulation.points.At(0).position.y, chain.simulation.points.At(0).position.z } }, { { chain.simulation.points.At(1).position.x, chain.simulation.points.At(1).position.y, chain.simulation.points.At(1).position.z } }, { { chain.simulation.points.At(2).position.x, chain.simulation.points.At(2).position.y, chain.simulation.points.At(2).position.z } } };
+        if (!CheckSecondaryMotionContacts(&body, 1, points, 3, error))
+        {
+            fprintf(stderr, "selective-link chain left body contact: chain=%u error=%s\n", chainIndex, error.CStr());
+            return false;
+        }
+    }
+    const auto& firstLink = combined.chains.At(0)->simulation.points.At(1).position;
+    const auto& secondLink = combined.chains.At(1)->simulation.points.At(1).position;
+    const gk::Vec3 linkAxis{ secondLink.x - firstLink.x, secondLink.y - firstLink.y, secondLink.z - firstLink.z };
+    const gk::Vec3 linkOffset{ body.start.x - firstLink.x, body.start.y - firstLink.y, body.start.z - firstLink.z };
+    const double linkAxisLengthSquared = Dot3(linkAxis, linkAxis);
+    const double linkAmount = linkAxisLengthSquared > 0.0 ? fmax(0.0, fmin(1.0, Dot3(linkOffset, linkAxis) / linkAxisLengthSquared)) : 0.0;
+    const gk::Vec3 linkClosest{ firstLink.x + static_cast<float>(linkAmount) * linkAxis.x, firstLink.y + static_cast<float>(linkAmount) * linkAxis.y, firstLink.z + static_cast<float>(linkAmount) * linkAxis.z };
+    if (Distance3(body.start, linkClosest) < (static_cast<double>(body.radius) + 0.02) * 0.999)
+    {
+        fprintf(stderr, "independent link distance remained inside the expanded sphere\n");
+        return false;
+    }
+
+    // 正のdeltaでは接触鎖だけ補正速度を受け、遠い鎖の目標と速度を保つ。
+    gk::model::FModelSecondaryMotionState movingCandidate;
+    gk::model::FModelSecondaryMotionState movingPrevious;
+    if (!MakeSelectiveLinkConstraintFixture(movingCandidate, 4) || !MakeSelectiveLinkConstraintFixture(movingPrevious, 4))
+    {
+        fprintf(stderr, "could not initialize positive-delta link fixtures\n");
+        return false;
+    }
+    movingCandidate.chains.At(2)->simulation.points.At(2).velocity.x = -0.0f;
+    movingPrevious.chains.At(2)->simulation.points.At(2).velocity.x = -0.0f;
+    movingCandidate.chains.At(2)->simulation.points.At(2).velocity.y = 3.25f;
+    movingPrevious.chains.At(2)->simulation.points.At(2).velocity.y = 3.25f;
+    if (!ConstrainSecondaryMotionLinks(movingCandidate, movingPrevious, &body, 1, 1.0 / 60.0, error))
+    {
+        fprintf(stderr, "positive-delta link fixture did not converge: %s\n", error.CStr());
+        return false;
+    }
+    for (uint32_t chainIndex = 2; chainIndex < 4; ++chainIndex)
+    {
+        const auto& candidateChain = *movingCandidate.chains.At(chainIndex);
+        const auto& previousChain = *movingPrevious.chains.At(chainIndex);
+        for (uint32_t point = 0; point < candidateChain.simulation.points.Count(); ++point)
+        {
+            const auto& value = candidateChain.simulation.points.At(point);
+            const auto& oldValue = previousChain.simulation.points.At(point);
+            if (memcmp(&candidateChain.simulation.previousTargets.At(point), &previousChain.simulation.previousTargets.At(point), sizeof(gk::Vec3)) != 0 || memcmp(&value.position, &oldValue.position, sizeof(gk::Vec3)) != 0 || !isfinite(value.velocity.x) || !isfinite(value.velocity.y) || !isfinite(value.velocity.z) || value.velocity.x != oldValue.velocity.x || value.velocity.y != oldValue.velocity.y || value.velocity.z != oldValue.velocity.z)
+            {
+                fprintf(stderr, "positive-delta far chain changed targets or velocity: chain=%u point=%u\n", chainIndex, point);
+                return false;
+            }
+        }
+        const auto& newVelocity = candidateChain.simulation.points.At(2).velocity;
+        // 従来の補正速度加算による -0 + 0 の結果も、skip対象の遠い鎖へ適用する。
+        const float positiveZero = 0.0f;
+        if (memcmp(&newVelocity.x, &positiveZero, sizeof(positiveZero)) != 0)
+        {
+            fprintf(stderr, "positive-delta far chain skipped the signed-zero velocity addition: chain=%u\n", chainIndex);
+            return false;
+        }
+    }
+
+    // 初回passでは接続した遠い鎖も一度制約し、わずかな長さ崩れを戻す。
+    gk::model::FModelSecondaryMotionState restoredFarChain;
+    if (!MakeSelectiveLinkConstraintFixture(restoredFarChain, 4))
+    {
+        return false;
+    }
+    restoredFarChain.chains.At(2)->simulation.points.At(2).position.x += 0.2f;
+    if (!ConstrainSecondaryMotionLinks(restoredFarChain, movingPrevious, &body, 1, 0.0, error))
+    {
+        fprintf(stderr, "first-pass far-chain restoration fixture failed: %s\n", error.CStr());
+        return false;
+    }
+    const auto& restoredPoint = restoredFarChain.chains.At(2)->simulation.points.At(2).position;
+    const auto& restoredTarget = restoredFarChain.chains.At(2)->simulation.previousTargets.At(2);
+    if (memcmp(&restoredPoint, &restoredTarget, sizeof(restoredPoint)) != 0)
+    {
+        fprintf(stderr, "first link pass did not restore the far chain target\n");
+        return false;
+    }
+
+    // 独立した2本が同時に不成立でも、両方の接触を同じ反復枠で解く。
+    gk::model::FModelSecondaryMotionState simultaneousContacts;
+    if (!MakeSelectiveLinkConstraintFixture(simultaneousContacts, 4))
+    {
+        return false;
+    }
+    const FModelSecondaryMotionCollisionShape bodies[2] = { body, { { 11.0f, 0.5f, 0.0f }, { 11.0f, 0.5f, 0.0f }, 0.2f } };
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (!gk::model::ConstrainSecondaryMotionLinks(simultaneousContacts, previous, bodies, 2, 0.0, error) || gk::model::GetSecondaryMotionLinkChainConstraintCount() != contactOnlyCalls * 2u)
+    {
+        fprintf(stderr, "simultaneous link contacts did not restore both components: calls=%llu error=%s\n", static_cast<unsigned long long>(gk::model::GetSecondaryMotionLinkChainConstraintCount()), error.CStr());
+        return false;
+    }
+    for (uint32_t pair = 0; pair < 2; ++pair)
+    {
+        const auto& first = simultaneousContacts.chains.At(pair * 2)->simulation.points.At(1).position;
+        const auto& second = simultaneousContacts.chains.At(pair * 2 + 1)->simulation.points.At(1).position;
+        if (!CheckSecondaryMotionFreeSegmentContacts(bodies, 2, 0.02f, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error))
+        {
+            fprintf(stderr, "one simultaneous link contact remained unresolved: pair=%u error=%s\n", pair, error.CStr());
+            return false;
+        }
+    }
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    gk::model::FModelSecondaryMotionState invalidSettings;
+    if (!MakeSelectiveLinkConstraintFixture(invalidSettings, 4))
+    {
+        return false;
+    }
+    invalidSettings.chains.At(2)->settings.frequencyHz = nan;
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (gk::model::ConstrainSecondaryMotionLinks(invalidSettings, previous, &body, 1, 0.0, error) || error.Empty() || gk::model::GetSecondaryMotionLinkChainConstraintCount() < 3)
+    {
+        fprintf(stderr, "first pass skipped invalid settings on an otherwise clear link: calls=%llu error=%s\n", static_cast<unsigned long long>(gk::model::GetSecondaryMotionLinkChainConstraintCount()), error.CStr());
+        return false;
+    }
+
+    gk::model::FModelSecondaryMotionState invalidState;
+    if (!MakeSelectiveLinkConstraintFixture(invalidState, 4))
+    {
+        return false;
+    }
+    invalidState.chains.At(2)->simulation.points.At(2).velocity.x = nan;
+    gk::model::ResetSecondaryMotionLinkPreparationCounts();
+    if (gk::model::ConstrainSecondaryMotionLinks(invalidState, previous, &body, 1, 0.0, error) || error.Empty() || gk::model::GetSecondaryMotionLinkChainConstraintCount() < 3)
+    {
+        fprintf(stderr, "first pass skipped invalid state on an otherwise clear link: calls=%llu error=%s\n", static_cast<unsigned long long>(gk::model::GetSecondaryMotionLinkChainConstraintCount()), error.CStr());
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -2840,5 +3118,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

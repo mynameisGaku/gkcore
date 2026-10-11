@@ -119,3 +119,11 @@ devではsubstep内の一定な目標方向・骨長と、半径ガード後の�
 通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示と頂点補正OFFの3000frame/warmup300は162.817FPS、p95 7.897ms、Draw .417/Present2.428/IK .550/secondary2.687msで完走しました。前回173.519FPSからの改善は確認できず、300FPSは未達です。別batchの計測なので差をすべて変更の費用とは断定しません。
 
 候補とFKの接触境界を跨ぐ純poseテストを固定しましたが、以前のwarmup失敗の原因同定は未完了です。変更後の実測/変動delta再生4500frame、実時間trace1200frame、通常計測3300frameは完走しました。ログはlink-roundtrip-benchmark.log、link-roundtrip-realtime-trace.log、constraint-delta-{trace-1,jitter}-visible.logです。この区切りのmain反映は保留を続けます。次は接続投影で位置が変わらない鎖への再制約を調べ、丸めや接触結果を保って減らせる処理を選びます。
+
+## 接続の成立後に不要な鎖補正を省く
+
+接続鎖は初回に長さ・角度・接触を必ず検査し、後続は位置が変わった鎖と、接触不成立の線分の両端鎖を補正します。一定の鎖への再計算を減らし、固定120frameの参照計算総数はstart27480→24616、loop29920→25332になりました。
+
+通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示/頂点補正OFFの3000frame/warmup300を同batchで前後とも完走しました。168.090→168.347FPS、揺れ更新2.499→2.382ms、後p95 6.879ms、Draw .526/Present2.458/IK .517msです。揺れ更新は短くなりましたが、全体FPSの改善は小さく、300FPSには届いていません。記録はconstraint-dirty-{before,after}-benchmark.logです。
+
+Debug/Release各2区間×120frameのGPU・Skirt点参照はすべて有効でした。構成間24組の画像と全skin記録が一致し、変更前との差も保存画像で最大3pixelでした。布の侵入は残ります。実測と変動deltaの4500frame再生も完走しましたが、以前のwarmup停止の原因は未確定です。次は同じStep0内で繰り返す形状・目標線分の準備を調べます。
