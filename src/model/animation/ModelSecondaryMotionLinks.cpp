@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 #include <float.h>
@@ -13,6 +14,8 @@ namespace
 {
 // 接続設定の上限。setterでだけ重複を検査する。
 const uint32_t MaximumLinks = 1024;
+// 距離制約の上限。
+const uint32_t MaximumDistanceConstraints = 1024;
 // 候補の接触誤差に使う割合。残り半分は姿勢をFKへ戻す丸めの余白に残す。
 const double CandidateContactToleranceFraction = 0.5;
 
@@ -31,6 +34,21 @@ struct FResolvedSecondaryMotionLink
     uint32_t secondPoint = 0;
     // 同じ半径向けに準備した身体形状群の開始位置。
     uint32_t shapeOffset = 0;
+};
+
+/**
+ * 1回の更新中だけ保持する距離制約の鎖内端点。
+ */
+struct FResolvedSecondaryMotionDistance
+{
+    // 始点を所有する鎖の番号。
+    uint32_t firstChain = 0;
+    // 始点の鎖内の自由節番号。
+    uint32_t firstPoint = 0;
+    // 終点を所有する鎖の番号。
+    uint32_t secondChain = 0;
+    // 終点の鎖内の自由節番号。
+    uint32_t secondPoint = 0;
 };
 
 /**
@@ -91,11 +109,34 @@ bool ResolveLink(const FModelSecondaryMotionState& state, const FModelSecondaryM
 }
 
 /**
+ * 距離制約を別鎖に属する二つの自由節へ対応付ける。
+ */
+bool ResolveDistance(const FModelSecondaryMotionState& state, const FModelSecondaryMotionDistanceConstraint& constraint, uint32_t& firstChain, uint32_t& firstPoint, uint32_t& secondChain, uint32_t& secondPoint, String& error)
+{
+    if (!isfinite(constraint.restDistance) || !(constraint.restDistance > 0.0f) || !isfinite(constraint.compliance) || constraint.compliance < 0.0f || !ResolvePoint(state, constraint.firstBone, firstChain, firstPoint) || !ResolvePoint(state, constraint.secondBone, secondChain, secondPoint) || firstChain == secondChain)
+    {
+        error.Assign("secondary distances require separate registered free bones and finite positive distance with nonnegative compliance");
+        return false;
+    }
+    return true;
+}
+
+/**
  * 接続設定の何番目で失敗したかを診断へ加える。
  */
 void LinkFailure(uint32_t index, String& error)
 {
     error.Append(" (secondary link: ");
+    error.AppendUnsigned(index);
+    error.Append(")");
+}
+
+/**
+ * 距離制約の何番目で失敗したかを診断へ加える。
+ */
+void DistanceFailure(uint32_t index, String& error)
+{
+    error.Append(" (secondary distance: ");
     error.AppendUnsigned(index);
     error.Append(")");
 }
@@ -180,11 +221,27 @@ bool PrepareLinks(const FModelSecondaryMotionState& state, const animation::FMod
 /**
  * 全線分を検査し、不成立線分の両端鎖を次の復元対象へ予約する。
  */
-bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, Array<uint8_t>& restorePending, String& error)
+bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<FResolvedSecondaryMotionDistance>& distances, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, Array<uint8_t>& restorePending, String& error)
 {
-    // 最初の失敗をerrorに保ち、残りの線分も次の反復へ必要な鎖を集める。
+    // 最初の失敗をerrorに保ち、残りの制約も次の反復へ必要な鎖を集める。
     bool clear = true;
     String remainingError;
+    for (uint32_t index = 0; index < distances.Count(); ++index)
+    {
+        const auto& distance = distances.At(index);
+        const auto& constraint = state.distanceConstraints.At(index);
+        const auto& first = state.chains.At(distance.firstChain)->simulation.points.At(distance.firstPoint).position;
+        const auto& second = state.chains.At(distance.secondChain)->simulation.points.At(distance.secondPoint).position;
+        String& diagnostic = clear ? error : remainingError;
+        if (!animation::CheckSecondaryMotionDistance(constraint.restDistance, constraint.compliance, state.distanceStepSeconds, state.distanceLambdas.At(index), { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, diagnostic, CandidateContactToleranceFraction))
+        {
+            restorePending.At(distance.firstChain) = 1;
+            restorePending.At(distance.secondChain) = 1;
+            if (clear)
+                DistanceFailure(index, error);
+            clear = false;
+        }
+    }
     for (uint32_t index = 0; index < links.Count(); ++index)
     {
         const auto& link = links.At(index);
@@ -203,6 +260,8 @@ bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolv
             clear = false;
         }
     }
+    if (clear)
+        error.Clear();
     return clear;
 }
 }
@@ -236,6 +295,51 @@ bool ValidateSecondaryMotionLinks(const FModelSecondaryMotionState& state, Strin
     return true;
 }
 
+bool ValidateSecondaryMotionDistanceConstraints(const FModelSecondaryMotionState& state, String& error)
+{
+    error.Clear();
+    if (state.distanceConstraints.Count() == 0u)
+    {
+        if (state.distanceLambdas.Count() != 0u)
+        {
+            error.Assign("secondary distance lambda state has no matching constraints");
+            return false;
+        }
+        return true;
+    }
+    if (state.distanceConstraints.Count() > MaximumDistanceConstraints || state.distanceLambdas.Count() != state.distanceConstraints.Count() || state.linkIterations == 0 || state.linkIterations > 32 || !isfinite(state.distanceStepSeconds) || !(state.distanceStepSeconds > 0.0))
+    {
+        error.Assign("secondary distance count, lambda state, time step, or iteration limit is invalid");
+        return false;
+    }
+    for (uint32_t index = 0; index < state.distanceConstraints.Count(); ++index)
+    {
+        const auto& constraint = state.distanceConstraints.At(index);
+        uint32_t firstChain = 0;
+        uint32_t firstPoint = 0;
+        uint32_t secondChain = 0;
+        uint32_t secondPoint = 0;
+        if (!ResolveDistance(state, constraint, firstChain, firstPoint, secondChain, secondPoint, error) || !isfinite(state.distanceLambdas.At(index)))
+        {
+            if (error.Empty())
+                error.Assign("secondary distance lambda is non-finite");
+            DistanceFailure(index, error);
+            return false;
+        }
+        for (uint32_t earlier = 0; earlier < index; ++earlier)
+        {
+            const auto& other = state.distanceConstraints.At(earlier);
+            if ((constraint.firstBone == other.firstBone && constraint.secondBone == other.secondBone) || (constraint.firstBone == other.secondBone && constraint.secondBone == other.firstBone))
+            {
+                error.Assign("secondary distances must not repeat an unordered bone pair");
+                DistanceFailure(index, error);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 #if defined(GKCORE_TESTING)
 void ResetSecondaryMotionLinkPreparationCounts()
 {
@@ -259,17 +363,62 @@ uint64_t GetSecondaryMotionLinkChainConstraintCount()
 
 bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error)
 {
-    if (candidate.links.Count() == 0 || shapeCount == 0)
+    const bool activeLinks = candidate.links.Count() > 0 && shapeCount > 0;
+    const bool activeDistances = candidate.distanceConstraints.Count() > 0;
+    if (!activeLinks && !activeDistances)
     {
         error.Clear();
         return true;
     }
+    if (activeDistances)
+    {
+        candidate.distanceStepSeconds = delta > 0.0 && delta < 0.25 ? delta : 1.0 / 120.0;
+        if (!ValidateSecondaryMotionDistanceConstraints(candidate, error))
+            return false;
+    }
     // 更新中は鎖や身体設定を変えないため、端点と半径別形状を再利用する。
     Array<FResolvedSecondaryMotionLink> resolvedLinks;
     Array<animation::FPreparedSecondaryMotionCollisionShape> preparedShapes;
-    if (!PrepareLinks(candidate, shapes, shapeCount, resolvedLinks, preparedShapes, error))
+    if (activeLinks && !PrepareLinks(candidate, shapes, shapeCount, resolvedLinks, preparedShapes, error))
     {
         return false;
+    }
+    // 距離制約の端点も更新中に一度だけ鎖内位置へ解決する。
+    Array<FResolvedSecondaryMotionDistance> resolvedDistances;
+    if (!resolvedDistances.Reserve(candidate.distanceConstraints.Count()))
+    {
+        error.Assign("secondary distance endpoint allocation failed");
+        return false;
+    }
+    Array<uint8_t> distanceChains;
+    if (!distanceChains.Reserve(candidate.chains.Count()))
+    {
+        error.Assign("secondary distance chain allocation failed");
+        return false;
+    }
+    for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
+    {
+        if (!distanceChains.Append(0))
+        {
+            error.Assign("secondary distance chain allocation failed");
+            return false;
+        }
+    }
+    for (uint32_t index = 0; index < candidate.distanceConstraints.Count(); ++index)
+    {
+        const auto& constraint = candidate.distanceConstraints.At(index);
+        FResolvedSecondaryMotionDistance resolved{};
+        if (!ResolveDistance(candidate, constraint, resolved.firstChain, resolved.firstPoint, resolved.secondChain, resolved.secondPoint, error) || !resolvedDistances.Append(resolved))
+        {
+            if (error.Empty())
+                error.Assign("secondary distance endpoint allocation failed");
+            DistanceFailure(index, error);
+            return false;
+        }
+        distanceChains.At(resolved.firstChain) = 1;
+        distanceChains.At(resolved.secondChain) = 1;
+        // XPBD lambdaは前回フレームから持ち越さず、このframe-level solveで蓄積する。
+        candidate.distanceLambdas.At(index) = 0.0;
     }
     // 身体形状は更新中に変わらないため、鎖の節半径ごとに前処理を共有する。
     animation::FModelSecondaryMotionStepShapeCache chainShapeCache(shapes, shapeCount);
@@ -298,6 +447,41 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
     }
     for (uint32_t pass = 0; pass < candidate.linkIterations; ++pass)
     {
+        for (uint32_t index = 0; index < resolvedDistances.Count(); ++index)
+        {
+            const auto& distance = resolvedDistances.At(index);
+            const auto& constraint = candidate.distanceConstraints.At(index);
+            auto& firstState = candidate.chains.At(distance.firstChain)->simulation;
+            auto& secondState = candidate.chains.At(distance.secondChain)->simulation;
+            auto& first = firstState.points.At(distance.firstPoint).position;
+            auto& second = secondState.points.At(distance.secondPoint).position;
+            const auto& referenceFirst = firstState.previousTargets.At(distance.firstPoint);
+            const auto& referenceSecond = secondState.previousTargets.At(distance.secondPoint);
+            const Vec3 firstBefore = first;
+            const Vec3 secondBefore = second;
+            FVector3d projectedFirst{ { first.x, first.y, first.z } };
+            FVector3d projectedSecond{ { second.x, second.y, second.z } };
+            if (!animation::ProjectSecondaryMotionDistance({ { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, constraint.restDistance, constraint.compliance, candidate.distanceStepSeconds, candidate.distanceLambdas.At(index), projectedFirst, projectedSecond, error))
+            {
+                DistanceFailure(index, error);
+                return false;
+            }
+            Vec3 storedFirst = first;
+            Vec3 storedSecond = second;
+            if (!StorePosition(projectedFirst, storedFirst, error) || !StorePosition(projectedSecond, storedSecond, error))
+            {
+                DistanceFailure(index, error);
+                return false;
+            }
+            first = storedFirst;
+            second = storedSecond;
+            affected.At(distance.firstChain) = 1;
+            affected.At(distance.secondChain) = 1;
+            if (memcmp(&firstBefore, &first, sizeof(first)) != 0)
+                restorePending.At(distance.firstChain) = 1;
+            if (memcmp(&secondBefore, &second, sizeof(second)) != 0)
+                restorePending.At(distance.secondChain) = 1;
+        }
         for (uint32_t index = 0; index < resolvedLinks.Count(); ++index)
         {
             const auto& link = resolvedLinks.At(index);
@@ -344,16 +528,17 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
 #if defined(GKCORE_TESTING)
             ++secondaryMotionLinkChainConstraintCount;
 #endif
-            if (!animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error))
+            const bool restored = distanceChains.At(chain) ? animation::RestoreSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error) : animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error);
+            if (!restored)
             {
                 return false;
             }
             restorePending.At(chain) = 0;
         }
-        if (CheckCandidate(candidate, resolvedLinks, preparedShapes, shapeCount, restorePending, error))
+        if (CheckCandidate(candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, restorePending, error))
         {
-            // 既存の最後の小刻み更新と同じ秒数で、接触補正分を速度へ足す。
-            const double step = delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0;
+            // 距離制約はframe-level solve、それ以外は既存substepの秒数で速度へ補正を戻す。
+            const double step = activeDistances ? (delta > 0.0 && delta < 0.25 ? delta : 0.0) : (delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0);
             for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
             {
                 if (!affected.At(chain) || !(step > 0.0))
@@ -388,12 +573,17 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             return true;
         }
     }
-    error.Assign("secondary links could not preserve body contact and chain constraints together");
+    if (error.Empty())
+        error.Assign(activeDistances ? "secondary links and distances could not preserve body contact and chain constraints together" : "secondary links could not preserve body contact and chain constraints together");
+    else if (activeDistances)
+        error.Append(" (secondary constraints did not converge)");
     return false;
 }
 
 bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, const Array<float>& matrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, String& error)
 {
+    if (state.distanceConstraints.Count() > 0 && !ValidateSecondaryMotionDistanceConstraints(state, error))
+        return false;
     for (uint32_t index = 0; index < state.links.Count(); ++index)
     {
         const auto& link = state.links.At(index);
@@ -410,6 +600,25 @@ bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, 
         {
             LinkFailure(index, error);
             error.Append(" (rendered link)");
+            return false;
+        }
+    }
+    for (uint32_t index = 0; index < state.distanceConstraints.Count(); ++index)
+    {
+        const auto& constraint = state.distanceConstraints.At(index);
+        const uint64_t firstOffset = static_cast<uint64_t>(constraint.firstBone) * 16u;
+        const uint64_t secondOffset = static_cast<uint64_t>(constraint.secondBone) * 16u;
+        if (firstOffset + 15u >= matrices.Count() || secondOffset + 15u >= matrices.Count())
+        {
+            error.Assign("secondary distance rendered bone is outside pose matrices");
+            DistanceFailure(index, error);
+            return false;
+        }
+        const FVector3d firstPosition{ { matrices.At(static_cast<uint32_t>(firstOffset + 12u)), matrices.At(static_cast<uint32_t>(firstOffset + 13u)), matrices.At(static_cast<uint32_t>(firstOffset + 14u)) } };
+        const FVector3d secondPosition{ { matrices.At(static_cast<uint32_t>(secondOffset + 12u)), matrices.At(static_cast<uint32_t>(secondOffset + 13u)), matrices.At(static_cast<uint32_t>(secondOffset + 14u)) } };
+        if (!animation::CheckSecondaryMotionDistance(constraint.restDistance, constraint.compliance, state.distanceStepSeconds, state.distanceLambdas.At(index), firstPosition, secondPosition, error))
+        {
+            DistanceFailure(index, error);
             return false;
         }
     }

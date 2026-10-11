@@ -347,6 +347,13 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --secondary-links option\n");
         return 2;
     }
+    // 任意の骨間距離設定のpath。
+    const char* secondaryDistancePath = nullptr;
+    if (!gk::examples::ParseSecondaryDistanceOptions(argc, argv, secondaryDistancePath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-distances option\n");
+        return 2;
+    }
     const char* secondaryMotionPath = nullptr;
     if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
     {
@@ -360,9 +367,9 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
-    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath))
+    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath))
     {
-        fprintf(stderr, "--secondary-colliders requires --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders\n");
+        fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders\n");
         return 2;
     }
     if (collisionDebug && !secondaryMotionPath)
@@ -372,7 +379,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--collision-debug]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--collision-debug]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -661,6 +668,10 @@ int main(int argc, char** argv)
         failed = true;
     }
     if (!failed && secondaryLinkPath && !gk::examples::ApplySecondaryLinkPreview(model, secondaryLinkPath))
+    {
+        failed = true;
+    }
+    if (!failed && secondaryDistancePath && !gk::examples::ApplySecondaryDistancePreview(model, secondaryDistancePath))
     {
         failed = true;
     }

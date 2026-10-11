@@ -1376,13 +1376,219 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         currentState = ReadSecondaryState(instance);
         ReportLinkStage(shortenedChainRejected && currentState && currentState->chains.Count() == 2 && currentState->chains.At(0)->bones.Count() == 2 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->linkIterations == 12, "same-root chain shortening cannot remove a referenced free bone");
 
+        const bool clearedLinkBeforeDistance = gk::SetModelSecondaryMotionLinks(instance, nullptr, 0) == 0;
+        const int32_t debugCountBeforeDistance = gk::GetModelSecondaryMotionDebugShapes(instance, nullptr, 0);
+        gk::FModelSecondaryMotionDistanceConstraint distanceConstraint = { 2, 4, 0.0f, 0.0f };
+        const bool distanceSet = clearedLinkBeforeDistance && gk::SetModelSecondaryMotionDistanceConstraints(instance, &distanceConstraint, 1, 16) == 0;
+        currentState = ReadSecondaryState(instance);
+        const double baseDistance = sqrt(2.0);
+        const bool derivedDistanceCopied = currentState && currentState->chains.Count() == 2 && currentState->links.Count() == 0 && currentState->distanceConstraints.Count() == 1 && currentState->distanceLambdas.Count() == 1 && fabs(currentState->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6 && currentState->distanceConstraints.At(0).firstBone == 2 && currentState->distanceConstraints.At(0).secondBone == 4 && currentState->linkIterations == 16;
+        ReportLinkStage(distanceSet && derivedDistanceCopied, "distance registration resolves zero rest length from the initial pose and stores shared iterations");
+        const gk::FModelSecondaryMotionDistanceConstraint distanceInputSnapshot = distanceConstraint;
+        distanceConstraint.firstBone = 4;
+        distanceConstraint.secondBone = 2;
+        distanceConstraint.restDistance = 9.0f;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceConstraints.At(0).firstBone == 2 && currentState->distanceConstraints.At(0).secondBone == 4 && fabs(currentState->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6, "caller edits do not alter copied distance settings");
+        distanceConstraint = distanceInputSnapshot;
+
+        const gk::FModelSecondaryMotionDistanceConstraint unregisteredDistance = { 2, 5, 0.5f, 0.0f };
+        const gk::FModelSecondaryMotionDistanceConstraint sameChainDistance = { 2, 1, 0.5f, 0.0f };
+        const gk::FModelSecondaryMotionDistanceConstraint fixedRootDistance = { 1, 4, 0.5f, 0.0f };
+        const gk::FModelSecondaryMotionDistanceConstraint invalidRestDistance = { 2, 4, -0.5f, 0.0f };
+        const gk::FModelSecondaryMotionDistanceConstraint invalidComplianceDistance = { 2, 4, 0.5f, -0.01f };
+        const gk::FModelSecondaryMotionDistanceConstraint nonFiniteDistance = { 2, 4, std::numeric_limits<float>::quiet_NaN(), 0.0f };
+        const gk::FModelSecondaryMotionDistanceConstraint duplicateDistances[2] = { { 2, 4, 0.5f, 0.0f }, { 4, 2, 0.75f, 0.01f } };
+        gk::FModelSecondaryMotionDistanceConstraint tooManyDistances[1025]{};
+        for (uint32_t index = 0; index < 1025; ++index)
+        {
+            tooManyDistances[index] = { 2, 4, 0.5f, 0.0f };
+        }
+        const auto RejectWithoutReplacingDistance = [&](const gk::FModelSecondaryMotionDistanceConstraint* candidate, uint32_t count, uint32_t iterations)
+        {
+            const auto* before = ReadSecondaryState(instance);
+            std::vector<gk::FModelSecondaryMotionDistanceConstraint> beforeConstraints;
+            std::vector<double> beforeLambdas;
+            if (before && before->distanceConstraints.Count() > 0)
+            {
+                beforeConstraints.assign(before->distanceConstraints.Data(), before->distanceConstraints.Data() + before->distanceConstraints.Count());
+            }
+            if (before && before->distanceLambdas.Count() > 0)
+            {
+                beforeLambdas.assign(before->distanceLambdas.Data(), before->distanceLambdas.Data() + before->distanceLambdas.Count());
+            }
+            const double beforeStep = before ? before->distanceStepSeconds : 0.0;
+            const bool rejected = gk::SetModelSecondaryMotionDistanceConstraints(instance, candidate, count, iterations) == -1;
+            const auto* preserved = ReadSecondaryState(instance);
+            const bool arraysPreserved = preserved && preserved->distanceConstraints.Count() == beforeConstraints.size() && preserved->distanceLambdas.Count() == beforeLambdas.size() && (beforeConstraints.empty() || memcmp(preserved->distanceConstraints.Data(), beforeConstraints.data(), beforeConstraints.size() * sizeof(beforeConstraints[0])) == 0) && (beforeLambdas.empty() || memcmp(preserved->distanceLambdas.Data(), beforeLambdas.data(), beforeLambdas.size() * sizeof(beforeLambdas[0])) == 0);
+            return rejected && preserved == before && arraysPreserved && preserved->distanceStepSeconds == beforeStep && preserved->chains.Count() == 2 && preserved->links.Count() == 0 && preserved->distanceConstraints.Count() == 1 && preserved->distanceLambdas.Count() == 1 && fabs(preserved->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6 && preserved->distanceConstraints.At(0).compliance == 0.0f && preserved->linkIterations == 16;
+        };
+        const bool invalidDistanceSettingsAtomic = RejectWithoutReplacingDistance(nullptr, 1, 8) && RejectWithoutReplacingDistance(tooManyDistances, 1025, 8) && RejectWithoutReplacingDistance(&unregisteredDistance, 1, 8) && RejectWithoutReplacingDistance(&sameChainDistance, 1, 8) && RejectWithoutReplacingDistance(&fixedRootDistance, 1, 8) && RejectWithoutReplacingDistance(&invalidRestDistance, 1, 8) && RejectWithoutReplacingDistance(&invalidComplianceDistance, 1, 8) && RejectWithoutReplacingDistance(&nonFiniteDistance, 1, 8) && RejectWithoutReplacingDistance(duplicateDistances, 2, 8) && RejectWithoutReplacingDistance(&distanceConstraint, 1, 0) && RejectWithoutReplacingDistance(&distanceConstraint, 1, 33);
+        ReportLinkStage(invalidDistanceSettingsAtomic, "invalid distance count, endpoints, duplicates, parameters, or iteration limits preserve the prior settings");
+
+        const bool compatibleChainReplacement = gk::SetModelSecondaryMotionChain(instance, firstChain, 2, settings) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(compatibleChainReplacement && currentState && currentState->chains.Count() == 2 && currentState->distanceConstraints.Count() == 1 && fabs(currentState->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6 && currentState->linkIterations == 16, "re-registering a referenced chain retains its distance settings");
+
+        const uint32_t removeDistanceEndpoint[1] = { 1 };
+        const bool removeDistanceEndpointRejected = gk::SetModelSecondaryMotionChain(instance, removeDistanceEndpoint, 1, settings) == -1;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(removeDistanceEndpointRejected && currentState && currentState->chains.Count() == 2 && currentState->distanceConstraints.Count() == 1 && fabs(currentState->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6 && currentState->linkIterations == 16, "chain replacement cannot remove a bone referenced by a distance constraint");
+
+        const uint32_t distanceBones[7] = { 0, 1, 2, 3, 4, 5, 6 };
+        const auto DistanceForConstraint = [](gk::Vec3 first, gk::Vec3 second)
+        {
+            const double x = static_cast<double>(first.x) - second.x;
+            const double y = static_cast<double>(first.y) - second.y;
+            const double z = static_cast<double>(first.z) - second.z;
+            return sqrt(x * x + y * y + z * z);
+        };
+        const auto DistancePoseConstraintsHold = [&](const gk::Vec3* positions)
+        {
+            const double firstLength = DistanceForConstraint(positions[1], positions[2]);
+            const double secondLength = DistanceForConstraint(positions[3], positions[4]);
+            return fabs(positions[1].x - 1.0f) <= 0.001 && fabs(positions[1].y) <= 0.001 && fabs(positions[3].x) <= 0.001 && fabs(positions[3].y - 1.0f) <= 0.001 && fabs(firstLength - 1.0) <= 0.001 && fabs(secondLength - 1.0) <= 0.001 && (positions[2].x - positions[1].x) / firstLength >= 0.5 - 0.001 && (positions[4].x - positions[3].x) / secondLength >= 0.5 - 0.001;
+        };
+        bool noBodyDistanceReady = gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        if (noBodyDistanceReady && currentState && currentState->chains.Count() == 2)
+        {
+            currentState->chains.At(0)->simulation.points.At(1).position.x += 0.5f;
+            currentState->chains.At(1)->simulation.points.At(1).position.x -= 0.5f;
+        }
+        else
+        {
+            noBodyDistanceReady = false;
+        }
+        gk::Vec3 noBodySolvedPositions[7]{};
+        const bool noBodyDistanceUpdate = noBodyDistanceReady && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, distanceBones, 7, noBodySolvedPositions) == 0;
+        const double noBodyDistance = noBodyDistanceUpdate ? DistanceForConstraint(noBodySolvedPositions[2], noBodySolvedPositions[4]) : 0.0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(noBodyDistanceUpdate && fabs(noBodyDistance - baseDistance) <= baseDistance * 0.001 && DistancePoseConstraintsHold(noBodySolvedPositions) && currentState && currentState->colliders.Count() == 0 && currentState->distanceStepSeconds == 1.0 / 120.0, "distance-only update restores separation, bone lengths, and angle without body shapes");
+        const auto* stateBeforeDistanceDebug = currentState;
+        const double lambdaBeforeDistanceDebug = currentState && currentState->distanceLambdas.Count() == 1 ? currentState->distanceLambdas.At(0) : 0.0;
+        const double stepBeforeDistanceDebug = currentState ? currentState->distanceStepSeconds : 0.0;
+        const int32_t debugCountWithDistance = gk::GetModelSecondaryMotionDebugShapes(instance, nullptr, 0);
+        gk::FModelSecondaryMotionDebugShape distanceDebugShapes[16]{};
+        const int32_t copiedDistanceDebugShapes = debugCountWithDistance > 0 && debugCountWithDistance <= 16 ? gk::GetModelSecondaryMotionDebugShapes(instance, distanceDebugShapes, 16) : -1;
+        const uint32_t distanceDebugBones[2] = { 2, 4 };
+        gk::Vec3 queriedDistanceBones[2]{};
+        const bool distanceDebugPoseRead = gk::GetModelBonePositions(instance, distanceDebugBones, 2, queriedDistanceBones) == 0;
+        currentState = ReadSecondaryState(instance);
+        const auto& distanceDebugLine = distanceDebugShapes[debugCountWithDistance > 0 && debugCountWithDistance <= 16 ? debugCountWithDistance - 1 : 0];
+        const bool distanceDebugMatchesBones = copiedDistanceDebugShapes == debugCountWithDistance && distanceDebugPoseRead && !distanceDebugLine.body && !distanceDebugLine.fixed && !distanceDebugLine.virtualTip && distanceDebugLine.radius == 0.0f && distanceDebugLine.bone == 2 && NearVector(distanceDebugLine.start, queriedDistanceBones[0]) && NearVector(distanceDebugLine.end, queriedDistanceBones[1]);
+        ReportLinkStage(debugCountBeforeDistance >= 0 && debugCountWithDistance == debugCountBeforeDistance + 1 && distanceDebugMatchesBones && currentState && currentState == stateBeforeDistanceDebug && currentState->distanceLambdas.Count() == 1 && currentState->distanceLambdas.At(0) == lambdaBeforeDistanceDebug && currentState->distanceStepSeconds == stepBeforeDistanceDebug, "distance debug query adds a zero-radius endpoint line without mutating solved state");
+
+        gk::FModelSecondaryMotionCollider distantCollider{};
+        distantCollider.bone = 0;
+        distantCollider.start = { 100.0f, 100.0f, 100.0f };
+        distantCollider.end = distantCollider.start;
+        distantCollider.radius = 0.25f;
+        const bool distantBodySet = gk::SetModelSecondaryMotionColliders(instance, &distantCollider, 1, 0.0f) == 0;
+        currentState = ReadSecondaryState(instance);
+        const bool bodyKeepsDistance = currentState && currentState->colliders.Count() == 1 && currentState->distanceConstraints.Count() == 1 && fabs(currentState->distanceConstraints.At(0).restDistance - baseDistance) < 1.0e-6 && currentState->linkIterations == 16;
+        bool distanceUpdateReady = distantBodySet && bodyKeepsDistance && gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        if (distanceUpdateReady && currentState && currentState->chains.Count() == 2)
+        {
+            currentState->chains.At(0)->simulation.points.At(1).position.x += 0.5f;
+            currentState->chains.At(1)->simulation.points.At(1).position.x -= 0.5f;
+        }
+        else
+        {
+            distanceUpdateReady = false;
+        }
+        gk::Vec3 distanceSolvedPositions[7]{};
+        const bool distanceUpdate = distanceUpdateReady && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, distanceBones, 7, distanceSolvedPositions) == 0;
+        const double solvedDistance = distanceUpdate ? DistanceForConstraint(distanceSolvedPositions[2], distanceSolvedPositions[4]) : 0.0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(distanceUpdate && fabs(solvedDistance - baseDistance) <= baseDistance * 0.001 && DistancePoseConstraintsHold(distanceSolvedPositions) && currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceLambdas.Count() == 1 && currentState->distanceStepSeconds == 1.0 / 120.0 && currentState->linkIterations == 16, "distance constraints restore separation and chain constraints with a body configured");
+
+        bool positiveDistanceReady = gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        if (positiveDistanceReady && currentState && currentState->chains.Count() == 2)
+        {
+            currentState->chains.At(0)->simulation.points.At(1).position.x += 0.25f;
+            currentState->chains.At(1)->simulation.points.At(1).position.x -= 0.25f;
+        }
+        else
+        {
+            positiveDistanceReady = false;
+        }
+        gk::Vec3 positiveSolvedPositions[7]{};
+        const bool positiveDistanceUpdate = positiveDistanceReady && gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::GetModelBonePositions(instance, distanceBones, 7, positiveSolvedPositions) == 0;
+        const double positiveSolvedDistance = positiveDistanceUpdate ? DistanceForConstraint(positiveSolvedPositions[2], positiveSolvedPositions[4]) : 0.0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(positiveDistanceUpdate && fabs(positiveSolvedDistance - baseDistance) <= baseDistance * 0.001 && DistancePoseConstraintsHold(positiveSolvedPositions) && currentState && fabs(currentState->distanceStepSeconds - 1.0 / 60.0) <= 1.0e-12, "positive-delta distance update stores its physical step and keeps both chain constraints");
+
+        const gk::FModelSecondaryMotionDistanceConstraint softDistance = { 2, 4, static_cast<float>(baseDistance), 0.02f };
+        bool softDistanceReady = gk::SetModelSecondaryMotionDistanceConstraints(instance, &softDistance, 1, 32) == 0 && gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        if (softDistanceReady && currentState && currentState->chains.Count() == 2)
+        {
+            currentState->chains.At(0)->simulation.points.At(1).position.y += 0.05f;
+            currentState->chains.At(1)->simulation.points.At(1).position.y -= 0.05f;
+        }
+        else
+        {
+            softDistanceReady = false;
+        }
+        const uint32_t softDistanceBones[2] = { 2, 4 };
+        gk::Vec3 softSolvedBones[2]{};
+        const bool softDistanceUpdate = softDistanceReady && gk::UpdateModelSecondaryMotion(instance, 1.0e-5) == 0 && gk::GetModelBonePositions(instance, softDistanceBones, 2, softSolvedBones) == 0;
+        const double softSolvedDistance = softDistanceUpdate ? DistanceForConstraint(softSolvedBones[0], softSolvedBones[1]) : 0.0;
+        currentState = ReadSecondaryState(instance);
+        const double softStep = currentState ? currentState->distanceStepSeconds : 0.0;
+        const double softLambda = currentState && currentState->distanceLambdas.Count() == 1 ? currentState->distanceLambdas.At(0) : 0.0;
+        const double softAlpha = softStep > 0.0 ? static_cast<double>(softDistance.compliance) / (softStep * softStep) : 0.0;
+        const double softResidual = softSolvedDistance - softDistance.restDistance - softAlpha * softLambda;
+        ReportLinkStage(softDistanceUpdate && currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceConstraints.At(0).compliance == softDistance.compliance && fabs(softStep - 1.0e-5) <= 1.0e-15 && isfinite(softLambda) && isfinite(softResidual) && fabs(softResidual) <= static_cast<double>(softDistance.restDistance) * 0.001 && fabs(softSolvedDistance - softDistance.restDistance) > static_cast<double>(softDistance.restDistance) * 0.001, "small positive step is retained and the compliant result satisfies its lambda-weighted residual");
+        const bool restoredRigidDistance = gk::SetModelSecondaryMotionDistanceConstraints(instance, &distanceConstraint, 1, 32) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, distanceBones, 7, positiveSolvedPositions) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(restoredRigidDistance && currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceConstraints.At(0).compliance == 0.0f && fabs(DistanceForConstraint(positiveSolvedPositions[2], positiveSolvedPositions[4]) - baseDistance) <= baseDistance * 0.001, "reset and next update restore the original rigid distance setting");
+
+        const gk::FModelSecondaryMotionDistanceConstraint impossibleDistance = { 2, 4, 10.0f, 0.0f };
+        const bool impossibleDistanceSet = gk::SetModelSecondaryMotionDistanceConstraints(instance, &impossibleDistance, 1, 32) == 0;
+        currentState = ReadSecondaryState(instance);
+        std::vector<gk::model::animation::FModelSecondaryMotionPoint> firstDistancePoints;
+        std::vector<gk::model::animation::FModelSecondaryMotionPoint> secondDistancePoints;
+        if (currentState && currentState->chains.Count() == 2)
+        {
+            firstDistancePoints.assign(currentState->chains.At(0)->simulation.points.Data(), currentState->chains.At(0)->simulation.points.Data() + currentState->chains.At(0)->simulation.points.Count());
+            secondDistancePoints.assign(currentState->chains.At(1)->simulation.points.Data(), currentState->chains.At(1)->simulation.points.Data() + currentState->chains.At(1)->simulation.points.Count());
+        }
+        gk::Vec3 beforeImpossibleDistancePose[7]{};
+        const bool impossibleSnapshotReady = impossibleDistanceSet && currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceConstraints.At(0).restDistance == 10.0f && currentState->distanceLambdas.Count() == 1 && currentState->chains.Count() == 2 && !firstDistancePoints.empty() && !secondDistancePoints.empty() && gk::GetModelBonePositions(instance, distanceBones, 7, beforeImpossibleDistancePose) == 0;
+        const double lambdaBeforeImpossibleDistance = impossibleSnapshotReady ? currentState->distanceLambdas.At(0) : 0.0;
+        const double stepBeforeImpossibleDistance = impossibleSnapshotReady ? currentState->distanceStepSeconds : 0.0;
+        const int impossibleDistanceResult = impossibleSnapshotReady ? gk::UpdateModelSecondaryMotion(instance, 0.0) : 0;
+        const auto* afterImpossibleDistance = ReadSecondaryState(instance);
+        gk::Vec3 afterImpossibleDistancePose[7]{};
+        bool impossibleDistanceAtomic = impossibleSnapshotReady && impossibleDistanceResult == -1 && gk::GetLastErrorMessage()[0] != '\0' && afterImpossibleDistance == currentState && afterImpossibleDistance->distanceConstraints.Count() == 1 && afterImpossibleDistance->distanceConstraints.At(0).restDistance == 10.0f && afterImpossibleDistance->distanceLambdas.Count() == 1 && afterImpossibleDistance->distanceLambdas.At(0) == lambdaBeforeImpossibleDistance && afterImpossibleDistance->distanceStepSeconds == stepBeforeImpossibleDistance && afterImpossibleDistance->chains.Count() == 2 && afterImpossibleDistance->chains.At(0)->simulation.points.Count() == firstDistancePoints.size() && afterImpossibleDistance->chains.At(1)->simulation.points.Count() == secondDistancePoints.size();
+        if (impossibleDistanceAtomic)
+        {
+            impossibleDistanceAtomic = memcmp(afterImpossibleDistance->chains.At(0)->simulation.points.Data(), firstDistancePoints.data(), firstDistancePoints.size() * sizeof(firstDistancePoints[0])) == 0 && memcmp(afterImpossibleDistance->chains.At(1)->simulation.points.Data(), secondDistancePoints.data(), secondDistancePoints.size() * sizeof(secondDistancePoints[0])) == 0 && gk::GetModelBonePositions(instance, distanceBones, 7, afterImpossibleDistancePose) == 0 && memcmp(beforeImpossibleDistancePose, afterImpossibleDistancePose, sizeof(beforeImpossibleDistancePose)) == 0;
+        }
+        ReportLinkStage(impossibleDistanceAtomic, "an infeasible rigid distance update reports failure without publishing candidate points, lambda, or FK pose");
+        const bool restoreFeasibleDistance = gk::SetModelSecondaryMotionDistanceConstraints(instance, &distanceConstraint, 1, 32) == 0;
+        ReportLinkStage(restoreFeasibleDistance, "restore a feasible distance after atomic failure");
+
+        const bool clearDistanceOnly = gk::SetModelSecondaryMotionDistanceConstraints(instance, nullptr, 0) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(clearDistanceOnly && currentState && currentState->distanceConstraints.Count() == 0 && currentState->distanceLambdas.Count() == 0 && currentState->chains.Count() == 2 && currentState->colliders.Count() == 1, "zero count clears distance constraints while retaining chains and body shapes");
+        const bool clearDistanceBody = gk::SetModelSecondaryMotionColliders(instance, nullptr, 0) == 0;
+        ReportLinkStage(clearDistanceBody, "clear the temporary distant body before link-contact integration");
+
         gk::FModelSecondaryMotionCollider linkCollider{};
         linkCollider.bone = 0;
         linkCollider.start = { 1.5f, 0.5f, 0.0f };
         linkCollider.end = linkCollider.start;
         linkCollider.radius = 0.15f;
         const gk::FModelSecondaryMotionLink contactLink = { 2, 4, 0.02f };
-        bool contactReady = gk::SetModelSecondaryMotionColliders(instance, &linkCollider, 1, 0.005f) == 0 && gk::SetModelSecondaryMotionLinks(instance, &contactLink, 1, 32) == 0;
+        const gk::FModelSecondaryMotionDistanceConstraint contactDistance = { 2, 4, static_cast<float>(baseDistance), 0.0f };
+        bool contactReady = gk::SetModelSecondaryMotionColliders(instance, &linkCollider, 1, 0.005f) == 0 && gk::SetModelSecondaryMotionLinks(instance, &contactLink, 1, 31) == 0 && gk::SetModelSecondaryMotionDistanceConstraints(instance, &contactDistance, 1, 32) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(contactReady && currentState && currentState->linkIterations == 32 && currentState->links.Count() == 1 && currentState->distanceConstraints.Count() == 1, "the last distance setter controls the shared link iteration budget");
         gk::Vec3 contactReference[7]{};
         const uint32_t allBones[7] = { 0, 1, 2, 3, 4, 5, 6 };
         contactReady = gk::GetModelBonePositions(instance, allBones, 7, contactReference) == 0 && contactReady;
@@ -1465,10 +1671,15 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         for (uint32_t iteration = 0; iteration < 3 && contactReady; ++iteration)
         {
             gk::model::ResetSecondaryMotionLinkPreparationCounts();
-            contactReady = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, allBones, 7, solvedPositions) == 0 && LinkAndChainConstraintsHold(solvedPositions);
+            const bool updateSucceeded = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, allBones, 7, solvedPositions) == 0 && LinkAndChainConstraintsHold(solvedPositions);
+            currentState = ReadSecondaryState(instance);
+            contactReady = updateSucceeded && fabs(Distance3(solvedPositions[2], solvedPositions[4]) - baseDistance) <= 0.001 && currentState && currentState->distanceConstraints.Count() == 1 && currentState->distanceLambdas.Count() == 1;
             ReportLinkStage(gk::model::GetSecondaryMotionLinkResolutionCount() == 1 && gk::model::GetSecondaryMotionLinkShapePreparationCount() == 1, "a link resolves once and prepares one body shape across all constraint passes");
         }
         ReportLinkStage(contactReady, "body sphere pushes the free-bone link clear while preserving roots, lengths, angles, and finite velocity");
+        const bool clearedCoupledDistance = gk::SetModelSecondaryMotionDistanceConstraints(instance, nullptr, 0) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(clearedCoupledDistance && currentState && currentState->distanceConstraints.Count() == 0 && currentState->links.Count() == 1 && currentState->colliders.Count() == 1, "clear the temporary distance setting after coupled body-link integration");
 
         struct FFailedLinkUpdateSnapshot
         {

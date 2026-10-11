@@ -221,7 +221,7 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 /**
  * 鎖を候補側で積分し、長さ・曲げ角・任意の身体接触を満たすときだけstateを更新する。
  */
-static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr)
+static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false)
 {
     error.Clear();
     if (!ValidateSettings(settings, delta) || !ValidateTargets(targets, count, error))
@@ -249,7 +249,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
     }
     // 接触なしでは既存の初期化結果と計算順をそのまま保つ。
     const bool initiallyEmpty = state.points.Count() == 0 && state.previousTargets.Count() == 0;
-    if (initiallyEmpty && shapeCount == 0)
+    if (initiallyEmpty && shapeCount == 0 && !forceConstraints)
     {
         return ResetSecondaryMotionChain(targets, count, state, error);
     }
@@ -282,7 +282,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         return false;
     }
     const bool resetMotion = initiallyEmpty || delta >= 0.25 || rootDisplacement > settings.teleportDistance;
-    if (resetMotion && shapeCount == 0)
+    if (resetMotion && shapeCount == 0 && !forceConstraints)
     {
         if (!ResetSecondaryMotionChain(targets, count, state, error))
             return false;
@@ -302,7 +302,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         error.Assign("Secondary motion state allocation failed");
         return false;
     }
-    if (delta == 0.0 && shapeCount == 0)
+    if (delta == 0.0 && shapeCount == 0 && !forceConstraints)
     {
         candidate.points.At(0).position = targets[0];
         candidate.points.At(0).velocity = {};
@@ -513,7 +513,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
             return false;
         }
     }
-    if (shapeCount > 0)
+    if (shapeCount > 0 || forceConstraints)
     {
         // 保存後のfloat座標でも接触が成立することを確認してから状態を確定する。
         for (uint32_t index = 0; index < count; ++index)
@@ -534,7 +534,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 return false;
             }
         }
-        if (!CheckSecondaryMotionContacts(currentShapes, shapeCount, positions.Data(), count, error))
+        if (shapeCount > 0 && !CheckSecondaryMotionContacts(currentShapes, shapeCount, positions.Data(), count, error))
         {
             return false;
         }
@@ -593,6 +593,11 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
 bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)
 {
     return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes);
+}
+
+bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes, true);
 }
 
 }

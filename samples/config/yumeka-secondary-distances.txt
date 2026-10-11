@@ -1,0 +1,11 @@
+﻿# 基準距離(0は登録時の姿勢から測定) 柔らかさ | 隣接する自由bone名
+0 0.001 | Skirt_1.002 Skirt_2_L.002
+0 0.001 | Skirt_2_L.002 Skirt_3_L.002
+0 0.001 | Skirt_3_L.002 Skirt_4_L.002
+0 0.001 | Skirt_4_L.002 Skirt_5_L.002
+0 0.001 | Skirt_5_L.002 Skirt_6.002
+0 0.001 | Skirt_6.002 Skirt_5_R.002
+0 0.001 | Skirt_5_R.002 Skirt_4_R.002
+0 0.001 | Skirt_4_R.002 Skirt_3_R.002
+0 0.001 | Skirt_3_R.002 Skirt_2_R.002
+0 0.001 | Skirt_2_R.002 Skirt_1.002

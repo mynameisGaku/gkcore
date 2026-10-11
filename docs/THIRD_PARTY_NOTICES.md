@@ -70,7 +70,7 @@ WinPix `1.0.200127001` が参照する WebPI EULA と配布条件の、版を特
 - 確認commit: [`feee5fe727261ba9cfe725c4af280aa9e381c31d`](https://github.com/pafuhana1213/KawaiiPhysics/commit/feee5fe727261ba9cfe725c4af280aa9e381c31d)
 - [LICENSE](https://github.com/pafuhana1213/KawaiiPhysics/blob/feee5fe727261ba9cfe725c4af280aa9e381c31d/LICENSE): MIT License、Copyright (c) 2019-2026 pafuhana1213
 
-シミュレーションstepごとに接触形状の派生値をまとめて準備する構成と、骨間の距離制約を確認しました。gkcoreの前処理共有は、既存の形状計算とfoundationの配列で実装しています。Unreal Engineの型や依存物は同梱しません。参照元のライセンス本文を以下に記録します。
+シミュレーションstepごとに接触形状の派生値をまとめて準備する構成と、XPBDによる骨間距離制約を確認しました。gkcoreの形状前処理共有と距離制約は、既存の形状計算およびfoundationの配列を使って実装しています。Unreal Engineの型や依存物は同梱しません。参照元のライセンス本文を以下に記録します。
 
 ```text
 MIT License

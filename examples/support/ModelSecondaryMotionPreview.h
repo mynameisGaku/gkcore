@@ -37,6 +37,14 @@ bool ParseSecondaryLinkOptions(int& argc, char** argv, const char*& path);
  * 半径と2個のbone名から接続線分を読み、全設定を一括登録する。
  */
 bool ApplySecondaryLinkPreview(ModelHandle model, const char* path);
+/**
+ * --secondary-distancesのpathを取り出す。欠落・重複では引数列を保つ。
+ */
+bool ParseSecondaryDistanceOptions(int& argc, char** argv, const char*& path);
+/**
+ * 基準距離・柔らかさと2個のbone名から距離制約を読み、一括登録する。
+ */
+bool ApplySecondaryDistancePreview(ModelHandle model, const char* path);
 
 }
 

@@ -33,6 +33,11 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
  */
 bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error);
 
+/**
+ * 身体接触を使わない場合も鎖の長さと曲げ角を復元する。失敗時はstateを保つ。
+ */
+bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error);
+
 #if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
 /**
  * 鎖制約の参照方向・長さ計算回数を0へ戻す。検証用の直列Updateで使う。

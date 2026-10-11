@@ -62,6 +62,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/ModelSecondaryMotionCollision.cpp
+    src/model/animation/ModelSecondaryMotionDistances.cpp
     src/model/animation/ModelSecondaryMotionColliders.cpp
     src/model/animation/ModelSecondaryMotion.cpp
     src/model/animation/ModelSecondaryMotionDebug.cpp
@@ -132,14 +133,14 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_ik_tests PRIVATE GKCORE_TESTING=1)
     target_compile_definitions(gkcore_model_pose_tests PRIVATE GKCORE_TESTING=1)
     add_executable(gkcore_model_secondary_motion_tests tests/model_secondary_motion_tests.cpp
-        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
+        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp src/model/animation/ModelSecondaryMotionDistances.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_secondary_motion_tests)
     add_test(NAME gkcore.model_secondary_motion COMMAND gkcore_model_secondary_motion_tests)
     add_executable(gkcore_model_secondary_motion_collision_tests tests/model_secondary_motion_collision_tests.cpp
-        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
+        src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp src/model/animation/ModelSecondaryMotionDistances.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_collision_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_collision_tests PRIVATE include src)
@@ -1352,7 +1353,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/HumanoidBoneTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
-    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h include/gkcore/FModelSecondaryMotionDistanceConstraint.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimationMappingInfo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelMaterial.h include/gkcore/ModelMaterialSettings.h include/gkcore/ModelAlphaModeTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)

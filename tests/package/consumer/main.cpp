@@ -14,6 +14,12 @@ bool VerifySecondaryMotionApiExports()
     const gk::FModelSecondaryMotionSettings secondarySettings{};
     const gk::FModelSecondaryMotionCollider collider{};
     const gk::FModelSecondaryMotionLink link{};
+    // 新しい距離設定とAPIも、配布header・libraryから参照できることを確認する。
+    const gk::FModelSecondaryMotionDistanceConstraint distanceConstraint{};
+    if (gk::SetModelSecondaryMotionDistanceConstraints({}, &distanceConstraint, 1) != -1)
+    {
+        return 1;
+    }
     const uint32_t bone = 0;
     if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1 || gk::SetModelSecondaryMotionVertexContactsEnabled({}, true) != -1 || gk::SetModelSecondaryMotionChainCollisionRadius({}, 0, 0.01f) != -1 || gk::SetModelSecondaryMotionLinks({}, &link, 1) != -1 || gk::GetModelSecondaryMotionDebugShapes({}, nullptr, 0) != -1)
     {

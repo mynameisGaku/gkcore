@@ -135,3 +135,15 @@ Debug/Release各2区間×120frameのGPU・Skirt点参照はすべて有効でし
 通常可視Release1280×720、VSyncなし、標準効果、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本、debug表示/頂点補正OFFの3000frame/warmup300を前後とも完走しました。170.854→175.739FPS、揺れ更新2.384→2.317ms、後p95 6.643ms、Draw .430/Present2.370/IK .516msです。改善は小さく、300FPSには届いていません。ログはstep-shapes-{before,after}-benchmark.logです。
 
 Debug/Release計480frameのGPU・Skirt点参照が有効で、全skin記録と48画像が変更前と一致しました。布面の貫通は保持されています。実測delta3300frameの隠し再生と変動1200frameの可視再生も完走しました。以前のwarmup停止の原因は未確定です。次は隣接鎖の間隔を保つ距離制約を検討します。
+
+## 隣接する自由boneの距離制約
+
+START15の試験設定では13鎖・身体8形状・接触線分10本に、基準距離を登録姿勢から測る距離制約10組を追加します。柔らかさは0.001、接触線分と距離の共通反復上限は32です。既存の球半径・身体形状・最大曲げ角・頂点接触OFFは保持します。
+
+通常可視Release1280×720、標準効果、VSyncなし、debug表示/頂点補正OFF、3000frame/warmup300の計測は、warmup後340frameで接続線分1・身体形状4の接触が未収束となり終了しました。completed=falseの151.599FPSは途中の値で、完走時の性能として採用しません。delta記録付き再試行は3300frameを完走しています。ログはdistance-final-benchmark.log、distance-diagnostic-benchmark.log、記録はdistance-real-delta-trace.txtです。一度の完走で停止原因が解決したとは扱いません。300FPSの条件は未達です。
+
+固定delta1/60では開始0秒とloop境界3.35秒から各120frameをDebug/Releaseで再生し、GPU位置・法線とSkirt点参照を確認しました。計480frameが有効で、保存24組の画像が一致します。loopの平均侵入点数は15.833→15.483ですが、最大深度は.020639→.023409へ増えています。距離制約で布面の品質を改善したとは判定しません。
+
+30/60/120Hzでも3.35秒から同じmotion時刻4.25秒まで28/55/109frameを再生し、計192frameのGPU変形と更新成立を確認しました。鎖を内部substepで積分してから距離をframe末尾で解くため、更新頻度が異なる結果は完全一致を保証しません。実時間停止の再現と、接触・距離・鎖復元の残差の切り分けを続けます。
+
+記録した今回の3300 deltaを距離制約ON/OFFで再生し、両方completed=trueを確認しました。距離OFFの現在sourceで追加240frameを描画し、前commitの24画像と全Skirt点参照JSONが一致しています。保存画像は画素一致を確認してlossless PNGへ変換し、重複したDebug/旧版のPPM、今回使い終えたtrial設定を片づけます。最新Release ON/OFF画像、元asset、現在build、成功/失敗ログとdelta traceは保持します。再生ログはdistance-real-delta-replay-{on,off}.log、画像/skin比較はdistance-image-comparison.json、distance-off-and-rate-comparison.json、整理記録はdistance-cleanup.jsonです。

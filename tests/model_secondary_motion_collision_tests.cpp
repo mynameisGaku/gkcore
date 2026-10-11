@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 
@@ -1799,8 +1800,119 @@ bool TestPreparedProjectionFailureSkipsReferenceWork()
 }
 
 /**
- * float保存後にも固定長と角度coneを保つか、崩れる配置をatomicに拒否する。
+ * 剛体・柔軟な距離投影と一致点の決定的方向を検査する。
  */
+bool TestDistanceProjectionRigidSoftAndCoincident()
+{
+    const gk::FVector3d referenceFirst = Point(0.0, 0.0, 0.0);
+    const gk::FVector3d referenceSecond = Point(2.0, 0.0, 0.0);
+    gk::FVector3d first = referenceFirst;
+    gk::FVector3d second = referenceSecond;
+    double lambda = 0.0;
+    gk::String error;
+    if (!ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, lambda, first, second, error) || !error.Empty())
+        return Fail("rigid distance projection failed");
+    if (fabs(Distance(first, second) - 1.0) > 1.0e-12 || fabs((first.value[0] + second.value[0]) * 0.5 - 1.0) > 1.0e-12 || fabs(first.value[1]) > 1.0e-12 || fabs(second.value[1]) > 1.0e-12)
+        return Fail("rigid distance projection changed its center or missed the rest length");
+    if (!CheckSecondaryMotionDistance(1.0, 0.0, 0.1, lambda, first, second, error) || !error.Empty())
+        return Fail("rigid distance residual did not pass the independent check");
+
+    const gk::FVector3d rigidFirstSnapshot = first;
+    const gk::FVector3d rigidSecondSnapshot = second;
+    const double rigidLambdaSnapshot = lambda;
+    if (!ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, lambda, first, second, error) || memcmp(&first, &rigidFirstSnapshot, sizeof(first)) != 0 || memcmp(&second, &rigidSecondSnapshot, sizeof(second)) != 0 || memcmp(&lambda, &rigidLambdaSnapshot, sizeof(lambda)) != 0)
+        return Fail("reapplying a satisfied rigid distance added another correction");
+
+    first = Point(0.4, 0.0, 0.0);
+    second = Point(1.6, 0.0, 0.0);
+    lambda = 0.0;
+    if (!ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.5, 0.0, 0.1, lambda, first, second, error) || fabs(Distance(first, second) - 1.5) > 1.0e-12 || fabs((first.value[0] + second.value[0]) * 0.5 - 1.0) > 1.0e-12)
+        return Fail("rigid distance projection did not correct compression symmetrically");
+
+    first = referenceFirst;
+    second = referenceSecond;
+    lambda = 0.0;
+    const double compliance = 0.02;
+    const double stepSeconds = 0.1;
+    const double alpha = compliance / (stepSeconds * stepSeconds);
+    if (!ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.0, compliance, stepSeconds, lambda, first, second, error) || !error.Empty())
+        return Fail("compliant distance projection failed");
+    const double residual = Distance(first, second) - 1.0;
+    if (fabs(residual - alpha / (2.0 + alpha)) > 1.0e-12 || fabs(lambda - 1.0 / (2.0 + alpha)) > 1.0e-12 || fabs((first.value[0] + second.value[0]) * 0.5 - 1.0) > 1.0e-12 || !CheckSecondaryMotionDistance(1.0, compliance, stepSeconds, lambda, first, second, error) || !error.Empty())
+        return Fail("compliant distance did not match its one-step XPBD analytical residual");
+    const gk::FVector3d softFirstSnapshot = first;
+    const gk::FVector3d softSecondSnapshot = second;
+    const double softLambdaSnapshot = lambda;
+    if (!ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.0, compliance, stepSeconds, lambda, first, second, error) || memcmp(&first, &softFirstSnapshot, sizeof(first)) != 0 || memcmp(&second, &softSecondSnapshot, sizeof(second)) != 0 || memcmp(&lambda, &softLambdaSnapshot, sizeof(lambda)) != 0)
+        return Fail("reapplying a satisfied compliant distance added another correction");
+
+    const gk::FVector3d coincident = Point(4.0, -2.0, 3.0);
+    first = coincident;
+    second = coincident;
+    lambda = 0.0;
+    if (!ProjectSecondaryMotionDistance(coincident, coincident, 1.0, 0.0, 0.1, lambda, first, second, error) || !error.Empty())
+        return Fail("coincident distance fallback failed");
+    const gk::FVector3d firstResult = first;
+    const gk::FVector3d secondResult = second;
+    const double firstLambda = lambda;
+    first = coincident;
+    second = coincident;
+    lambda = 0.0;
+    if (!ProjectSecondaryMotionDistance(coincident, coincident, 1.0, 0.0, 0.1, lambda, first, second, error) || memcmp(&first, &firstResult, sizeof(first)) != 0 || memcmp(&second, &secondResult, sizeof(second)) != 0 || memcmp(&lambda, &firstLambda, sizeof(lambda)) != 0 || fabs(Distance(first, second) - 1.0) > 1.0e-12 || fabs((first.value[0] + second.value[0]) * 0.5 - coincident.value[0]) > 1.0e-12 || fabs((first.value[1] + second.value[1]) * 0.5 - coincident.value[1]) > 1.0e-12 || fabs((first.value[2] + second.value[2]) * 0.5 - coincident.value[2]) > 1.0e-12)
+        return Fail("coincident reference fallback was not deterministic or did not preserve center");
+    return true;
+}
+
+/**
+ * 距離投影の不正値、alias、overflowで点とlambdaを保つ。
+ */
+bool TestDistanceProjectionValidationAndAtomicity()
+{
+    const gk::FVector3d referenceFirst = Point(0.0, 0.0, 0.0);
+    const gk::FVector3d referenceSecond = Point(2.0, 0.0, 0.0);
+    const gk::FVector3d originalFirst = Point(0.0, 1.0, 0.0);
+    const gk::FVector3d originalSecond = Point(2.0, 1.0, 0.0);
+    const double originalLambda = 0.125;
+    gk::String error;
+    const auto RejectAtomic = [&](const gk::FVector3d& refFirst, const gk::FVector3d& refSecond, double restDistance, double compliance, double stepSeconds, double lambdaInput, gk::FVector3d firstInput, gk::FVector3d secondInput)
+    {
+        const gk::FVector3d beforeFirst = firstInput;
+        const gk::FVector3d beforeSecond = secondInput;
+        double candidateLambda = lambdaInput;
+        const bool rejected = !ProjectSecondaryMotionDistance(refFirst, refSecond, restDistance, compliance, stepSeconds, candidateLambda, firstInput, secondInput, error) && !error.Empty() && memcmp(&firstInput, &beforeFirst, sizeof(beforeFirst)) == 0 && memcmp(&secondInput, &beforeSecond, sizeof(beforeSecond)) == 0 && memcmp(&candidateLambda, &lambdaInput, sizeof(lambdaInput)) == 0;
+        error.Clear();
+        return rejected;
+    };
+    if (!RejectAtomic(referenceFirst, referenceSecond, -1.0, 0.0, 0.1, originalLambda, originalFirst, originalSecond) || !RejectAtomic(referenceFirst, referenceSecond, 1.0, -0.1, 0.1, originalLambda, originalFirst, originalSecond) || !RejectAtomic(referenceFirst, referenceSecond, 1.0, 0.0, 0.0, originalLambda, originalFirst, originalSecond) || !RejectAtomic(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, std::numeric_limits<double>::quiet_NaN(), originalFirst, originalSecond))
+        return Fail("invalid distance parameters were accepted or changed output values");
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const gk::FVector3d invalidReference = Point(nan, 0.0, 0.0);
+    const gk::FVector3d invalidPosition = Point(0.0, std::numeric_limits<double>::infinity(), 0.0);
+    if (!RejectAtomic(invalidReference, referenceSecond, 1.0, 0.0, 0.1, originalLambda, originalFirst, originalSecond) || !RejectAtomic(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, originalLambda, invalidPosition, originalSecond))
+        return Fail("non-finite distance inputs were accepted or changed output values");
+
+    gk::FVector3d aliased = originalFirst;
+    double aliasLambda = originalLambda;
+    if (ProjectSecondaryMotionDistance(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, aliasLambda, aliased, aliased, error) || error.Empty() || memcmp(&aliased, &originalFirst, sizeof(aliased)) != 0 || memcmp(&aliasLambda, &originalLambda, sizeof(aliasLambda)) != 0)
+        return Fail("aliased distance outputs were accepted or changed output values");
+
+    const double maximum = std::numeric_limits<double>::max();
+    const gk::FVector3d extremeFirst = Point(-maximum * 0.75, 0.0, 0.0);
+    const gk::FVector3d extremeSecond = Point(maximum * 0.75, 0.0, 0.0);
+    if (!RejectAtomic(referenceFirst, referenceSecond, 1.0, 0.0, 0.1, originalLambda, extremeFirst, extremeSecond))
+        return Fail("overflowing distance computation was accepted or changed output values");
+    if (CheckSecondaryMotionDistance(1.0, 0.0, 0.1, originalLambda, originalFirst, originalSecond, error, -1.0) || error.Empty())
+        return Fail("negative distance-check tolerance was accepted");
+    error.Clear();
+    if (CheckSecondaryMotionDistance(1.0, 0.0, 0.1, originalLambda, originalFirst, originalSecond, error, std::numeric_limits<double>::quiet_NaN()) || error.Empty())
+        return Fail("non-finite distance-check tolerance was accepted");
+    error.Clear();
+    if (CheckSecondaryMotionDistance(1.0, 0.0, 0.1, originalLambda, originalFirst, originalSecond, error, 1.01) || error.Empty())
+        return Fail("distance-check tolerance greater than one was accepted");
+    return true;
+}
+
 bool TestFloatRoundingPreservesLengthAndAngle()
 {
     const gk::Vec3 targets[2] = { { 1000000.0f, 0.0f, 0.0f }, { 1000001.0f, 0.0f, 0.0f } };
@@ -1832,8 +1944,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

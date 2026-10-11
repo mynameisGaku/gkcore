@@ -15,6 +15,10 @@ namespace gk::model
  */
 bool ValidateSecondaryMotionLinks(const FModelSecondaryMotionState& state, String& error);
 /**
+ * 距離制約の数、自由節、lambda配列、係数、重複を検査する。stateは変更しない。
+ */
+bool ValidateSecondaryMotionDistanceConstraints(const FModelSecondaryMotionState& state, String& error);
+/**
  * candidate内の接続接触と骨制約を解く。失敗した候補は呼出側が破棄する。
  * deltaは元の更新間隔で、接触を加えた位置差だけを速度へ反映する。
  */

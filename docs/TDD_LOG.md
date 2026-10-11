@@ -1499,3 +1499,23 @@ REDはcache stubで初回Get失敗、cache実装後のraw-delegate prepared stub
 通常可視Release1280×720・VSyncなし・標準効果・3000frame/warmup300は変更前170.854FPS/secondary2.384ms、後175.739FPS/secondary2.317ms、後p95 6.643ms、Draw .430/Present2.370/IK .516msで双方完走。差は小さく300FPS未達です。delta replayは実測3300frameを隠しcapture DLL、変動1200frameを通常可視DLLで完走しました。最初の可視実測replayは295frame・completed=false・exit0で途中終了。APIエラーはなく、イベント/終了入力の経路と判別できるため、完走成功にも接触失敗の再現にも数えません。未完走logを残して隠しwindowで再実行しました。以前のwarmup接触失敗の原因同定とは区別し、今回もmain反映は保留します。
 
 Runtime SDK57ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdownも成功。記録はstep-shapes-{red-debug-test,prepared-red-test,links-red-test,links-green-test,debug-test,release-test,before-benchmark,after-benchmark,trace-1-replay,jitter-replay}.log、step-shapes-{Release,Debug}-{start,loop}.log、step-shapes-image-comparison.json、step-shapes-native-results.jsonです。現在のRelease画像とlossless PNG、delta、失敗記録、現build、元assetを保持し、一時検証scriptと重複画像はhashを残して片づけます。公式reference checkoutは次の骨間距離制約の調査にも使うため.devtools内へ固定revisionのまま保持します。
+
+## 隣接する自由boneの距離制約と実モデル検証
+
+ユーザー指定の公式参照資料を調べ、身体接触の補助線分と、隣接鎖の間隔を保つ距離制約を別の役割として実装しました。公開値型FModelSecondaryMotionDistanceConstraintとSetModelSecondaryMotionDistanceConstraintsを追加し、既存settings layoutは保持しています。restDistance=0は登録時のclip・blend・IK反映済みで揺れ前の姿勢から測ります。最大1024組、別鎖の自由bone限定、重複ペア禁止です。設定・状態をinstanceで所有し、Reset・同先頭boneの再登録後も設定を保ちます。固定rootを動かさず、最終FKのsoft残差も検査し、失敗時は以前の全鎖状態を保ちます。
+
+REDは未実装距離投影と公開setterで捕捉しました（distance-red-debug-{build,test}.log）。GREEN後に既存テスト2件が失敗しましたが、新しい距離併用fixtureの判定を後続の距離なしfixtureへ混ぜていたことが原因です。既存判定を戻し、距離併用中だけ別の判定を行うよう分離しました。数式は剛体の圧縮・伸長、重心保持、softの解析残差、再投影の不変性、同一点の方向選択、不正値・alias・overflowと出力保持を確認しています。APIは自動基準距離、入力のコピー、別鎖自由点、距離だけの形状なし更新、身体接触との両立、未収束時の状態/FK保持、解除、設定の寿命とdebug接続線を検査します。
+
+独立レビューで正のdeltaを1e-4へ持ち上げる処理を指摘され、実際のdeltaへ修正しました。1e-5秒・softのlambda込み残差が成立し、hが1e-5のまま保持される契約を追加しています。XPBDの両端は逆質量1、hは正のframe delta、時間0/hitchは1/120秒です。各Updateでlambdaを0に戻し、反復内では蓄積します。これは距離をframe末尾で解く処理で、各鎖のsubstepと全制約を同時積分する構成ではありません。Resetは元の姿勢へ戻し、次のUpdateで制約を解きます。相対精度を満たせない短い距離・大きいfloat座標は失敗する場合があります。
+
+最終sourceのCPUテストはDebug60/60（5.16秒）、Release60/60（4.89秒）成功。MSVC19.51/SDK10.0.28000.0、cmake --build build/dev-windows --config Debug/Release --parallel 4、ctest --test-dir build/dev-windows -C Debug/Release --output-on-failureを実行しました。ログはdistance-final-{debug,release}-{build,test}.logです。
+
+実モデルはYUMEKA FBX、Silly DancingとCapoeiraの外部blend・右腕IK・follow-motion、13鎖・身体8形状・接触線分10本・距離制約10組、頂点補正とdebug表示OFFを使用。骨球半径・脚カプセル・最大角度は変更していません。柔らかさ1e-5はframe0で未収束になり採用せず、0.001をSTART15の試験設定にしました。0秒・3.35秒から各120frame、固定delta1/60のDebug/Release計480frameで更新・GPU位置/法線・Skirt1314点の参照が有効で、保存24組の画像が一致しました。開始区間の平均侵入点数は15.908→16.008、最大深度.017340→.017313。loopは15.833→15.483、最大深度.020639→.023409。布面の改善とは判定していません。30/60/120Hzで同motion時刻4.25秒まで追加192frameも成立しましたが、更新頻度で姿勢差は残ります。
+
+通常可視Release1280×720、VSyncなし、標準効果、3000frame/warmup300の計測は、warmup後340frameで接続線分1・身体形状4の未収束により停止しました。completed=falseの151.599FPSを完走性能として採用しません。delta記録付き再試行3300frameは完走しましたが、元の停止は再現できていません。距離→接触線分→鎖全体復元という反復では互いの補正を戻す場合があり、次は投影/復元前後の残差を記録して切り分けます。300FPSと布面の品質、実時間安定性は未達です。この区切りのmain反映を保留します。これはSDK全体の完成待ちや全変更の一律禁止ではありません。
+
+検証PCはWindows11 build26200、RTX4070 SUPER driver617.42、Runtime v142/MSVC19.29・SDK10.0.22621.0です。native commandはgkcore_real_model_capture_tests.exe <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Silly Dancing.fbx> <Capoeira.fbx> --follow-motion --secondary-motion samples/config/yumeka-bone-contact-motion.txt --secondary-colliders samples/config/yumeka-bone-colliders.txt --secondary-links samples/config/yumeka-secondary-links.txt --secondary-distances samples/config/yumeka-secondary-distances.txt --materials <material-config.txt>。GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_VERIFY_GPU_SKINNING=1、GKCORE_VERIFY_SKIN_POINTS=Skirt、ANIMATION_FRAMES=120、START_SECONDS=0/3.35、STEP_SECONDS=1/60、CAPTURE_START_FRAME=108、CAPTURE_FRAMES=12です。
+
+Runtime SDK58ファイルがallowlistに一致し、追加APIを参照した外部consumerのビルドとGPU Init→Present→Shutdownも成功しました。START -CheckOnlyは設定ファイルと起動引数を確認し、sample15は試験設定と明示します。ゲーム用sourceのcurator計画は358ファイルで、新しい公開headerと距離kernelを含み、tests・開発記録・私有assetを除外します。今回は計画の確認で、curated sourceの別ビルドやmainへの公開は行っていません。sourceのBOM/CRLF、formatterとdiff checkを確認します。
+
+記録した今回の3300 deltaを距離制約ON/OFFで再生し、両方completed=trueを確認しました。距離OFFの現在sourceで追加240frameを描画し、前commitの24画像と全Skirt点参照JSONが一致しています。保存画像は画素一致を確認してlossless PNGへ変換し、重複したDebug/旧版のPPM、今回使い終えたtrial設定を片づけます。最新Release ON/OFF画像、元asset、現在build、成功/失敗ログとdelta traceは保持します。再生ログはdistance-real-delta-replay-{on,off}.log、画像/skin比較はdistance-image-comparison.json、distance-off-and-rate-comparison.json、整理記録はdistance-cleanup.jsonです。

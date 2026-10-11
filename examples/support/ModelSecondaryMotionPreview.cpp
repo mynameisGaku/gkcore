@@ -63,6 +63,11 @@ bool ParseSecondaryLinkOptions(int& argc, char** argv, const char*& path)
     return ParsePathOption(argc, argv, "--secondary-links", path);
 }
 
+bool ParseSecondaryDistanceOptions(int& argc, char** argv, const char*& path)
+{
+    return ParsePathOption(argc, argv, "--secondary-distances", path);
+}
+
 bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled)
 {
     // 値を持つoptionのpathをflagとして誤読しない。
@@ -383,6 +388,75 @@ bool ApplySecondaryLinkPreview(ModelHandle model, const char* path)
     if (!passed)
     {
         fprintf(stderr, "invalid secondary link config: %s (%s)\n", path, GetLastErrorMessage());
+    }
+    return passed;
+}
+
+bool ApplySecondaryDistancePreview(ModelHandle model, const char* path)
+{
+    FILE* file = fopen(path, "rb");
+    if (!file)
+    {
+        fprintf(stderr, "cannot open secondary distance config: %s\n", path);
+        return false;
+    }
+    // 全行を検査してから一度だけ登録し、途中の設定を残さない。
+    FModelSecondaryMotionDistanceConstraint constraints[1024]{};
+    uint32_t count = 0;
+    bool passed = true;
+    char line[2048]{};
+    while (passed && fgets(line, sizeof(line), file))
+    {
+        if (strlen(line) == sizeof(line) - 1 && line[sizeof(line) - 2] != '\n' && !feof(file))
+        {
+            passed = false;
+            break;
+        }
+        char* cursor = line;
+        if (strncmp(cursor, "\xef\xbb\xbf", 3) == 0)
+        {
+            cursor += 3;
+        }
+        while (*cursor == ' ' || *cursor == '\t')
+        {
+            ++cursor;
+        }
+        if (!*cursor || *cursor == '#' || *cursor == '\r' || *cursor == '\n')
+        {
+            continue;
+        }
+        char first[512]{}, second[512]{};
+        int consumed = -1;
+        if (count == 1024 || sscanf(cursor, "%f %f | %511s %511s %n", &constraints[count].restDistance, &constraints[count].compliance, first, second, &consumed) != 4 || consumed < 0)
+        {
+            passed = false;
+            break;
+        }
+        cursor += consumed;
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
+        {
+            ++cursor;
+        }
+        const int32_t firstBone = FindModelBone(model, first);
+        const int32_t secondBone = FindModelBone(model, second);
+        if (*cursor || firstBone < 0 || secondBone < 0)
+        {
+            passed = false;
+            break;
+        }
+        constraints[count].firstBone = static_cast<uint32_t>(firstBone);
+        constraints[count].secondBone = static_cast<uint32_t>(secondBone);
+        ++count;
+    }
+    passed = passed && !ferror(file) && count > 0;
+    fclose(file);
+    if (passed)
+    {
+        passed = SetModelSecondaryMotionDistanceConstraints(model, constraints, count, 32) == 0;
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "invalid secondary distance config: %s (%s)\n", path, GetLastErrorMessage());
     }
     return passed;
 }

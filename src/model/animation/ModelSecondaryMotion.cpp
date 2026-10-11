@@ -11,6 +11,7 @@
 #include "model/animation/AModelAnimationSource.h"
 #include "core/Context.h"
 #include <math.h>
+#include <float.h>
 #include "foundation/FVector3d.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
@@ -155,6 +156,9 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
     state->chains.MoveFrom(candidate.chains);
     state->colliders.MoveFrom(candidate.colliders);
     state->links.MoveFrom(candidate.links);
+    state->distanceConstraints.MoveFrom(candidate.distanceConstraints);
+    state->distanceLambdas.MoveFrom(candidate.distanceLambdas);
+    state->distanceStepSeconds = candidate.distanceStepSeconds;
     state->linkIterations = candidate.linkIterations;
     state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
     state->colliderMargin = candidate.colliderMargin;
@@ -178,6 +182,7 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
     }
     candidate.colliderMargin = previous->colliderMargin;
     candidate.linkIterations = previous->linkIterations;
+    candidate.distanceStepSeconds = previous->distanceStepSeconds;
     candidate.skinPointContactsEnabled = previous->skinPointContactsEnabled;
     candidate.skinContactGeometry = previous->skinContactGeometry;
     if (!candidate.skinContactPositionIds.AppendRange(previous->skinContactPositionIds.Data(), previous->skinContactPositionIds.Count()))
@@ -185,7 +190,7 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
         error.Assign("vertex contact selection allocation failed");
         return false;
     }
-    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
+    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
     {
         error.Assign("secondary motion collision state allocation failed");
         return false;
@@ -385,7 +390,7 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
-    if (!reset && candidate.links.Count() > 0 && currentShapes.Count() > 0)
+    if (!reset && ((candidate.links.Count() > 0 && currentShapes.Count() > 0) || candidate.distanceConstraints.Count() > 0))
     {
         // 全鎖の候補を解いてから接続を押し出し、描画へ使う点列を更新する。
         if (!model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error))
@@ -438,7 +443,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         profile = false;
     }
 #endif
-    if (!reset && currentShapes.Count() > 0)
+    if (!reset && (currentShapes.Count() > 0 || candidate.distanceConstraints.Count() > 0))
     {
         // 描画へ渡す回転を全鎖へ重ね、実際のFK位置でも接触が成立することを確認する。
         Array<float> renderedMatrices;
@@ -451,7 +456,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         {
             return Failure(error);
         }
-        if (candidate.links.Count() > 0 && !model::CheckRenderedSecondaryMotionLinks(candidate, renderedMatrices, currentShapes.Data(), currentShapes.Count(), error))
+        if ((candidate.links.Count() > 0 || candidate.distanceConstraints.Count() > 0) && !model::CheckRenderedSecondaryMotionLinks(candidate, renderedMatrices, currentShapes.Data(), currentShapes.Count(), error))
         {
             return Failure(error);
         }
@@ -607,7 +612,7 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
         }
         candidate.skinContactGeometry = resource->animation->source->GpuSkinningGeometry();
     }
-    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !model::ValidateSecondaryMotionLinks(candidate, error) || !Commit(*transform, candidate, error))
+    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !model::ValidateSecondaryMotionLinks(candidate, error) || !model::ValidateSecondaryMotionDistanceConstraints(candidate, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
     }
@@ -671,7 +676,8 @@ int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMo
     }
     candidate.colliderMargin = margin;
     candidate.linkIterations = previous->linkIterations;
-    if (!candidate.links.AppendRange(previous->links.Data(), previous->links.Count()))
+    candidate.distanceStepSeconds = previous->distanceStepSeconds;
+    if (!candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()))
     {
         return detail::SetError("secondary link settings allocation failed");
     }
@@ -801,6 +807,90 @@ int SetModelSecondaryMotionLinks(ModelHandle handle, const FModelSecondaryMotion
     candidate.links.Clear();
     candidate.linkIterations = iterations;
     if (!candidate.links.AppendRange(links, count) || !model::ValidateSecondaryMotionLinks(candidate, error) || !Commit(*transform, candidate, error))
+    {
+        return Failure(error);
+    }
+    detail::ClearError();
+    return 0;
+}
+
+int SetModelSecondaryMotionDistanceConstraints(ModelHandle handle, const FModelSecondaryMotionDistanceConstraint* constraints, uint32_t count, uint32_t iterations)
+{
+    detail::ModelResource* resource = nullptr;
+    detail::ModelTransform* transform = nullptr;
+    if (!Instance(handle, resource, transform))
+    {
+        return -1;
+    }
+    if (count > 1024 || (count > 0 && !constraints) || iterations == 0 || iterations > 32)
+    {
+        return detail::SetError("secondary distance count, pointer, or iterations are invalid");
+    }
+    const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (!previous)
+    {
+        if (count == 0)
+        {
+            detail::ClearError();
+            return 0;
+        }
+        return detail::SetError("configure secondary chains before their distances");
+    }
+    String error;
+    model::FModelSecondaryMotionState candidate;
+    if (!CopyCollisionSettings(previous, candidate, error))
+    {
+        return Failure(error);
+    }
+    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    {
+        if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
+        {
+            return Failure(error);
+        }
+    }
+    candidate.distanceConstraints.Clear();
+    candidate.distanceLambdas.Clear();
+    candidate.distanceStepSeconds = 1.0 / 120.0;
+    candidate.linkIterations = iterations;
+    // 基準距離0の項目にだけ、登録時のclip・blend・IK姿勢を一度評価する。
+    model::animation::FModelPose base;
+    Array<float> matrices;
+    for (uint32_t index = 0; index < count; ++index)
+    {
+        FModelSecondaryMotionDistanceConstraint entry = constraints[index];
+        if (!isfinite(entry.restDistance) || entry.restDistance < 0.0f || !isfinite(entry.compliance) || entry.compliance < 0.0f)
+        {
+            return detail::SetError("secondary distance or compliance is invalid");
+        }
+        if (entry.restDistance == 0.0f)
+        {
+            if (matrices.Count() == 0 && !BasePose(*resource, *transform, base, matrices, error))
+            {
+                return Failure(error);
+            }
+            const uint64_t firstOffset = static_cast<uint64_t>(entry.firstBone) * 16u;
+            const uint64_t secondOffset = static_cast<uint64_t>(entry.secondBone) * 16u;
+            if (firstOffset + 15u >= matrices.Count() || secondOffset + 15u >= matrices.Count())
+            {
+                return detail::SetError("secondary distance bone is outside its skeleton");
+            }
+            const double dx = static_cast<double>(matrices.At(static_cast<uint32_t>(secondOffset + 12u))) - matrices.At(static_cast<uint32_t>(firstOffset + 12u));
+            const double dy = static_cast<double>(matrices.At(static_cast<uint32_t>(secondOffset + 13u))) - matrices.At(static_cast<uint32_t>(firstOffset + 13u));
+            const double dz = static_cast<double>(matrices.At(static_cast<uint32_t>(secondOffset + 14u))) - matrices.At(static_cast<uint32_t>(firstOffset + 14u));
+            const double measured = sqrt(dx * dx + dy * dy + dz * dz);
+            if (!isfinite(measured) || !(measured > 0.0) || measured > FLT_MAX)
+            {
+                return detail::SetError("secondary distance cannot capture a finite positive rest distance");
+            }
+            entry.restDistance = static_cast<float>(measured);
+        }
+        if (!candidate.distanceConstraints.Append(entry) || !candidate.distanceLambdas.Append(0.0))
+        {
+            return detail::SetError("secondary distance settings allocation failed");
+        }
+    }
+    if (!model::ValidateSecondaryMotionDistanceConstraints(candidate, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
     }
