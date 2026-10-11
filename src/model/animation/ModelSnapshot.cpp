@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelPoseCache.h"
+#include "model/animation/FModelDeferredPose.h"
 #include "model/animation/ModelSecondaryMotion.h"
 #include "model/animation/ModelAnimationBinding.h"
 #include "model/animation/ModelPose.h"
@@ -349,6 +350,18 @@ detail::ModelResource* EvaluateModelSnapshot(const detail::ModelResource& source
     {
         error.Assign("model animation clip source is invalid");
         return nullptr;
+    }
+    // CPU描画でもvertex接触を省かず、予約時点の値を所有する経路を共用する。
+    if (playback && playback->secondaryMotion && playback->secondaryMotion->skinPointContactsEnabled)
+    {
+        auto* deferred = EvaluateDeferredModelPose(source, playback, error);
+        if (!deferred)
+        {
+            return nullptr;
+        }
+        auto* materialized = MaterializeDeferredModelPose(*deferred, error);
+        Release(&deferred->reference);
+        return materialized;
     }
     // 再生・IKがないモデルは、既存の静的形状をそのまま保持する。
     if (!playback || (!playback->clips[0].asset && playback->ik.Count() == 0 && !playback->secondaryMotion))

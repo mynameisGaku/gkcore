@@ -14,7 +14,7 @@ bool VerifySecondaryMotionApiExports()
     const gk::FModelSecondaryMotionSettings secondarySettings{};
     const gk::FModelSecondaryMotionCollider collider{};
     const uint32_t bone = 0;
-    if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1)
+    if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1 || gk::SetModelSecondaryMotionVertexContactsEnabled({}, true) != -1)
     {
         return false;
     }

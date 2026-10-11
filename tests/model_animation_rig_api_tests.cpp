@@ -11,6 +11,8 @@
 #include "model/animation/FModelPlayback.h"
 #include "model/animation/FModelPoseCache.h"
 #include "model/animation/FModelSecondaryMotionState.h"
+#include "model/animation/FModelDeferredPose.h"
+#include "model/animation/FModelSparseVertexMap.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
@@ -27,6 +29,11 @@
 #include <stdio.h>
 #include <string>
 
+/**
+ * Viewerの頂点接触option契約を同じ軽量な検証実行へ含める。
+ */
+bool RunSecondaryMotionPreviewContracts();
+
 namespace
 {
 
@@ -36,6 +43,9 @@ namespace
 class AAnimationRigTestBackend final : public gk::detail::Backend
 {
   public:
+    bool supportsSparseModelPoses = false;
+    bool supportsGpuModelSkinning = false;
+
     bool Initialize(uint32_t, uint32_t, uint32_t, gk::String&) override
     {
         return true;
@@ -55,6 +65,14 @@ class AAnimationRigTestBackend final : public gk::detail::Backend
     {
         return true;
     }
+    bool SupportsSparseModelPoses() const override
+    {
+        return supportsSparseModelPoses;
+    }
+    bool SupportsGpuModelSkinning() const override
+    {
+        return supportsGpuModelSkinning;
+    }
     gk::ShaderHandle LoadPixelShader(const char*, gk::String&) override
     {
         return {};
@@ -68,7 +86,7 @@ class AAnimationRigTestBackend final : public gk::detail::Backend
 /**
  * 2つのclipを持ち、poseをbone位置へ写す検査用source。
  */
-class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
+class AAnimationRigTestSource : public gk::model::AModelAnimationSource
 {
   public:
     // IK検査用の親順骨格。
@@ -142,6 +160,81 @@ class AAnimationRigTestSource final : public gk::model::AModelAnimationSource
         }
         error.Clear();
         return true;
+    }
+};
+
+/**
+ * 頂点接触のGPU予約とCPU展開を検査する合成FBX source。
+ */
+class ASkinPointContactTestSource final : public AAnimationRigTestSource
+{
+  public:
+    gk::model::animation::FModelGpuSkinningGeometry geometry;
+    gk::model::animation::FModelGpuSkinningGeometry alternateGeometry;
+    const gk::model::animation::FModelGpuSkinningGeometry* gpuGeometryOverride = nullptr;
+    mutable uint32_t geometryQueryCount = 0;
+    gk::Array<gk::model::animation::FModelSparseVertexMap> sparseMap;
+
+    gk::model::EModelAnimationFormat Format() const override
+    {
+        return gk::model::EModelAnimationFormat::Fbx;
+    }
+    const gk::model::animation::FModelGpuSkinningGeometry* GpuSkinningGeometry() const override
+    {
+        ++geometryQueryCount;
+        return gpuGeometryOverride ? gpuGeometryOverride : &geometry;
+    }
+    const gk::Array<gk::model::animation::FModelSparseVertexMap>* SparseVertexMap() const override
+    {
+        return &sparseMap;
+    }
+    bool SparseDeformationIsValidated() const override
+    {
+        return true;
+    }
+    bool SupportsGpuSkinningPose(const gk::model::animation::FModelPose&) const override
+    {
+        return true;
+    }
+    bool EvaluateGpuSkinningMatrices(const gk::model::animation::FModelPose&, gk::Array<gk::model::animation::FModelGpuSkinningGeometry::FMatrix>& output, gk::String& error) const override
+    {
+        using FMatrix = gk::model::animation::FModelGpuSkinningGeometry::FMatrix;
+        gk::Array<FMatrix> candidate;
+        for (uint32_t cluster = 0; cluster < geometry.clusters.Count(); ++cluster)
+        {
+            FMatrix matrix{};
+            matrix.value[0] = 1.0;
+            matrix.value[5] = 1.0;
+            matrix.value[10] = 1.0;
+            if (!candidate.Append(matrix))
+            {
+                error.Assign("contact fixture matrix allocation failed");
+                return false;
+            }
+        }
+        output.MoveFrom(candidate);
+        error.Clear();
+        return true;
+    }
+    bool DeformSparse(const gk::model::animation::FModelPose&, gk::model::animation::FModelSparsePoseGeometry& output, gk::String& error) const override
+    {
+        using FVector4 = gk::model::animation::FModelSparsePoseGeometry::FModelVector4;
+        const FVector4 positions[3] = { { { 5.0f, 0.0f, 0.0f, 1.0f } }, { { 5.0f, 1.0f, 0.0f, 1.0f } }, { { 0.0f, 0.5f, 0.0f, 1.0f } } };
+        const FVector4 normals[3] = { { { 0.0f, 0.0f, 1.0f, 0.0f } }, { { 0.0f, 0.0f, 1.0f, 0.0f } }, { { 0.0f, 0.0f, 1.0f, 0.0f } } };
+        gk::model::animation::FModelSparsePoseGeometry candidate;
+        if (!candidate.positions.AppendRange(positions, 3) || !candidate.normals.AppendRange(normals, 3))
+        {
+            error.Assign("contact fixture sparse geometry allocation failed");
+            return false;
+        }
+        output.positions.MoveFrom(candidate.positions);
+        output.normals.MoveFrom(candidate.normals);
+        error.Clear();
+        return true;
+    }
+    bool DeformSparseWithGpuSkinningData(const gk::model::animation::FModelPose& pose, gk::model::animation::FModelSparsePoseGeometry& output, gk::Array<gk::model::animation::FModelGpuSkinningGeometry::FMatrix>& matrices, gk::String& error) const override
+    {
+        return DeformSparse(pose, output, error) && EvaluateGpuSkinningMatrices(pose, matrices, error);
     }
 };
 
@@ -516,9 +609,353 @@ bool TestModelSecondaryMotionColliders(gk::ModelHandle model, gk::ModelHandle in
     passed = gk::GetModelBonePositions(instance, queryBones, 3, after) == 0 && passed;
     passed = fabsf(after[2].z - basePose[2].z) > 0.001f && passed;
     passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
+
+    // GLBでは鎖と身体形状が揃っていても頂点接触を有効にできない。
+    passed = gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.0f) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(instance, true) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(instance, false) == 0 && passed;
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && passed;
     if (!passed)
     {
         fprintf(stderr, "secondary motion collider validation, ownership, or contact clear contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
+ * 接触検査に使う三角形、bone weight、sparse対応を作る。
+ */
+bool InitializeSkinPointContactGeometry(ASkinPointContactTestSource& source)
+{
+    using FGeometry = gk::model::animation::FModelGpuSkinningGeometry;
+    const FGeometry::FPosition positions[3] = { { { 5.0, 0.0, 0.0 } }, { { 5.0, 1.0, 0.0 } }, { { 0.0, 0.5, 0.0 } } };
+    const FGeometry::FInfluenceRange ranges[3] = { { 0, 1 }, { 1, 1 }, { 2, 1 } };
+    const FGeometry::FInfluence influences[3] = { { 0, 1.0 }, { 1, 1.0 }, { 2, 1.0 } };
+    const FGeometry::FFace face{ 0, 3 };
+    const FGeometry::FCorner corners[3] = { { 0, 0 }, { 1, 1 }, { 2, 2 } };
+    const FGeometry::FNormalGroupRange normalRanges[3] = { { 0, 1 }, { 1, 1 }, { 2, 1 } };
+    const uint32_t normalFaces[3] = { 0, 0, 0 };
+    FGeometry::FSegment segment{};
+    segment.positionCount = 3;
+    segment.clusterCount = 3;
+    segment.faceCount = 1;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        segment.geometryToNode[axis * 4u + axis] = 1.0;
+    }
+    const FGeometry::FCluster clusters[3] = { { 0, {} }, { 0, {} }, { 2, {} } };
+    const gk::model::animation::FModelSparseVertexMap sparseMap[3] = { { 0, 0 }, { 1, 1 }, { 2, 2 } };
+    return source.geometry.positions.AppendRange(positions, 3) && source.geometry.influenceRanges.AppendRange(ranges, 3) && source.geometry.influences.AppendRange(influences, 3) && source.geometry.clusters.AppendRange(clusters, 3) && source.geometry.faces.Append(face) && source.geometry.corners.AppendRange(corners, 3) && source.geometry.normalGroupRanges.AppendRange(normalRanges, 3) && source.geometry.normalFaceIds.AppendRange(normalFaces, 3) && source.geometry.segments.Append(segment) && source.sparseMap.AppendRange(sparseMap, 3);
+}
+
+/**
+ * 身体だけにweightを持つ点を保ち、cloth点だけの接触を描画予約へ固定する。
+ */
+bool TestSkinPointContactsSnapshot()
+{
+    auto* backend = static_cast<AAnimationRigTestBackend*>(gk::detail::GetContext().backend);
+    if (!backend)
+    {
+        return false;
+    }
+    backend->supportsSparseModelPoses = true;
+    backend->supportsGpuModelSkinning = true;
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+    {
+        backend->supportsSparseModelPoses = false;
+        backend->supportsGpuModelSkinning = false;
+        return false;
+    }
+    auto* source = new ASkinPointContactTestSource;
+    const int32_t parents[3] = { -1, 0, 1 };
+    gk::model::animation::FModelBoneTransform rest[3]{};
+    rest[2].position[1] = 1.0f;
+    bool passed = source->skeleton.parents.AppendRange(parents, 3) && source->skeleton.restLocalTransforms.AppendRange(rest, 3) && InitializeSkinPointContactGeometry(*source);
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact fixture geometry setup failed\n");
+    }
+    gk::String error;
+    resource->animation = passed ? gk::model::CreateModelAnimationAsset(source, error) : nullptr;
+    if (!passed)
+    {
+        delete source;
+    }
+    gk::detail::ModelVertex vertices[3]{};
+    passed = passed && resource->animation && resource->vertices.AppendRange(vertices, 3);
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact fixture animation or vertices failed: %s\n", error.CStr());
+    }
+    const bool resourceRegistered = passed;
+    const auto model = passed ? gk::detail::RegisterModelResource(resource, error) : gk::ModelHandle{};
+    gk::detail::ModelTransform baseTransform{};
+    baseTransform.handle = model;
+    baseTransform.scale = { 1.0f, 1.0f, 1.0f };
+    const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
+    const auto first = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    const auto second = first.IsValid() ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    if (!first.IsValid() || !second.IsValid())
+    {
+        passed = false;
+        fprintf(stderr, "skin contact fixture instance creation failed: %s\n", gk::GetLastErrorMessage());
+    }
+    const uint32_t chain[2] = { 1, 2 };
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.gravity = {};
+    settings.windAcceleration = {};
+    settings.endOffset = { 0.0f, 1.0f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    settings.constraintIterations = 8;
+    gk::FModelSecondaryMotionCollider collider{};
+    collider.bone = 0;
+    collider.radius = 0.75f;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled({}, true) == -1 && gk::SetModelSecondaryMotionVertexContactsEnabled({}, false) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(first, false) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(first, true) == -1 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact API invalid-handle or unconfigured checks failed\n");
+    }
+    passed = gk::PlayModelAnimation(first, 0, false) == 0 && gk::SetModelSecondaryMotionChain(first, chain, 2, settings) == 0 && gk::SetModelSecondaryMotionColliders(first, &collider, 1, 0.005f) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(first, true) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChain(second, chain, 2, settings) == 0 && gk::SetModelSecondaryMotionColliders(second, &collider, 1, 0.005f) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact chain/collider enable setup failed: %s\n", gk::GetLastErrorMessage());
+    }
+    auto* firstTransform = gk::detail::FindModelTransform(first);
+    auto* firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    auto* secondTransform = gk::detail::FindModelTransform(second);
+    auto* secondState = secondTransform && secondTransform->playback ? secondTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    passed = secondState && !secondState->skinPointContactsEnabled && secondState->skinContactPositionIds.Count() == 0 && secondState->skinContactGeometry == nullptr && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact enable did not select only the cloth-weighted position: %s\n", gk::GetLastErrorMessage());
+    }
+    gk::FModelSecondaryMotionCollider invalidCollider = collider;
+    invalidCollider.radius = std::numeric_limits<float>::quiet_NaN();
+    passed = gk::SetModelSecondaryMotionColliders(first, &invalidCollider, 1, 0.005f) == -1 && firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    source->geometryQueryCount = 0;
+    const int32_t resetResult = gk::ResetModelSecondaryMotion(first);
+    const uint32_t resetGeometryQueries = source->geometryQueryCount;
+    passed = resetResult == 0 && resetGeometryQueries == 0 && passed;
+    firstTransform = gk::detail::FindModelTransform(first);
+    firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    source->geometryQueryCount = 0;
+    const int32_t updateResult = gk::UpdateModelSecondaryMotion(first, 0.0);
+    const uint32_t updateGeometryQueries = source->geometryQueryCount;
+    passed = updateResult == 0 && updateGeometryQueries == 0 && passed;
+    firstTransform = gk::detail::FindModelTransform(first);
+    firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    // chain再登録が古い選別結果を再利用せず、body-only位置を除いて再選別することを確かめる。
+    if (firstState)
+    {
+        firstState->skinContactPositionIds.Clear();
+        passed = firstState->skinContactPositionIds.Append(0) && passed;
+    }
+    else
+    {
+        passed = false;
+    }
+    source->geometryQueryCount = 0;
+    const int32_t reselectResult = gk::SetModelSecondaryMotionChain(first, chain, 2, settings);
+    const uint32_t reselectGeometryQueries = source->geometryQueryCount;
+    passed = reselectResult == 0 && reselectGeometryQueries > 0 && passed;
+    firstTransform = gk::detail::FindModelTransform(first);
+    firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact reset/update/chain replacement did not preserve enable state: %s\n", gk::GetLastErrorMessage());
+    }
+
+    bool frameOpen = false;
+    if (passed)
+    {
+        passed = gk::BeginFrame() == 0;
+        frameOpen = passed;
+    }
+    if (passed)
+    {
+        gk::Array<gk::model::animation::FModelSecondaryMotionPoint> simulationSnapshot;
+        const auto& pointsBeforeMismatch = firstState->chains.At(0)->simulation.points;
+        const uint32_t pointCountBeforeMismatch = pointsBeforeMismatch.Count();
+        const bool snapshotReady = !pointCountBeforeMismatch || simulationSnapshot.AppendRange(pointsBeforeMismatch.Data(), pointCountBeforeMismatch);
+        const auto* stateBeforeMismatch = firstState;
+        source->gpuGeometryOverride = &source->alternateGeometry;
+        const int32_t mismatchDraw = gk::DrawModel(first);
+        const auto& drawsAfterMismatch = gk::detail::GetContext().frame.draws;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        const auto* pointsAfterMismatch = firstState && firstState->chains.Count() > 0 ? &firstState->chains.At(0)->simulation.points : nullptr;
+        const bool stateUnchanged = firstState == stateBeforeMismatch && firstState->skinContactGeometry == &source->geometry && firstState->skinPointContactsEnabled && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && pointsAfterMismatch && pointsAfterMismatch->Count() == pointCountBeforeMismatch && (!pointCountBeforeMismatch || memcmp(pointsAfterMismatch->Data(), simulationSnapshot.Data(), static_cast<size_t>(pointCountBeforeMismatch) * sizeof(gk::model::animation::FModelSecondaryMotionPoint)) == 0);
+        source->gpuGeometryOverride = nullptr;
+        passed = mismatchDraw == -1 && drawsAfterMismatch.Count() == 0 && snapshotReady && stateUnchanged && passed;
+        if (!passed)
+        {
+            fprintf(stderr, "skin geometry identity mismatch did not fail draw atomically: %s\n", gk::GetLastErrorMessage());
+        }
+    }
+    if (passed)
+    {
+        passed = gk::DrawModel(first) == 0 && gk::DrawModel(second) == 0;
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact GPU deferred draw reservation failed: %s\n", gk::GetLastErrorMessage());
+    }
+    auto& draws = gk::detail::GetContext().frame.draws;
+    gk::model::FModelDeferredPose* firstSnapshot = passed && draws.Count() == 2 ? draws.At(0).deferredPose : nullptr;
+    gk::model::FModelDeferredPose* secondSnapshot = passed && draws.Count() == 2 ? draws.At(1).deferredPose : nullptr;
+    gk::model::animation::FModelSkinPointCorrection frozenCorrection{};
+    gk::model::animation::FModelSparsePoseGeometry::FModelVector4 frozenPoint{};
+    if (!firstSnapshot || !secondSnapshot || firstSnapshot->skinPointCorrections.Count() != 1 || firstSnapshot->skinPointCorrections.At(0).positionId != 2 || secondSnapshot->skinPointCorrections.Count() != 0 || firstSnapshot->geometry.positions.Count() != 3 || firstSnapshot->geometry.normals.Count() != 3)
+    {
+        passed = false;
+        fprintf(stderr, "skin contact deferred snapshot mask/count failed (first=%u second=%u)\n", firstSnapshot ? firstSnapshot->skinPointCorrections.Count() : 0u, secondSnapshot ? secondSnapshot->skinPointCorrections.Count() : 0u);
+    }
+    if (passed)
+    {
+        frozenCorrection = firstSnapshot->skinPointCorrections.At(0);
+        frozenPoint = firstSnapshot->geometry.positions.At(2);
+        const auto& clothPoint = firstSnapshot->geometry.positions.At(2);
+        const double clothRadius = sqrt(static_cast<double>(clothPoint.value[0]) * clothPoint.value[0] + static_cast<double>(clothPoint.value[1]) * clothPoint.value[1] + static_cast<double>(clothPoint.value[2]) * clothPoint.value[2]);
+        // GPU packetは不透明位置を0で保持するため、body-only点の実座標はCPU materialize後に検査する。
+        passed = clothRadius >= 0.75 && clothRadius < 0.8;
+        if (!passed)
+        {
+            fprintf(stderr, "skin contact projected geometry mismatch (clothRadius=%f)\n", clothRadius);
+        }
+        for (uint32_t normal = 0; normal < firstSnapshot->geometry.normals.Count(); ++normal)
+        {
+            for (uint32_t axis = 0; axis < 4; ++axis)
+            {
+                passed = isfinite(firstSnapshot->geometry.normals.At(normal).value[axis]) && passed;
+            }
+        }
+    }
+    gk::String materializeError;
+    gk::detail::ModelResource* materialized = firstSnapshot ? gk::model::MaterializeDeferredModelPose(*firstSnapshot, materializeError) : nullptr;
+    if (!materialized || materialized->vertices.Count() != 3 || !Near(materialized->vertices.At(0).position[0], 5.0f) || !Near(materialized->vertices.At(1).position[0], 5.0f) || !Near(sqrtf(materialized->vertices.At(2).position[0] * materialized->vertices.At(2).position[0] + materialized->vertices.At(2).position[1] * materialized->vertices.At(2).position[1] + materialized->vertices.At(2).position[2] * materialized->vertices.At(2).position[2]), 0.755f) || !isfinite(materialized->vertices.At(2).normal[0]) || !isfinite(materialized->vertices.At(2).normal[1]) || !isfinite(materialized->vertices.At(2).normal[2]))
+    {
+        passed = false;
+        fprintf(stderr, "skin contact deferred materialization failed (ptr=%p count=%u error=%s)\n", materialized, materialized ? materialized->vertices.Count() : 0u, materializeError.CStr());
+    }
+    if (materialized)
+    {
+        gk::Release(&materialized->reference);
+    }
+
+    collider.radius = 0.8f;
+    passed = gk::SetModelSecondaryMotionColliders(first, &collider, 1, 0.005f) == 0 && passed;
+    firstTransform = gk::detail::FindModelTransform(first);
+    firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    passed = gk::DrawModel(first) == 0 && draws.Count() == 3 && draws.At(2).deferredPose && draws.At(2).deferredPose->skinPointCorrections.Count() == 1 && draws.At(2).deferredPose->skinPointCorrections.At(0).position[1] > frozenCorrection.position[1] && passed;
+    passed = firstSnapshot && memcmp(&firstSnapshot->skinPointCorrections.At(0), &frozenCorrection, sizeof(frozenCorrection)) == 0 && memcmp(&firstSnapshot->geometry.positions.At(2), &frozenPoint, sizeof(frozenPoint)) == 0 && passed;
+    if (firstSnapshot)
+    {
+        materialized = gk::model::MaterializeDeferredModelPose(*firstSnapshot, materializeError);
+        const bool oldPacketMaterialized = materialized && Near(sqrtf(materialized->vertices.At(2).position[0] * materialized->vertices.At(2).position[0] + materialized->vertices.At(2).position[1] * materialized->vertices.At(2).position[1] + materialized->vertices.At(2).position[2] * materialized->vertices.At(2).position[2]), 0.755f);
+        passed = oldPacketMaterialized && passed;
+        if (!oldPacketMaterialized)
+        {
+            fprintf(stderr, "frozen skin contact packet changed after replacing shape (ptr=%p error=%s)\n", materialized, materializeError.CStr());
+        }
+        if (materialized)
+        {
+            gk::Release(&materialized->reference);
+        }
+    }
+    passed = gk::SetModelSecondaryMotionChain(first, chain, 2, settings) == 0 && passed;
+    firstTransform = gk::detail::FindModelTransform(first);
+    firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+    passed = firstState && firstState->skinPointContactsEnabled && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+    passed = gk::DrawModel(first) == 0 && draws.Count() == 4 && draws.At(3).deferredPose && draws.At(3).deferredPose->skinPointCorrections.Count() == 1 && draws.At(3).deferredPose->skinPointCorrections.At(0).positionId == 2 && passed;
+    passed = firstSnapshot && memcmp(&firstSnapshot->skinPointCorrections.At(0), &frozenCorrection, sizeof(frozenCorrection)) == 0 && memcmp(&firstSnapshot->geometry.positions.At(2), &frozenPoint, sizeof(frozenPoint)) == 0 && passed;
+    if (draws.Count() == 4 && draws.At(3).deferredPose)
+    {
+        materialized = gk::model::MaterializeDeferredModelPose(*draws.At(3).deferredPose, materializeError);
+        const bool bodyOnlyPositionsKept = materialized && materialized->vertices.Count() == 3 && Near(materialized->vertices.At(0).position[0], 5.0f) && Near(materialized->vertices.At(0).position[1], 0.0f) && Near(materialized->vertices.At(1).position[0], 5.0f) && Near(materialized->vertices.At(1).position[1], 1.0f);
+        passed = bodyOnlyPositionsKept && passed;
+        if (!bodyOnlyPositionsKept)
+        {
+            fprintf(stderr, "chain reselection changed body-only weighted positions: %s\n", materializeError.CStr());
+        }
+        if (materialized)
+        {
+            gk::Release(&materialized->reference);
+        }
+    }
+    passed = gk::SetModelSecondaryMotionVertexContactsEnabled(first, false) == 0 && firstState && !firstState->skinPointContactsEnabled && firstState->skinContactGeometry == nullptr && firstState->skinContactPositionIds.Count() == 0 && gk::DrawModel(first) == 0 && draws.Count() == 5 && draws.At(4).deferredPose && draws.At(4).deferredPose->skinPointCorrections.Count() == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "skin contact replacement, frozen snapshot, or disable contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    if (frameOpen)
+    {
+        const bool presented = gk::Present() == 0;
+        frameOpen = false;
+        passed = presented && passed;
+    }
+    backend->supportsSparseModelPoses = false;
+    backend->supportsGpuModelSkinning = false;
+
+    // CPU draw fallbackも頂点補正を展開し、補正済み法線を描画packetへ写す。
+    if (passed)
+    {
+        passed = gk::SetModelSecondaryMotionVertexContactsEnabled(first, true) == 0;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        passed = firstState && firstState->skinContactGeometry == &source->geometry && firstState->skinContactPositionIds.Count() == 1 && firstState->skinContactPositionIds.At(0) == 2 && passed;
+        if (!passed)
+        {
+            fprintf(stderr, "skin contact re-enable before CPU fallback failed: %s\n", gk::GetLastErrorMessage());
+        }
+        if (passed)
+        {
+            frameOpen = gk::BeginFrame() == 0;
+            passed = frameOpen && gk::DrawModel(first) == 0;
+        }
+        const auto& cpuDraws = gk::detail::GetContext().frame.draws;
+        passed = passed && cpuDraws.Count() == 1 && !cpuDraws.At(0).deferredPose && Near(sqrtf(cpuDraws.At(0).model->vertices.At(2).position[0] * cpuDraws.At(0).model->vertices.At(2).position[0] + cpuDraws.At(0).model->vertices.At(2).position[1] * cpuDraws.At(0).model->vertices.At(2).position[1] + cpuDraws.At(0).model->vertices.At(2).position[2] * cpuDraws.At(0).model->vertices.At(2).position[2]), 0.805f) && isfinite(cpuDraws.At(0).model->vertices.At(2).normal[0]) && isfinite(cpuDraws.At(0).model->vertices.At(2).normal[1]) && isfinite(cpuDraws.At(0).model->vertices.At(2).normal[2]);
+        if (!passed)
+        {
+            const float measuredRadius = cpuDraws.Count() == 1 ? sqrtf(cpuDraws.At(0).model->vertices.At(2).position[0] * cpuDraws.At(0).model->vertices.At(2).position[0] + cpuDraws.At(0).model->vertices.At(2).position[1] * cpuDraws.At(0).model->vertices.At(2).position[1] + cpuDraws.At(0).model->vertices.At(2).position[2] * cpuDraws.At(0).model->vertices.At(2).position[2]) : -1.0f;
+            fprintf(stderr, "skin contact CPU fallback draw failed (draws=%u radius=%f deferred=%d): %s\n", cpuDraws.Count(), measuredRadius, cpuDraws.Count() == 1 && cpuDraws.At(0).deferredPose ? 1 : 0, gk::GetLastErrorMessage());
+        }
+    }
+    if (frameOpen)
+    {
+        const bool presented = gk::Present() == 0;
+        frameOpen = false;
+        passed = presented && passed;
+    }
+    if (first.IsValid())
+    {
+        passed = gk::DeleteModel(first) == 0 && passed;
+    }
+    if (second.IsValid())
+    {
+        passed = gk::DeleteModel(second) == 0 && passed;
+    }
+    if (model.IsValid())
+    {
+        passed = gk::DeleteModel(model) == 0 && passed;
+    }
+    else if (!resourceRegistered)
+    {
+        gk::Release(&resource->reference);
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "skin point contact API, mask, frozen snapshot, or CPU materialization failed: %s\n", gk::GetLastErrorMessage());
     }
     return passed;
 }
@@ -1628,7 +2065,7 @@ bool TestBlendThenIkSnapshot()
         gk::Shutdown();
         return false;
     }
-    if (!TestModelSecondaryMotion(model, instance) || !TestModelSecondaryMotionColliders(model, instance, *source) || !TestSecondaryMotionPoseEvaluationBudget() || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
+    if (!TestModelSecondaryMotion(model, instance) || !TestModelSecondaryMotionColliders(model, instance, *source) || !TestSkinPointContactsSnapshot() || !TestSecondaryMotionPoseEvaluationBudget() || !TestModelBonePositionQuery(model, instance) || !TestModelBonePositionsQuery(instance, *source) || !TestModelArmIkPreview() || !TestMotionFollowingArmIkPreview() || !TestBuildArmIkTorsoFallback() || !TestAnimatedArmIkCachedBinding() || !TestParseMotionViewOptions())
     {
         gk::DeleteModel(instance);
         gk::DeleteModel(model);
@@ -1694,5 +2131,5 @@ bool TestBlendThenIkSnapshot()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() ? 0 : 1;
 }

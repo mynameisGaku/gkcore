@@ -15,7 +15,7 @@
 | SDK 配布 | Runtime のファイル許可リストと、開発用ファイルの混入を検出するテスト | Windows Runtime buildとpackage CTestを確認。install済みSDKだけのconsumer GPU smokeもInit、Scene/UI描画、Present、Shutdownまで成功。依存物の再配布条件とgkcore自身の配布ライセンスは未確定 |
 
 ## テストと再現性
-モデル揺れもののAPI、制約、設定形式は[モデル揺れもの](model-secondary-motion.md)を参照してください。髪・尻尾・スカートの13鎖へ8個の身体形状を組み合わせるYUMEKA設定とSTART 12を用意しました。身体接触付きの2区間を各120frame、Debug/Releaseで再生し、GPU位置・法線と接触制約を確認しました。骨の接触制約を満たしても、一部のスカートmeshが脚へ埋まる残件があります。接近時の揺れと角度・接触品質、継続motion中の検証は残っています。
+モデル揺れもののAPI、制約、設定形式は[モデル揺れもの](model-secondary-motion.md)を参照してください。髪・尻尾・スカートの13鎖へ8個の身体形状を組み合わせるYUMEKA設定とSTART 12を用意しました。身体接触付きの2区間を各120frame、Debug/Releaseで再生し、GPU位置・法線と接触制約を確認しました。骨の接触制約を満たしても、一部のスカートmeshが脚へ埋まる残件があります。START 13では変形後頂点の補正を選べますが、面全体の非貫通は未保証です。接近時の揺れと角度・接触品質、継続motion中の検証は残っています。
 
 
 モデルアニメーションはGLB/FBXのclip・skin・morphと連番OBJに対応し、外部clip、2clipのブレンド、人型ボーンの役割対応、2ボーン・汎用chainのIKを提供します。操作と入力条件は[モデルアニメーション](model-animation.md)を参照してください。描画時点の姿勢を保持し、別instanceの時刻を独立して進めます。骨名から人型の役割を推定し、YUMEKAへMixamoのSilly Dancing・Capoeiraを適用して51本の対応とブレンドを実機で確認しました。左右の太もも・すね・足首・つま先の8役割は、両motionとの実際の対応も確認しています。材質設定APIと実モデルviewerも用意しています。利用方法と提供assetの扱いは[実モデルviewer](model-viewer.md)を参照してください。
@@ -58,7 +58,7 @@ FSL artifactは`python tests/shader_contract_tests.py`で検査します。固�
 
 実モデルviewerは、RTX 4070 SUPER・Release・1280×720の3,000frame連続計測で、静止・回転表示が約340FPS、外部motionのブレンドが約325FPSでした。条件と再計測方法は[モデルviewerの処理時間](model-performance.md)を参照してください。他GPUや下記の残作業は別に確認します。
 
-YUMEKAの髪・尻尾・スカートへ13本のsecondary chainと8個の身体形状を加えた最新構成は226.342FPSで、300FPSの完成条件に届いていません。接触なしの前回構成は188.150FPSです。273.666FPSはsecondary motionを含まない外部motion blend＋右腕IKの測定値です。基準姿勢の再利用前後で固定時刻48画像がbyte一致し、480frameのGPU位置・法線を確認しました。画像の品質評価は継続中です。測定条件とログは[モデルviewerの処理時間](model-performance.md)に記録します。骨の線分とは別に、Skirt weightを持つ全1,314点の変形位置を検査しました。身体形状へ侵入する点は各frameに17〜65点残ります。骨の接触だけでは布の非貫通を保証できないため、混合weightを含む実頂点の接触補正を次に設計し、物理更新・姿勢合成の処理時間と復帰品質を確認します。
+YUMEKAの髪・尻尾・スカートへ13本のsecondary chainと8個の身体形状を加えた頂点接触OFFの最新構成は227.082FPS、ONは171.985FPSで、300FPSの完成条件に届いていません。接触なしの前回構成は188.150FPSです。273.666FPSはsecondary motionを含まない外部motion blend＋右腕IKの測定値です。基準姿勢の再利用前後で固定時刻48画像がbyte一致し、480frameのGPU位置・法線を確認しました。画像の品質評価は継続中です。測定条件とログは[モデルviewerの処理時間](model-performance.md)に記録します。骨の線分とは別に、Skirt weightを持つ全1,314点の変形位置を検査しました。頂点接触OFFでは身体形状へ侵入する点が各frameに17〜65点あります。対応するzero-morph FBXの変形後頂点を補正する切替APIを追加し、ONの480frameで全1,314点の形状侵入が0になりました。ただし身体形状は概算で、拡大画像でも衣服の面の埋まりは残ります。今後は三角形内部の接触、身体形状の適合、隣接鎖の制約と処理時間を確認します。
 
 動作中の外部motion blend+右腕IKは、元の腕振りを保つsample目標へ変更しました。4モデルの12姿勢とYUMEKAのloop境界を実機で確認しています。同じGPU・解像度・3000frameの前回計測は269.801FPS、今回の計測は210.209FPSでした。有効な同時刻の対照がなく、処理削減によるFPS改善は未確認で、このmodeの300FPSにも未達です。IK設定と姿勢評価の重複処理を調べ、twist補助骨への回転配分と大きな目標での肩品質も次の課題として扱います。
 

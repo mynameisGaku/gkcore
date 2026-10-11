@@ -8,6 +8,7 @@
 #include "model/animation/FModelSecondaryMotionState.h"
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/ModelSkinPoints.h"
+#include "model/animation/ModelSkinContactSnapshot.h"
 #include "model/animation/ModelSnapshot.h"
 #include "resources/Resources.h"
 
@@ -189,6 +190,27 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
         }
     }
 
+    // 元skinの参照比較を保ち、接触だけは予約描画と同じ補正後の位置で調べる。
+    gk::Array<gk::model::animation::FModelSkinPointCorrection> corrections;
+    if (playback && !gk::model::BuildModelSkinContactSnapshot(*source, playback->secondaryMotion, pose, matrices, corrections, error))
+    {
+        return FailProbe(frame, 0, error.CStr(), eligibleCount);
+    }
+    uint32_t correctionIndex = 0;
+    for (uint32_t sample = 0; sample < selectedIds.Count(); ++sample)
+    {
+        while (correctionIndex < corrections.Count() && corrections.At(correctionIndex).positionId < selectedIds.At(sample))
+        {
+            ++correctionIndex;
+        }
+        if (correctionIndex < corrections.Count() && corrections.At(correctionIndex).positionId == selectedIds.At(sample))
+        {
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                evaluatedPoints.At(sample).value[axis] = corrections.At(correctionIndex).position[axis];
+            }
+        }
+    }
     uint32_t pointPenetrationCount = 0;
     uint32_t pointShapeContactCount = 0;
     double maximumPenetrationDepth = 0.0;

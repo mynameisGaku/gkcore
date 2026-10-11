@@ -1315,3 +1315,28 @@ CPUはMSVC19.51でDebug/Release各59/59件成功（4.57秒/4.80秒）。native�
 通常Release1280×720、標準効果、VSync無し、3000frame/warmup300は226.342FPS、p95 4.939msで完走しました。DrawModel平均.421ms、Present2.243ms、IK設定.509ms、secondary1.189msです。前回188.537FPS/Draw .852msからの差には計測時負荷も含まれます。重複sampleの削減は契約で確認し、300FPSは引き続き未達です。probe/reference比較を行うcaptureはこの速度計測に含めません。記録はpose-cache-benchmark.logです。
 
 ゲーム構築用339ファイルをprepare_game_repository.pyのallowlist/変換処理で既存公開treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。Runtime SDK55ファイルがallowlistに一致し、別consumerのGPU Init→Present→Shutdownも成功しました。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はpose-cache-game-{build,install,consumer-build,consumer-run}.log、公開treeのhashはpose-cache-game-manifest.jsonです。
+
+
+## 2026-10-11 変形後の頂点接触
+
+SetModelSecondaryMotionVertexContactsEnabledを既存ModelSecondaryMotion.hへ追加しました。既定OFFで、鎖と身体形状の設定後、現在の対応zero-morph FBX poseだけ有効化できます。未来のclip時刻で未対応morphへ移る場合は描画時に失敗します。登録鎖rootの枝に正weightを持つunique位置だけを選び、全influenceを混ぜたskin位置を球/capsuleの外へ投影します。骨・IK・secondary simulationの位置と速度は書き換えません。布の面、自己衝突、更新間の連続衝突を解く機能ではありません。
+
+候補Aのskin後の点投影と、候補Bの骨回転Jacobianを別agentが検討しました。低いSkirt weightでは骨回転の感度が弱く、角度/骨接触制約と競合しやすいため、描画頂点の限定した補正を先行しています。projectは点ごとに最大64回で全shapeの外を検査し、外点は保持します。中心の退化方向は決定的、複数sphereの対称往復では直交方向へ逃がし、最終検査未達ならoutputを保って失敗します。全shape・XYZ・finite/float範囲を検査します。projectionの数値余白は最小1e-7、半径の1e-6または座標のfloat丸め分です。
+
+REDは未実装stubでsphere projection契約失敗（vertex-contact-red-test.log）。球内外、移動した中心、capsule側面/endcap/退化軸、複数重なり、妥当な1passでも未収束の場合のoutput保持、入力alias、null/count/NaNを検査しました。capsule契約で基点Xを全軸へ使う実装誤りをrootが発見し、XYZ対応へ修正しました。最初の厳密半径期待は数値余白と一致しなかったため、元外点memcmp保持と半径から1e-5以内の外側を区別しました。fixture側のcopy元/先の逆転、非混合三角形の無効cluster参照、Commit後の旧stateを読むUAF、GPU-only opaque位置placeholderへの誤期待も検出・修正しています。
+
+GPUの補正値はFModelDeferredPoseが位置IDとdouble3を所有し、後の設定変更から独立しています。行列bufferへ3record/補正点を追加し、skin→少数点の上書き→面normal→normal groupの順にdispatchします。constant bufferは96byteのまま、内部dispatchは22uint/88byteです。ID昇順・一意性・範囲・overflowを検査し、段階間のUAV barrierを維持します。OFFは補正dispatchを行いません。透明の並べ替えも補正後の位置を使います。
+
+CPU fallbackの一部が元skinだけを再評価していた問題を独立監査で発見し、EvaluateDeferredModelFallbackGeometryをMaterializeとrendererの両経路で共用しました。参照geometryは同じdouble skin位置からtriangle cross、quad cross(c-a,d-b)、Newell、incidence順の和と正規化で法線を再生成します。全normalごとに全cornerを探す二重ループは事前byte maskへ変更し、位置/面/corner/incidence数に比例する計算にしました。body-only点保持、mixed-weightの解析位置、triangle/quad法線、重複/範囲外correctionの失敗保持を確認しています。
+
+選別IDはSecondaryStateがArrayで所有し、元geometryの借用identityを照合します。enableと鎖登録で候補を作り、Update/Reset/身体形状置換は既存選別を複製します。Drawでは全weight選別を繰り返さず8192点ずつ評価し、対象点を間引きません。disableで選別領域を解放し、Clear/Deleteで状態を破棄します。geometry identity相違時のDraw失敗、旧予約不変、別instance、再選別、setter失敗、Reset/Updateの保持を契約化しました。独立監査がUpdate鎖ごとの再選別を指摘したため、検査sourceのgeometry getter回数を0とするREDを取得（vertex-contact-selection-red-test.log）し、設定時だけの選別へ修正しました。
+
+CPU MSVC19.51はDebug/Release各60/60件成功（4.98秒/4.49秒）。parser契約は既存rig executableへ同居させてCoreの重複buildを増やしていません。--secondary-vertex-contactの省略・単独除去・重複atomic・materials path保護を確認し、START 13を追加してCheckOnlyで全path/引数を確認しました。Runtime shader14個を固定FSL/DXCで再compileし、reflection/artifact検査も成功しました。
+
+nativeはWin11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0です。YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖＋身体8形状の0秒/3.35秒開始をDebug/Release各120frame実行。GKCORE_VERIFY_GPU_SKINNING=1、GKCORE_VERIFY_SKIN_POINTS=Skirtを指定し非表示windowで検証しました。最終ON480frameでSkirt全1,314点の形状侵入が0、GPU全45,233位置/55,747normalがCPU参照に一致（最大位置誤差0、normal1.789e-7）。Debug/Release24画像組がbyte一致し、選別/形状前計算の最適化前後48画像もbyte一致しました。OFFも480frame実行し、従来48画像のbyteを保持しました。commandは身体接触節と同じで、ONだけ--secondary-vertex-contactを追加します。記録はvertex-contact-{Release,Debug}-{start,loop}-capture.log、vertex-contact-comparison.jsonです。
+
+2560×1920の同じloop姿勢をON/OFF各4画像で比較しました。拡大した衣服では、概算した身体形状と身体meshの差や三角形内部の問題による面の埋まりが残っています。頂点と8形状の成功を、布全体の品質合格とは扱いません。比較はbuild/real-model-captures/Release/secondary-vertex-contact/quality-comparison.png、低解像度4姿勢比較はsecondary-contact/vertex-contact-comparison.pngです。
+
+通常Release1280×720、標準効果、VSyncなし、3000frame/warmup300をON/OFFとも完走しました。最初ON133.568FPS/Draw3.391msから、選別IDと形状軸の前計算後ON171.985FPS、p95 6.373ms、Draw1.811ms、Present2.243ms、IK .509ms、secondary1.196msです。同batch OFF227.082FPS、p95 4.928ms、Draw .405ms、Present2.246ms、IK .510ms、secondary1.186ms。実行時負荷も含まれるため改善率は全環境への保証ではなく、300FPSも未達です。ログはvertex-contact-final-{on,off}-benchmark.logです。
+
+ゲーム構築用344ファイルをprepare_game_repository.pyのallowlist/変換処理で既存treeへ更新し、Runtimeと5sampleのRelease buildを確認しました。installしたRuntime SDK55ファイルがallowlistに一致し、新APIを参照する外部consumerのlinkとGPU Init→Present→Shutdownが成功しました。tests・検証tool・開発記録・私有assetをmainへ含めません。ログはvertex-contact-game-{build,install,consumer-build,consumer-run}.log、tree hashはvertex-contact-game-manifest.jsonです。比較用の2560×1920画像8枚はpixel完全一致のPNGへ保存し、workspace内の今回生成した大きなPPMだけを削除しました。保存対応はvertex-contact-quality-images.jsonに記録しています。

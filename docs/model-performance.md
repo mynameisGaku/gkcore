@@ -34,6 +34,12 @@ Windows 11 Pro build26200、RTX 4070 SUPER / driver617.42、VS2026 / v14214.29.3
 
 instanceごとの基準姿勢cacheを加えた身体形状8個・13鎖の測定は226.342FPS、p95 4.939msでした。DrawModel平均0.421ms、Present 2.243ms、IK設定0.509ms、揺れもの更新1.189msです。通常Release DLL、VSync無効、1280×720、標準効果、YUMEKAとSilly Dancing / Capoeiraのブレンド＋右腕IK、3000frame / warmup300で完走しました。前回188.537FPSからの差には計測時の負荷も含まれるため、cacheによるFPS改善率や他環境での再現を保証しません。300FPSは未達です。ログは`build/native-validation/pose-cache-benchmark.log`です。
 
+## 変形後の頂点接触
+
+`--secondary-vertex-contact`を加えた初回は133.568FPS（DrawModel3.391ms）でした。登録したbone枝にweightを持つ位置番号を設定時に選別し、球・カプセルの軸を呼出し内で事前計算した後は、171.985FPS、p95 6.373ms、DrawModel1.811ms、Present2.243ms、IK設定.509ms、揺れ更新1.196msです。同じbatchのOFFは227.082FPS、p95 4.928ms、DrawModel.405ms、Present2.246ms、IK設定.510ms、揺れ更新1.186msでした。両方とも通常Release、1280×720、標準効果、VSyncなし、YUMEKA＋Silly Dancing / Capoeira blend＋右腕IK＋13鎖＋身体8形状、3000frame/warmup300を完走しました。
+
+ONの追加費用は変形点の評価と接触判定です。GPUへ渡すのは変わった点だけで、法線はGPU上で補正後の位置から作り直します。CPU参照やGPU readbackを行うcaptureは速度計測に含めません。最適化前後の固定時刻48画像はbyte一致しました。300FPSはON/OFFとも未達で、今後はskin評価と接触候補の絞り込みを確認します。ログは`build/native-validation/vertex-contact-final-{off,on}-benchmark.log`です。平均FPSには実行時の負荷も含まれるため、全環境で同じ改善率になる保証はありません。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

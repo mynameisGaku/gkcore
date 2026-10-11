@@ -22,6 +22,10 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path);
  */
 bool ParseSecondaryColliderOptions(int& argc, char** argv, const char*& path);
 /**
+ * --secondary-vertex-contactを取り出す。重複では引数列を保って失敗する。
+ */
+bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled);
+/**
  * 身体のbone名とローカル形状を設定ファイルから読み、全形状を一括登録する。
  */
 bool ApplySecondaryColliderPreview(ModelHandle model, const char* path);

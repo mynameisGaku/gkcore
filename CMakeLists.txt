@@ -70,6 +70,8 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSnapshot.cpp
     src/model/animation/ModelPoseCache.cpp
     src/model/animation/ModelSkinPoints.cpp
+    src/model/animation/ModelSkinPointContacts.cpp
+    src/model/animation/ModelSkinContactSnapshot.cpp
     src/model/animation/FModelDeferredPose.cpp
     src/model/animation/ModelAnimation.cpp
     src/model/animation/HumanoidMapping.cpp
@@ -147,6 +149,13 @@ if(GKCORE_BUILD_TESTS)
     target_include_directories(gkcore_model_skin_points_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_skin_points_tests)
     add_test(NAME gkcore.model_skin_points COMMAND gkcore_model_skin_points_tests)
+    add_executable(gkcore_model_skin_point_contacts_tests tests/model_skin_point_contacts_tests.cpp
+        src/model/animation/ModelSkinPointContacts.cpp src/model/animation/ModelSkinPoints.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_skin_point_contacts_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_skin_point_contacts_tests PRIVATE include src)
+    gkcore_enable_warnings(gkcore_model_skin_point_contacts_tests)
+    add_test(NAME gkcore.model_skin_point_contacts COMMAND gkcore_model_skin_point_contacts_tests)
     add_executable(gkcore_model_animation_binding_tests tests/model_animation_binding_tests.cpp
         src/model/animation/ModelAnimationBinding.cpp src/model/animation/FModelAnimationAsset.cpp
         src/model/animation/ModelPose.cpp src/foundation/RefCount.cpp
@@ -362,7 +371,7 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_animation_api_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_animation_api_tests)
     add_test(NAME gkcore.model_animation_api COMMAND gkcore_model_animation_api_tests "${CMAKE_CURRENT_BINARY_DIR}/model-animation-api-fixtures")
-    add_executable(gkcore_model_animation_rig_api_tests tests/model_animation_rig_api_tests.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp ${GKCORE_CORE_SOURCES})
+    add_executable(gkcore_model_animation_rig_api_tests tests/model_animation_rig_api_tests.cpp tests/model_secondary_motion_preview_tests.cpp examples/support/ModelSecondaryMotionPreview.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp ${GKCORE_CORE_SOURCES})
     target_compile_features(gkcore_model_animation_rig_api_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_animation_rig_api_tests PRIVATE include src)
     target_compile_definitions(gkcore_model_animation_rig_api_tests PRIVATE GKCORE_TESTING=1)

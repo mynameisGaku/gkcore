@@ -46,6 +46,15 @@ GKCORE_API int ClearModelSecondaryMotion(ModelHandle model);
  */
 GKCORE_API int SetModelSecondaryMotionColliders(ModelHandle model, const FModelSecondaryMotionCollider* colliders, uint32_t count, float margin = 0.005f);
 
+/**
+ * 揺れboneの枝にweightを持つ、変形後の頂点を身体形状の外へ押し出す。
+ * 鎖と身体形状の登録後に切り替える。既定はOFFで、対応するzero-morph FBXに限る。
+ * 骨・IKは変更せず、描画予約ごとに補正を保存する。三角形内部と自己衝突は扱わない。
+ * 現在の姿勢が未対応または設定が未登録なら失敗し、以前の設定を保つ。
+ * 有効化後にmorph等の未対応姿勢へ進む場合は描画時に診断して失敗する。
+ */
+GKCORE_API int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle model, bool enabled);
+
 }
 
 #endif

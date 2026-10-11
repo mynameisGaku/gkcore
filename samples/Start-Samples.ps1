@@ -228,6 +228,7 @@ Write-Host '  9. YUMEKAでSwingingを単独再生（腰移動に表示中心が�
 Write-Host ' 10. YUMEKAでSkinning Test + Swingingをblend + 右腕IK（腰移動に表示中心が追従）'
 Write-Host ' 11. YUMEKAで外部blend + IK + 髪・スカート・尻尾の揺れ（身体接触なし）'
 Write-Host ' 12. YUMEKAで外部blend + IK + 髪・スカート・尻尾の揺れと身体接触'
+Write-Host ' 13. YUMEKAで12の設定に変形後頂点接触を追加（zero-morph FBX）'
 Write-Host '  0. 終了'
 if (-not (Test-RequiredFile 'Visual Studio solution' $solutionPath))
 {
@@ -279,6 +280,8 @@ if ($CheckOnly)
         $allChecksPassed = (Invoke-Viewer 'YUMEKA 揺れもの' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryPath, '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
         $contactArguments = @($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryContactPath, '--secondary-colliders', $yumekaSecondaryCollidersPath, '--materials', $yumekaMaterialsPath)
         $allChecksPassed = (Invoke-Viewer 'YUMEKA 揺れもの + 身体接触' $contactArguments) -and $allChecksPassed
+        $vertexContactArguments = $contactArguments + @('--secondary-vertex-contact')
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA 揺れもの + 身体接触 + 変形後頂点接触' $vertexContactArguments) -and $allChecksPassed
     }
     $allChecksPassed = (Invoke-Viewer 'monkey.obj 正面表示' (@($monkeyPath, '0.5609934521', '-0.014946', '0.0079755', '-0.0313325', 'front'))) -and $allChecksPassed
     $allChecksPassed = (Invoke-Viewer 'Cesium Man 静止表示' (@($cesiumPath, '0.9956520475', '0', '0.753275105', '0.024976999', 'static'))) -and $allChecksPassed
@@ -376,6 +379,16 @@ switch ($selection)
         {
             $arguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryContactPath, '--secondary-colliders', $yumekaSecondaryCollidersPath, '--materials', $yumekaMaterialsPath)
             $result = Invoke-Viewer 'YUMEKA 揺れもの + 身体接触' $arguments
+        }
+    }
+    '13'
+    {
+        $sillyPath = Get-MotionPath 'Silly Dancing.fbx'
+        $capoeiraPath = Get-MotionPath 'Capoeira.fbx'
+        if ($sillyPath -and $capoeiraPath)
+        {
+            $arguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryContactPath, '--secondary-colliders', $yumekaSecondaryCollidersPath, '--secondary-vertex-contact', '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA 揺れもの + 身体接触 + 変形後頂点接触' $arguments
         }
     }
     '8'

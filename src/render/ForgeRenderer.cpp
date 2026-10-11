@@ -4,6 +4,7 @@
 #include "render/ForgeRenderer.h"
 #include "model/animation/AModelAnimationSource.h"
 #include "model/animation/FModelDeferredPose.h"
+#include "model/animation/FModelSkinPointCorrection.h"
 #include "model/animation/ModelSnapshot.h"
 #include "resources/TextureSampler.h"
 #include "render/ModelTransparency.h"
@@ -253,6 +254,49 @@ bool PackSkinningMatrices(const Array<model::animation::FModelGpuSkinningGeometr
     dispatch.outputNormalsCount = dispatch.normalGroupRangesCount;
     if (!records.AppendRange(candidate.Data(), candidate.Count()))
         return SetError(error, "FBX GPU skinning matrix append failed");
+    error.Clear();
+    return true;
+}
+
+/**
+ * frozen poseのskin位置補正をframe recordへ追加する。
+ */
+bool PackSkinPointCorrections(const Array<model::animation::FModelSkinPointCorrection>& corrections, uint32_t recordOffset, FModelSkinningDispatch& dispatch, Array<FModelSkinningRecord>& records, String& error)
+{
+    if (corrections.Count() > UINT32_MAX / 3u || static_cast<uint64_t>(recordOffset) + static_cast<uint64_t>(corrections.Count()) * 3u > UINT32_MAX)
+    {
+        return SetError(error, "FBX GPU skin point correction dimensions are invalid");
+    }
+    dispatch.correctionOffset = recordOffset;
+    dispatch.correctionCount = corrections.Count();
+    if (corrections.Count() == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    Array<FModelSkinningRecord> candidate;
+    if (!candidate.Reserve(corrections.Count() * 3u))
+    {
+        return SetError(error, "FBX GPU skin point correction allocation failed");
+    }
+    for (uint32_t index = 0; index < corrections.Count(); ++index)
+    {
+        // 要求されたposition IDとmodel空間の補正位置。
+        const model::animation::FModelSkinPointCorrection& correction = corrections.At(index);
+        if (correction.positionId >= dispatch.positionsCount || (index > 0 && correction.positionId <= corrections.At(index - 1).positionId) || !isfinite(correction.position[0]) || !isfinite(correction.position[1]) || !isfinite(correction.position[2]) || !isfinite(static_cast<float>(correction.position[0])) || !isfinite(static_cast<float>(correction.position[1])) || !isfinite(static_cast<float>(correction.position[2])))
+        {
+            return SetError(error, "FBX GPU skin point correction is invalid");
+        }
+        const FModelSkinningRecord positionRecord = { { correction.positionId, 0, 0, 0 } };
+        if (!candidate.Append(positionRecord) || !AppendDoublePair(candidate, correction.position[0], correction.position[1]) || !AppendDoublePair(candidate, correction.position[2], 0.0))
+        {
+            return SetError(error, "FBX GPU skin point correction allocation failed");
+        }
+    }
+    if (!records.AppendRange(candidate.Data(), candidate.Count()))
+    {
+        return SetError(error, "FBX GPU skin point correction append failed");
+    }
     error.Clear();
     return true;
 }
@@ -985,7 +1029,14 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                                 ++gRenderProfile.skinGeometryCacheMisses;
                         }
 #endif
-                        const bool prepared = geometryCached && geometryBuffer && PackSkinningMatrices(draw.deferredPose->gpuSkinningMatrices, modelSkinningRecords_.Count(), dispatch, positionOffset, normalOffset, matrixRecords, error) && modelSkinningDispatches_.Reserve(modelSkinningDispatches_.Count() + 1) && modelSkinningGeometryBuffers_.Reserve(modelSkinningGeometryBuffers_.Count() + 1) && modelSkinningRecords_.Reserve(modelSkinningRecords_.Count() + matrixRecords.Count());
+                        // 行列の後ろへ補正recordを続けて置く。
+                        bool packedSkinningRecords = geometryCached && geometryBuffer && PackSkinningMatrices(draw.deferredPose->gpuSkinningMatrices, modelSkinningRecords_.Count(), dispatch, positionOffset, normalOffset, matrixRecords, error);
+                        // 補正recordの先頭をframe全体のrecord番号で計算する。
+                        const uint64_t correctionRecordOffset = static_cast<uint64_t>(modelSkinningRecords_.Count()) + matrixRecords.Count();
+                        packedSkinningRecords = packedSkinningRecords && correctionRecordOffset <= UINT32_MAX && PackSkinPointCorrections(draw.deferredPose->skinPointCorrections, static_cast<uint32_t>(correctionRecordOffset), dispatch, matrixRecords, error);
+                        // 追加予定の全record数をoverflow検査に使う。
+                        const uint64_t totalSkinningRecords = static_cast<uint64_t>(modelSkinningRecords_.Count()) + matrixRecords.Count();
+                        const bool prepared = packedSkinningRecords && totalSkinningRecords <= UINT32_MAX && modelSkinningDispatches_.Reserve(modelSkinningDispatches_.Count() + 1) && modelSkinningGeometryBuffers_.Reserve(modelSkinningGeometryBuffers_.Count() + 1) && modelSkinningRecords_.Reserve(static_cast<uint32_t>(totalSkinningRecords));
                         if (prepared && modelSkinningRecords_.AppendRange(matrixRecords.Data(), matrixRecords.Count()) && modelSkinningDispatches_.Append(dispatch) && modelSkinningGeometryBuffers_.Append(geometryBuffer))
                         {
                             gpuSkinning = true;
@@ -1009,7 +1060,7 @@ bool ForgeRenderer::Present(const detail::FramePacket& frame, String& error)
                             ++gRenderProfile.gpuSkinningFallbacks;
 #endif
                         model::animation::FModelSparsePoseGeometry fallbackGeometry;
-                        if (!animationSource || !animationSource->DeformSparse(draw.deferredPose->frozenPose, fallbackGeometry, error) || fallbackGeometry.positions.Count() != geometry.positions.Count() || fallbackGeometry.normals.Count() != geometry.normals.Count() || !AppendSparsePoseVertices(fallbackGeometry, modelPoseVertices_, error))
+                        if (!animationSource || !model::EvaluateDeferredModelFallbackGeometry(*draw.deferredPose, fallbackGeometry, error) || fallbackGeometry.positions.Count() != geometry.positions.Count() || fallbackGeometry.normals.Count() != geometry.normals.Count() || !AppendSparsePoseVertices(fallbackGeometry, modelPoseVertices_, error))
                         {
                             if (error.Empty())
                                 error.Assign("The deferred GPU pose could not be restored for CPU rendering");

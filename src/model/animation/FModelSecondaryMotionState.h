@@ -5,6 +5,7 @@
 #include "model/animation/FModelSecondaryMotionChain.h"
 #include <gkcore/FModelSecondaryMotionCollider.h>
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
+#include "model/animation/FModelGpuSkinningGeometry.h"
 
 /**
  * モデルinstanceの揺れもの所有状態。
@@ -24,6 +25,12 @@ struct FModelSecondaryMotionState
     Array<animation::FModelSecondaryMotionCollisionShape> previousCollisionShapes;
     // 節の接触に足すmodel空間の余白。
     float colliderMargin = 0.005f;
+    // 対応するFBXの変形後頂点へ、描画時点の身体接触を加える。
+    bool skinPointContactsEnabled = false;
+    // 登録鎖の枝にweightを持つ位置番号。設定時に選別し、描画では変更しない。
+    Array<uint32_t> skinContactPositionIds;
+    // 選別した不変geometryの識別子。元モデルが寿命を所有する。
+    const animation::FModelGpuSkinningGeometry* skinContactGeometry = nullptr;
     /**
      * 各鎖と内部配列を解放する。
      */
