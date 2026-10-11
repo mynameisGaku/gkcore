@@ -1386,3 +1386,22 @@ CPU MSVC19.51のDebug60/60（5.18秒）、Release60/60（4.80秒）。Win11 buil
 ゲーム構築用348ファイルを既存curated treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。SDK56ファイルがallowlistに一致し、更新DLLを配置した外部consumerのGPU Init→Present→Shutdownが成功。START CheckOnly、formatter、BOM/CRLF、no-STLテストとdiff checkを確認。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はbone-contact-early-out-game-{build,install,consumer-run}.logとgame/SDK manifestです。
 
 高解像度6画像はpixel完全一致のPNGへ保存し、今回生成したPPM6枚とhash一致を確認した旧solver/Debug比較の重複PPM48枚を片づけました。最新Release24画像、比較hash、quality画像、実行logは保持しています。
+
+
+## 2026-10-11 接触形状の準備を反復中に再利用する
+
+capture専用QPCをUpdateへ追加し、base/FK、settings/shape/確保、chain clone/targets/solver、orient/cache、rendered FK/contact、commitを区切りました。成功更新のみ出力し、QPC失敗は計測を無効にするだけです。旧state解放前にchain countを保存して、Commit後に参照しません。通常SDKのcompile経路には計測を含みません。固定delta1/60の100sample（初期20除外）で変更前base .470328 / shapes .002680 / solver2.708335 / orient .067046 / check .069766 / commit .008921 / total3.327076ms。solverを主対象に選び、重複source FKの省略は今回行っていません。
+
+Project/Checkは上限64のstack prepared shapesで、start/end/axis/length²/radius/tolerance/旧AABBを1形状1回計算します。Projectでは固定rootの内外を1回保存し、最後のprivate Check coreにも同じprepared dataを渡します。動的candidate位置のValidatePositionsは省かず、全shape/pass順・専用エラー・root例外・既存接触許容条件を保持。ClosestSegmentPairは同じaxis/dot演算を再利用し、raw Avoid経路は余分なbounds準備を加えません。旧output原子性と巨大double/NaN/overflowは維持します。独立監査で検査順、rootが不変である条件、stack寿命とカウンターを確認しました。
+
+REDは2形状・2点の遠方Projectでprepare10 expected2の失敗（secondary-prepared-red-test.log）。GREENはProject終端Checkを含め2回、独立Checkも各形状1回。既存の接触・中点通過・複数形状・境界・float丸め・失敗保持の全契約を通しました。新counterはGKCORE_TESTINGのみです。
+
+CPU MSVC19.51のDebug60/60（4.92秒）、Release60/60（4.81秒）。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0で、.038設定・0秒/3.35秒開始をDebug/Release各120、計480frame。全GPU位置/法線とSkirt1314点のCPU参照がvalid、位置最大9.314e-10/normal1.789e-7。保存24姿勢は旧版と両構成でbyte一致し、侵入点平均15.683/16.517、最大深さ.029584/.030013も保持。物理設定や見た目を変える最適化ではありません。記録はsecondary-prepared-image-comparison.jsonです。
+
+同じ固定deltaの区間計測後はsolver1.974252、total2.575593ms。通常可視Release3000frame/warmup300は198.637→208.670FPS、secondary1.866→1.549ms、後p95 5.272ms、Draw .388/Present2.287/IK .508ms。captureは時間刻みと検証条件が違うためFPSと混同しません。300FPSは未達。最新記録はsecondary-stage-profile-comparison.json、secondary-prepared-{before,after}-benchmark.logです。
+
+dev専用skin診断を追加し、選択1frameのみ最大32点のposition/mesh所属/最深身体shape、positive weightのroot/child/bodyShapeAncestor/other合計、top4 bone、現在drawing FKの骨球距離を記録します。JSON stringをescapeし、詳細失敗とlegacy probe結果は分けます。無指定の480frameでは旧aggregate出力を保ち、frame110は11点、最深Spineに.009915、Skirtroot8.3%/body祖先91.7%。最深frame81は30点、Yumeka_Cos_Skirt/local28（global31877）がUpperLeg_Lへ.03001297、Skirt_3_L.002 68.08% / Skirt_4_L.002 31.92%でbody寄与0、骨球外へ.03696/.09170です。sparse pointはfloat変換された参照値なので、aggregateのdouble skin距離との差には丸め誤差があります。骨の小球が実skinの幅を覆わない点を確認しました。過去のCircle.051単独のraw cluster集計を、全GPU geometryの骨寄与へ一般化しません。元asset/weightを変更せず、頂点補正はOFFのままです。次の候補はcloth幅・隣接鎖の間を支える骨側制約です。
+
+ゲーム構築用348ファイルを既存curated treeへ反映し、Runtime+5sampleのRelease build成功。SDK56ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdown成功。test toolと詳細diagnostic export、開発記録、私有assetはmain/SDKへ含めません。通常RuntimeではQPC/counterコードがcompileされません。記録はsecondary-prepared-game-{build,install,consumer-run}.log、game/SDK manifestです。
+
+今回生成したDebug比較24画像、hash一致した旧Release24画像と区間計測2画像を片づけ、詳細81frameはlossless PNGへ保存してPPMを削除しました。最新Release24画像、全検証logと比較hash/診断JSONは保持します。

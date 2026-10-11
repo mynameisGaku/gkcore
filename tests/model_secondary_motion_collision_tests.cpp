@@ -341,6 +341,38 @@ bool TestCollisionSegmentBoundsFastPath()
 }
 
 /**
+ * 接触形状の軸は投影と再検査を通して形状ごとに一度だけ準備する。
+ */
+bool TestShapePreparationBudget()
+{
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ 100.0f, 100.0f, 100.0f }, { 100.0f, 100.0f, 100.0f }, 0.5f), Shape({ -50.0f, -40.0f, 20.0f }, { -40.0f, -30.0f, 30.0f }, 0.25f) };
+    const gk::FVector3d references[2] = { Point(0.0, 0.0, 0.0), Point(0.0, 1.0, 0.0) };
+    gk::Array<gk::FVector3d> positions;
+    gk::String error;
+    if (!positions.AppendRange(references, 2))
+    {
+        return Fail("could not initialize shape preparation fixture");
+    }
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!ProjectSecondaryMotionContacts(shapes, 2, references, 2, positions, error))
+    {
+        return Fail(error.CStr());
+    }
+    const uint64_t preparationCount = GetSecondaryMotionCollisionPrepareCount();
+    if (preparationCount != 2 || memcmp(positions.Data(), references, sizeof(references)) != 0)
+    {
+        fprintf(stderr, "shape preparation count=%llu expected=2\n", static_cast<unsigned long long>(preparationCount));
+        return Fail("collision projection repeated shape preparation or changed separated points");
+    }
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!CheckSecondaryMotionContacts(shapes, 2, positions.Data(), 2, error) || GetSecondaryMotionCollisionPrepareCount() != 2)
+    {
+        return Fail("standalone collision check did not prepare each shape once");
+    }
+    return true;
+}
+
+/**
  * 遠い接触形状では反復後の接触確認を重複実行しない。
  */
 bool TestFarColliderContactCheckBudget()
@@ -888,8 +920,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

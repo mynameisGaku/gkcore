@@ -60,6 +60,14 @@ START 12のスカート球は、実モデルの幅の中央値.0378 model unit�
 
 遠方の線分は親軸距離計算より先に保守的な範囲で除外し、厳しい接触検査が通った同じ座標の直後の通常検査だけを省きました。最適化前後24姿勢画像とDebug/Release24組はbyte一致しました。実GPUと画像検査の結果はbone-contact-early-out-image-comparison.json、速度記録はbone-contact-early-out-{before,after}-benchmark.logです。
 
+## 球・カプセルの共通計算を再利用する
+
+接触反復で使う軸、軸長二乗、半径、許容幅と範囲を、各Project/Check呼出しの中で形状ごとに一度だけ求める方式へ変更しました。固定rootの内外も反復前に保存します。半径.038、反復数、角度、margin、shape順、出力は維持し、頂点補正と接触表示はOFFです。2形状の契約例では軸準備が10回から2回になりました。
+
+通常Release、1280×720、VSyncなし、YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖＋8身体形状、3000frame/warmup300を変更前後とも完走。198.637→208.670FPS、変更後p95 5.272ms、Draw .388 / Present2.287 / IK .508 / secondary1.549msです。変更前secondary1.866msから約17%減りました。FPSには実行時負荷も含まれるため改善率を全環境へ保証しません。300FPSは未達です。ログはsecondary-prepared-{before,after}-benchmark.logです。
+
+capture専用DLLの区間計測は固定delta1/60、初期20frame除外後100sampleで、solver2.708335→1.974252ms、全Update3.327076→2.575593msでした。captureは通常表示と時間刻み・検証条件が異なり、FPSの代用にはしません。計測コードは通常DLL/SDKに入りません。Debug/Release480frameのGPU位置・法線がvalid、保存24姿勢は旧版と両構成でbyte一致しました。スカートの侵入率は変わらず、見た目の残件も保っています。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

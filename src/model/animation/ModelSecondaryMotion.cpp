@@ -15,6 +15,12 @@
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include <string.h>
 
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#endif
+
 namespace gk::model
 {
 bool ApplyModelSecondaryMotion(const FModelSecondaryMotionState& state, animation::FModelPose& pose, String& error)
@@ -271,6 +277,14 @@ int Update(ModelHandle handle, double delta, bool reset)
         detail::ClearError();
         return 0;
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    // 検証用DLLだけで、揺れ更新の各処理に使う時間を測る。
+    LARGE_INTEGER profileTimes[7]{}, profileFrequency{};
+    // 確定後に旧stateが解放されるため、鎖数は先に保存する。
+    const uint32_t profileChainCount = previous->chains.Count();
+    const char* profileSetting = getenv("GKCORE_PROFILE_SECONDARY_MOTION");
+    bool profile = profileSetting && strcmp(profileSetting, "1") == 0 && QueryPerformanceFrequency(&profileFrequency) && profileFrequency.QuadPart > 0 && QueryPerformanceCounter(&profileTimes[0]);
+#endif
     String error;
     model::animation::FModelPose base;
     Array<float> matrices;
@@ -278,6 +292,12 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         return Failure(error);
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && !QueryPerformanceCounter(&profileTimes[1]))
+    {
+        profile = false;
+    }
+#endif
     model::FModelSecondaryMotionState candidate;
     // 全鎖で同じ身体姿勢を使い、途中の揺れを身体の位置へ戻さない。
     Array<model::animation::FModelSecondaryMotionCollisionShape> currentShapes;
@@ -305,6 +325,12 @@ int Update(ModelHandle handle, double delta, bool reset)
             return detail::SetError("secondary motion orientation allocation failed");
         }
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && !QueryPerformanceCounter(&profileTimes[2]))
+    {
+        profile = false;
+    }
+#endif
     for (uint32_t index = 0; index < previous->chains.Count(); ++index)
     {
         if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
@@ -350,6 +376,12 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && !QueryPerformanceCounter(&profileTimes[3]))
+    {
+        profile = false;
+    }
+#endif
     model::animation::FModelPose combined;
     if (!reset && orientationChains.Count() > 0)
     {
@@ -365,6 +397,12 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && !QueryPerformanceCounter(&profileTimes[4]))
+    {
+        profile = false;
+    }
+#endif
     if (!reset && currentShapes.Count() > 0)
     {
         // 描画へ渡す回転を全鎖へ重ね、実際のFK位置でも接触が成立することを確認する。
@@ -406,6 +444,12 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && !QueryPerformanceCounter(&profileTimes[5]))
+    {
+        profile = false;
+    }
+#endif
     candidate.previousCollisionShapes.MoveFrom(currentShapes);
     // cacheも先に候補を完成させ、鎖の確定後には失敗する処理を残さない。
     auto* poseCache = model::CreateModelPoseCache(*resource, *transform->playback, base, error);
@@ -420,6 +464,14 @@ int Update(ModelHandle handle, double delta, bool reset)
     }
     delete transform->playback->basePoseCache;
     transform->playback->basePoseCache = poseCache;
+#if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (profile && QueryPerformanceCounter(&profileTimes[6]))
+    {
+        // 初期化を含む更新か分かるよう、各区間をミリ秒で記録する。
+        const double milliseconds = 1000.0 / profileFrequency.QuadPart;
+        fprintf(stderr, "{\"type\":\"gkcore_secondary_motion_profile\",\"reset\":%s,\"chains\":%u,\"baseMs\":%.9f,\"shapesMs\":%.9f,\"solverMs\":%.9f,\"orientMs\":%.9f,\"renderCheckMs\":%.9f,\"commitMs\":%.9f,\"totalMs\":%.9f}\n", reset ? "true" : "false", profileChainCount, (profileTimes[1].QuadPart - profileTimes[0].QuadPart) * milliseconds, (profileTimes[2].QuadPart - profileTimes[1].QuadPart) * milliseconds, (profileTimes[3].QuadPart - profileTimes[2].QuadPart) * milliseconds, (profileTimes[4].QuadPart - profileTimes[3].QuadPart) * milliseconds, (profileTimes[5].QuadPart - profileTimes[4].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[5].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[0].QuadPart) * milliseconds);
+    }
+#endif
     detail::ClearError();
     return 0;
 }

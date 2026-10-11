@@ -11,9 +11,13 @@
 #include "model/animation/ModelSkinContactSnapshot.h"
 #include "model/animation/ModelSnapshot.h"
 #include "resources/Resources.h"
+#include <gkcore/ModelSecondaryMotion.h>
 
+#include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /**
@@ -37,6 +41,22 @@ int FailProbe(uint32_t frame, int result, const char* message, uint32_t eligible
 double VectorLength(const double value[3]);
 bool HasPrefixInfluence(const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, uint32_t positionId, const char* bonePrefix, size_t prefixLength, bool& selected, gk::String& error);
 bool DistanceToShape(const FVector3d& point, const gk::model::animation::FModelSecondaryMotionCollisionShape& shape, double& distance);
+/**
+ * 詳細を出すframe番号を、0以上のuint32範囲で読み取る。
+ */
+bool ParseDetailFrame(const char* value, uint32_t& frame);
+/**
+ * JSON文字列の引用符と制御文字をescapeして書き込む。
+ */
+void EmitJsonString(const char* value);
+/**
+ * 詳細診断の失敗を通常のskin検証と分けて記録する。
+ */
+void EmitDetailError(uint32_t frame, const char* message);
+/**
+ * 選択したframeの侵入点と骨の寄与を記録する。
+ */
+void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary);
 
 }
 
@@ -246,6 +266,19 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
     }
     const bool contactClear = contactTested && pointPenetrationCount == 0;
     EmitReport(frame, evaluatedPoints.Count(), eligibleCount, shapeCount, maximumError, pointPenetrationCount, pointShapeContactCount, maximumPenetrationDepth, contactTested, contactClear, matchesReference);
+    const char* detailFrameValue = getenv("GKCORE_SKIN_POINT_DETAIL_FRAME");
+    if (detailFrameValue && detailFrameValue[0])
+    {
+        uint32_t detailFrame = 0;
+        if (!ParseDetailFrame(detailFrameValue, detailFrame))
+        {
+            EmitDetailError(frame, "GKCORE_SKIN_POINT_DETAIL_FRAME must be a nonnegative uint32 frame number");
+        }
+        else if (detailFrame == frame)
+        {
+            EmitPointDetails(model, frame, *source, *geometry, selectedIds, reference, secondary);
+        }
+    }
     if (!matchesReference)
     {
         fprintf(stderr, "model skin point probe: evaluated positions differ from the sparse reference\n");
@@ -355,6 +388,483 @@ bool DistanceToShape(const FVector3d& point, const gk::model::animation::FModelS
     const double difference[3] = { offset[0] - axis[0] * amount, offset[1] - axis[1] * amount, offset[2] - axis[2] * amount };
     distance = VectorLength(difference);
     return isfinite(distance);
+}
+
+/**
+ * 詳細出力の対象frame番号を、32 bit範囲で読み取る。
+ */
+bool ParseDetailFrame(const char* value, uint32_t& frame)
+{
+    if (!value || !value[0] || value[0] == '-')
+    {
+        return false;
+    }
+    errno = 0;
+    char* end = nullptr;
+    const unsigned long long parsed = strtoull(value, &end, 10);
+    if (errno == ERANGE || !end || *end != '\0' || parsed > UINT32_MAX)
+    {
+        return false;
+    }
+    frame = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+/**
+ * 詳細診断の準備失敗を、skin検証結果と分けて記録する。
+ */
+void EmitDetailError(uint32_t frame, const char* message)
+{
+    fprintf(stderr, "{\"type\":\"gkcore_model_skin_point_detail_error\",\"frame\":%u,\"message\":", frame);
+    EmitJsonString(message ? message : "unknown diagnostic failure");
+    fprintf(stderr, "}\n");
+}
+
+/**
+ * JSON文字列を引用符と制御文字をescapeして出力する。
+ */
+void EmitJsonString(const char* value)
+{
+    fputc('"', stderr);
+    if (value)
+    {
+        for (const unsigned char* character = reinterpret_cast<const unsigned char*>(value); *character; ++character)
+        {
+            if (*character == '"' || *character == '\\')
+            {
+                fputc('\\', stderr);
+                fputc(*character, stderr);
+            }
+            else if (*character < 0x20)
+            {
+                fprintf(stderr, "\\u%04x", static_cast<unsigned int>(*character));
+            }
+            else
+            {
+                fputc(*character, stderr);
+            }
+        }
+    }
+    fputc('"', stderr);
+}
+
+/**
+ * 同じboneへの寄与を合計した診断用weight。
+ */
+struct FDiagnosticBoneWeight
+{
+    // 共通骨格内のbone番号。
+    uint32_t bone;
+    // この点に対する正のweightの合計。
+    double weight;
+};
+
+/**
+ * 身体形状へ入った点と、最も深い接触を保持する。
+ */
+struct FDiagnosticPoint
+{
+    // skin geometry内の位置番号。
+    uint32_t positionId;
+    // 最深の侵入がある身体形状番号。
+    uint32_t shapeIndex;
+    // 頂点接触を補正する前のmodel空間位置。
+    FVector3d position;
+    // 点から身体形状の軸までの距離。
+    double distance;
+    // 身体形状の半径から距離を引いた侵入深さ。
+    double depth;
+};
+
+/**
+ * 位置IDが一意に属するmesh segmentを範囲検査して返す。
+ */
+bool FindPointSegment(const FModelGpuSkinningGeometry& geometry, uint32_t positionId, uint32_t& segmentIndex)
+{
+    bool found = false;
+    for (uint32_t index = 0; index < geometry.segments.Count(); ++index)
+    {
+        const auto& segment = geometry.segments.At(index);
+        if (segment.firstPosition > geometry.positions.Count() || segment.positionCount > geometry.positions.Count() - segment.firstPosition)
+        {
+            continue;
+        }
+        if (positionId < segment.firstPosition || positionId - segment.firstPosition >= segment.positionCount)
+        {
+            continue;
+        }
+        if (found)
+        {
+            return false;
+        }
+        segmentIndex = index;
+        found = true;
+    }
+    return found;
+}
+
+/**
+ * 指定boneが登録Skirt鎖のrootなら1、childなら2、対象外なら0を返す。
+ */
+uint32_t GetSkirtChainBoneRole(const gk::model::AModelAnimationSource& source, const gk::model::FModelSecondaryMotionState& secondary, uint32_t bone)
+{
+    for (uint32_t chainIndex = 0; chainIndex < secondary.chains.Count(); ++chainIndex)
+    {
+        const auto* chain = secondary.chains.At(chainIndex);
+        if (!chain || chain->bones.Count() == 0)
+        {
+            continue;
+        }
+        const char* rootName = source.BoneName(chain->bones.At(0));
+        if (!rootName || strncmp(rootName, "Skirt", 5) != 0)
+        {
+            continue;
+        }
+        for (uint32_t boneIndex = 0; boneIndex < chain->bones.Count(); ++boneIndex)
+        {
+            if (chain->bones.At(boneIndex) == bone)
+            {
+                return boneIndex == 0 ? 1u : 2u;
+            }
+        }
+    }
+    return 0;
+}
+
+/**
+ * 身体shape取付boneまたはそのskeleton祖先に属するskin weightか調べる。
+ */
+bool IsBodyShapeBone(const gk::model::AModelAnimationSource& source, const gk::model::FModelSecondaryMotionState& secondary, uint32_t bone)
+{
+    const auto& parents = source.Skeleton().parents;
+    for (uint32_t colliderIndex = 0; colliderIndex < secondary.colliders.Count(); ++colliderIndex)
+    {
+        if (secondary.colliders.At(colliderIndex).bone > static_cast<uint32_t>(INT_MAX))
+        {
+            continue;
+        }
+        int32_t ancestor = static_cast<int32_t>(secondary.colliders.At(colliderIndex).bone);
+        uint32_t visited = 0;
+        while (ancestor >= 0 && static_cast<uint32_t>(ancestor) < parents.Count() && visited++ < parents.Count())
+        {
+            if (static_cast<uint32_t>(ancestor) == bone)
+            {
+                return true;
+            }
+            ancestor = parents.At(static_cast<uint32_t>(ancestor));
+        }
+    }
+    return false;
+}
+
+/**
+ * 侵入点のbone weight内訳と上位4本の寄与を集計する。
+ */
+bool CollectPointWeights(const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::model::FModelSecondaryMotionState& secondary, uint32_t positionId, double& rootWeight, double& childWeight, double& bodyWeight, double& otherWeight, double& totalWeight, gk::Array<FDiagnosticBoneWeight>& boneWeights, gk::String& error)
+{
+    if (positionId >= geometry.influenceRanges.Count())
+    {
+        error.Assign("detail point has no influence range");
+        return false;
+    }
+    const auto& range = geometry.influenceRanges.At(positionId);
+    if (range.firstInfluence > geometry.influences.Count() || range.influenceCount > geometry.influences.Count() - range.firstInfluence || !boneWeights.Reserve(range.influenceCount))
+    {
+        error.Assign("detail point influence range is invalid or allocation failed");
+        return false;
+    }
+    rootWeight = 0.0;
+    childWeight = 0.0;
+    bodyWeight = 0.0;
+    otherWeight = 0.0;
+    totalWeight = 0.0;
+    boneWeights.Clear();
+    for (uint32_t offset = 0; offset < range.influenceCount; ++offset)
+    {
+        const auto& influence = geometry.influences.At(range.firstInfluence + offset);
+        if (!isfinite(influence.weight) || influence.weight < 0.0 || influence.clusterIndex >= geometry.clusters.Count())
+        {
+            error.Assign("detail point has an invalid influence");
+            return false;
+        }
+        if (!(influence.weight > 0.0))
+        {
+            continue;
+        }
+        const uint32_t bone = geometry.clusters.At(influence.clusterIndex).nodeIndex;
+        if (bone >= source.Skeleton().parents.Count())
+        {
+            error.Assign("detail point influence references an invalid bone");
+            return false;
+        }
+        const uint32_t role = GetSkirtChainBoneRole(source, secondary, bone);
+        if (role == 1)
+        {
+            rootWeight += influence.weight;
+        }
+        else if (role == 2)
+        {
+            childWeight += influence.weight;
+        }
+        else if (IsBodyShapeBone(source, secondary, bone))
+        {
+            bodyWeight += influence.weight;
+        }
+        else
+        {
+            otherWeight += influence.weight;
+        }
+        totalWeight += influence.weight;
+
+        uint32_t found = boneWeights.Count();
+        for (uint32_t index = 0; index < boneWeights.Count(); ++index)
+        {
+            if (boneWeights.At(index).bone == bone)
+            {
+                found = index;
+                break;
+            }
+        }
+        if (found < boneWeights.Count())
+        {
+            boneWeights.At(found).weight += influence.weight;
+        }
+        else if (!boneWeights.Append({ bone, influence.weight }))
+        {
+            error.Assign("detail point bone weight allocation failed");
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * 対象frameの侵入位置を最大32個に絞り、寄与weightと身体・骨球形状を出力する。
+ */
+void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary)
+{
+    if (!secondary || secondary->previousCollisionShapes.Count() != secondary->colliders.Count())
+    {
+        EmitDetailError(frame, "secondary body shapes are unavailable or inconsistent");
+        return;
+    }
+    gk::Array<gk::FModelSecondaryMotionDebugShape> debugShapes;
+    const int32_t requiredDebugShapes = gk::GetModelSecondaryMotionDebugShapes(model, nullptr, 0);
+    bool hasDebugShapes = requiredDebugShapes >= 0 && debugShapes.Reserve(static_cast<uint32_t>(requiredDebugShapes));
+    if (hasDebugShapes)
+    {
+        const gk::FModelSecondaryMotionDebugShape emptyShape{};
+        for (int32_t index = 0; index < requiredDebugShapes; ++index)
+        {
+            if (!debugShapes.Append(emptyShape))
+            {
+                hasDebugShapes = false;
+                break;
+            }
+        }
+    }
+    if (hasDebugShapes && gk::GetModelSecondaryMotionDebugShapes(model, debugShapes.Data(), debugShapes.Count()) != static_cast<int32_t>(debugShapes.Count()))
+    {
+        hasDebugShapes = false;
+    }
+    if (!hasDebugShapes)
+    {
+        EmitDetailError(frame, "current drawing FK debug shapes could not be read");
+    }
+
+    gk::Array<FDiagnosticPoint> details;
+    if (!details.Reserve(32))
+    {
+        EmitDetailError(frame, "detail point allocation failed");
+        return;
+    }
+    uint32_t penetratingPointCount = 0;
+    for (uint32_t sample = 0; sample < selectedIds.Count(); ++sample)
+    {
+        const uint32_t positionId = selectedIds.At(sample);
+        if (positionId >= reference.positions.Count())
+        {
+            EmitDetailError(frame, "detail position id exceeds sparse skin positions");
+            return;
+        }
+        const auto& referencePosition = reference.positions.At(positionId);
+        const FVector3d position = { { referencePosition.value[0], referencePosition.value[1], referencePosition.value[2] } };
+        FDiagnosticPoint candidate{};
+        candidate.positionId = positionId;
+        candidate.shapeIndex = UINT32_MAX;
+        candidate.position = position;
+        for (uint32_t shapeIndex = 0; shapeIndex < secondary->previousCollisionShapes.Count(); ++shapeIndex)
+        {
+            double distance = 0.0;
+            if (!(secondary->previousCollisionShapes.At(shapeIndex).radius > 0.0f) || !DistanceToShape(position, secondary->previousCollisionShapes.At(shapeIndex), distance))
+            {
+                EmitDetailError(frame, "detail point or collision shape is invalid");
+                return;
+            }
+            const double depth = static_cast<double>(secondary->previousCollisionShapes.At(shapeIndex).radius) - distance;
+            if (depth > candidate.depth)
+            {
+                candidate.shapeIndex = shapeIndex;
+                candidate.distance = distance;
+                candidate.depth = depth;
+            }
+        }
+        if (!(candidate.depth > 0.0))
+        {
+            continue;
+        }
+        ++penetratingPointCount;
+        if (details.Count() < 32)
+        {
+            if (!details.Append(candidate))
+            {
+                EmitDetailError(frame, "detail point list allocation failed");
+                return;
+            }
+            continue;
+        }
+        uint32_t smallestIndex = 0;
+        for (uint32_t index = 1; index < details.Count(); ++index)
+        {
+            if (details.At(index).depth < details.At(smallestIndex).depth || (details.At(index).depth == details.At(smallestIndex).depth && details.At(index).positionId > details.At(smallestIndex).positionId))
+            {
+                smallestIndex = index;
+            }
+        }
+        if (candidate.depth > details.At(smallestIndex).depth || (candidate.depth == details.At(smallestIndex).depth && candidate.positionId < details.At(smallestIndex).positionId))
+        {
+            details.At(smallestIndex) = candidate;
+        }
+    }
+    for (uint32_t index = 0; index < details.Count(); ++index)
+    {
+        uint32_t largestIndex = index;
+        for (uint32_t candidate = index + 1; candidate < details.Count(); ++candidate)
+        {
+            if (details.At(candidate).depth > details.At(largestIndex).depth || (details.At(candidate).depth == details.At(largestIndex).depth && details.At(candidate).positionId < details.At(largestIndex).positionId))
+            {
+                largestIndex = candidate;
+            }
+        }
+        if (largestIndex != index)
+        {
+            const FDiagnosticPoint temporary = details.At(index);
+            details.At(index) = details.At(largestIndex);
+            details.At(largestIndex) = temporary;
+        }
+    }
+
+    fprintf(stderr, "{\"type\":\"gkcore_model_skin_point_detail\",\"frame\":%u,\"vertexContactsEnabled\":%s,\"pointPositionSource\":\"pre-contact sparse skin\",\"spherePositionSource\":\"current drawing FK\",\"bodyWeightMeaning\":\"collider attachments and their skeleton ancestors\",\"scannedPoints\":%u,\"penetratingPointsBeforeContact\":%u,\"reportedPoints\":%u,\"maxReportedPoints\":32}\n", frame, secondary->skinPointContactsEnabled ? "true" : "false", selectedIds.Count(), penetratingPointCount, details.Count());
+    gk::Array<FDiagnosticBoneWeight> boneWeights;
+    for (uint32_t detailIndex = 0; detailIndex < details.Count(); ++detailIndex)
+    {
+        const FDiagnosticPoint& detail = details.At(detailIndex);
+        double rootWeight = 0.0;
+        double childWeight = 0.0;
+        double bodyWeight = 0.0;
+        double otherWeight = 0.0;
+        double totalWeight = 0.0;
+        gk::String error;
+        if (!CollectPointWeights(source, geometry, *secondary, detail.positionId, rootWeight, childWeight, bodyWeight, otherWeight, totalWeight, boneWeights, error))
+        {
+            EmitDetailError(frame, error.CStr());
+            continue;
+        }
+        const auto& shape = secondary->previousCollisionShapes.At(detail.shapeIndex);
+        const auto& collider = secondary->colliders.At(detail.shapeIndex);
+        const char* shapeBoneName = source.BoneName(collider.bone);
+        uint32_t segmentIndex = 0;
+        const bool hasSegment = FindPointSegment(geometry, detail.positionId, segmentIndex);
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_point\",\"frame\":%u,\"positionId\":%u,\"position\":[%.17g,%.17g,%.17g],\"meshSegment\":", frame, detail.positionId, detail.position.value[0], detail.position.value[1], detail.position.value[2]);
+        if (hasSegment)
+        {
+            const auto& segment = geometry.segments.At(segmentIndex);
+            fprintf(stderr, "{\"segmentIndex\":%u,\"meshNode\":%u,\"meshNodeName\":", segmentIndex, segment.nodeIndex);
+            EmitJsonString(segment.nodeIndex < source.Skeleton().parents.Count() ? source.BoneName(segment.nodeIndex) : nullptr);
+            fprintf(stderr, ",\"localPositionId\":%u}", detail.positionId - segment.firstPosition);
+        }
+        else
+        {
+            fprintf(stderr, "null");
+        }
+        fprintf(stderr, ",\"deepestShape\":{\"shapeIndex\":%u,\"bone\":%u,\"boneName\":", detail.shapeIndex, collider.bone);
+        EmitJsonString(shapeBoneName);
+        fprintf(stderr, ",\"kind\":\"%s\",\"radius\":%.9g,\"distance\":%.17g,\"depth\":%.17g},\"weights\":{\"sum\":%.17g,\"skirtRoot\":%.17g,\"skirtChild\":%.17g,\"bodyShapeAncestor\":%.17g,\"other\":%.17g,\"rootShare\":%.9g,\"childShare\":%.9g,\"bodyShapeAncestorShare\":%.9g,\"otherShare\":%.9g},\"topInfluences\":[", shape.start.x == shape.end.x && shape.start.y == shape.end.y && shape.start.z == shape.end.z ? "sphere" : "capsule", shape.radius, detail.distance, detail.depth, totalWeight, rootWeight, childWeight, bodyWeight, otherWeight, totalWeight > 0.0 ? rootWeight / totalWeight : 0.0, totalWeight > 0.0 ? childWeight / totalWeight : 0.0, totalWeight > 0.0 ? bodyWeight / totalWeight : 0.0, totalWeight > 0.0 ? otherWeight / totalWeight : 0.0);
+
+        FDiagnosticBoneWeight topInfluences[4]{};
+        uint32_t topInfluenceCount = 0;
+        for (uint32_t weightIndex = 0; weightIndex < boneWeights.Count(); ++weightIndex)
+        {
+            const FDiagnosticBoneWeight candidate = boneWeights.At(weightIndex);
+            uint32_t insertIndex = topInfluenceCount;
+            for (uint32_t index = 0; index < topInfluenceCount; ++index)
+            {
+                if (candidate.weight > topInfluences[index].weight || (candidate.weight == topInfluences[index].weight && candidate.bone < topInfluences[index].bone))
+                {
+                    insertIndex = index;
+                    break;
+                }
+            }
+            if (insertIndex >= 4)
+            {
+                continue;
+            }
+            const uint32_t newCount = topInfluenceCount < 4 ? topInfluenceCount + 1 : topInfluenceCount;
+            for (uint32_t shift = newCount; shift > insertIndex + 1; --shift)
+            {
+                topInfluences[shift - 1] = topInfluences[shift - 2];
+            }
+            topInfluences[insertIndex] = candidate;
+            topInfluenceCount = newCount;
+        }
+        for (uint32_t index = 0; index < topInfluenceCount; ++index)
+        {
+            if (index > 0)
+            {
+                fputc(',', stderr);
+            }
+            const uint32_t bone = topInfluences[index].bone;
+            const uint32_t role = GetSkirtChainBoneRole(source, *secondary, bone);
+            const char* roleName = role == 1 ? "skirtRoot" : (role == 2 ? "skirtChild" : (IsBodyShapeBone(source, *secondary, bone) ? "bodyShapeAncestor" : "other"));
+            fprintf(stderr, "{\"bone\":%u,\"name\":", bone);
+            EmitJsonString(source.BoneName(bone));
+            fprintf(stderr, ",\"weight\":%.17g,\"group\":\"%s\"}", topInfluences[index].weight, roleName);
+        }
+        fprintf(stderr, "],\"skirtBoneSpheres\":[");
+        bool firstSphere = true;
+        if (hasDebugShapes)
+        {
+            for (uint32_t weightIndex = 0; weightIndex < boneWeights.Count(); ++weightIndex)
+            {
+                const FDiagnosticBoneWeight& boneWeight = boneWeights.At(weightIndex);
+                if (GetSkirtChainBoneRole(source, *secondary, boneWeight.bone) == 0)
+                {
+                    continue;
+                }
+                for (uint32_t debugIndex = 0; debugIndex < debugShapes.Count(); ++debugIndex)
+                {
+                    const auto& debugShape = debugShapes.At(debugIndex);
+                    if (debugShape.body || debugShape.virtualTip || debugShape.bone != boneWeight.bone)
+                    {
+                        continue;
+                    }
+                    const FVector3d center = { { debugShape.start.x, debugShape.start.y, debugShape.start.z } };
+                    const double difference[3] = { detail.position.value[0] - center.value[0], detail.position.value[1] - center.value[1], detail.position.value[2] - center.value[2] };
+                    const double sphereDistance = VectorLength(difference);
+                    if (!firstSphere)
+                    {
+                        fputc(',', stderr);
+                    }
+                    firstSphere = false;
+                    fprintf(stderr, "{\"bone\":%u,\"name\":", debugShape.bone);
+                    EmitJsonString(source.BoneName(debugShape.bone));
+                    fprintf(stderr, ",\"weight\":%.17g,\"radius\":%.9g,\"distance\":%.17g,\"clearance\":%.17g}", boneWeight.weight, debugShape.radius, sphereDistance, sphereDistance - debugShape.radius);
+                    break;
+                }
+            }
+        }
+        fprintf(stderr, "]}\n");
+    }
 }
 
 }

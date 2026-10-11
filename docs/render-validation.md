@@ -1,4 +1,4 @@
-# GPUで確認した描画
+﻿# GPUで確認した描画
 
 Windows 11 Pro、RTX 4070 SUPER / driver 610.74で取得した実際の描画画像です。ReleaseとDebug RuntimeはVisual Studio 2026 / v142、Windows SDK 10.0.22621.0でビルドしました。画像は最終描画先から読み戻した640×480のRGBデータを、色を変えずにPNGへ保存しています。
 
@@ -221,3 +221,10 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 修正後のYUMEKAはSilly Dancing・Capoeiraのそれぞれと51本が対応します。単独再生2種類とブレンドを各6姿勢、Debug/Releaseで取得し、18画像が構成間で全画素一致しました。各姿勢の全45,233位置・55,747法線はCPU参照へ比較して位置差0・法線最大差約0.000000179です。画像は`build/real-model-captures/{Debug,Release}/mixamo-legs/`、ログは`build/native-validation/mixamo-legs-{debug,release}-{silly,capoeira,blend}.log`にあります。
 
 この脚対応修正後のCPU全体はDebug/Release各53件、nativeの対応推定・binding・API・animation画像・BLEND画像・SDK consumerを含む関連9件が両構成で成功しました（Release95.15秒、Debug108.19秒）。native全78件の記録はGPU変形追加時点の結果です。脚修正後のログは`mixamo-legs-native-{debug,release}-tests.log`です。
+
+
+## 揺れものの侵入点を詳しく調べる
+
+検証用captureへ`GKCORE_VERIFY_SKIN_POINTS=Skirt`と`GKCORE_SKIN_POINT_DETAIL_FRAME=81`を指定すると、そのframeで最大32件の侵入点を深さ順に出します。`gkcore_model_skin_point_detail`が件数と参照元、`gkcore_model_skin_point`がmesh所属、身体shape、weight内訳と対応する骨球を記録します。`bodyShapeAncestor`はshape取付boneとその骨格祖先へのweightで、身体meshに対応するweight分類ではありません。元の参照一致検査は全frameで続き、詳細診断の失敗は別のJSONへ出します。通常DLL/SDKにはこのtoolやtest exportを含めません。
+
+点位置は補正前のsparse skin、sphere位置は現在の描画FK、身体は直近Updateのshape snapshotです。頂点補正はOFFの状態で調べます。今回のloop frame81では30点が侵入し、最深は`Yumeka_Cos_Skirt`のposition31877/local28、UpperLeg_L capsuleへ深さ.03001297でした。Skirt_3_L.002/Skirt_4_L.002へ約68%/32%で、腰などのweightはありません。対応sphereからはそれぞれ.03696/.09170離れています。これは小球が実skin面を覆いきれないcaseで、骨の接触成立だけから布の非侵入を導けません。記録は`build/native-validation/secondary-skin-detail-frame81.json`です。
