@@ -2,6 +2,8 @@
 #include "model/animation/FModelDeferredPose.h"
 #include "model/animation/AModelAnimationSource.h"
 #include "model/animation/ModelSnapshot.h"
+#include "model/animation/ModelSkinContactSnapshot.h"
+#include "model/animation/ModelSkinPointContacts.h"
 #include "model/Model.h"
 #include <float.h>
 #include <math.h>
@@ -432,7 +434,9 @@ FModelDeferredPose* EvaluateDeferredModelPose(const detail::ModelResource& sourc
     Array<animation::FModelGpuSkinningGeometry::FMatrix> gpuSkinningMatrices;
     const bool hasGpuSkinningGeometry = animationSource->GpuSkinningGeometry() != nullptr && animationSource->SupportsGpuSkinningPose(sampled);
     const bool deformed = hasGpuSkinningGeometry ? animationSource->DeformSparseWithGpuSkinningData(sampled, geometry, gpuSkinningMatrices, error) : animationSource->DeformSparse(sampled, geometry, error);
-    if (!deformed)
+    Array<animation::FModelSkinPointCorrection> corrections;
+    const bool contactsBuilt = deformed && BuildModelSkinContactSnapshot(*animationSource, playback->secondaryMotion, sampled, gpuSkinningMatrices, corrections, error);
+    if (!deformed || !contactsBuilt || (corrections.Count() > 0 && !animation::EvaluateModelSkinContactGeometry(*animationSource->GpuSkinningGeometry(), gpuSkinningMatrices, corrections.Data(), corrections.Count(), geometry, error)))
     {
         if (error.Empty())
             error.Assign("sparse model deformation failed");
@@ -468,6 +472,7 @@ FModelDeferredPose* EvaluateDeferredModelPose(const detail::ModelResource& sourc
     result->geometry.positions.MoveFrom(geometry.positions);
     result->geometry.normals.MoveFrom(geometry.normals);
     result->gpuSkinningMatrices.MoveFrom(gpuSkinningMatrices);
+    result->skinPointCorrections.MoveFrom(corrections);
     result->frozenPose.localTransforms.MoveFrom(sampled.localTransforms);
     result->frozenPose.morphWeights.MoveFrom(sampled.morphWeights);
     result->reference = { 1, DestroyDeferredPose };
@@ -534,6 +539,11 @@ FModelDeferredPose* EvaluateGpuDeferredModelPose(const detail::ModelResource& so
     profile.Start(2);
 #endif
     animation::FModelSparsePoseGeometry geometry;
+    Array<animation::FModelSkinPointCorrection> corrections;
+    if (!BuildModelSkinContactSnapshot(*animationSource, playback->secondaryMotion, sampled, matrices, corrections, error))
+    {
+        return nullptr;
+    }
     const bool verifyReference = VerifyGpuSkinningReferenceEnabled();
     if (verifyReference)
     {
@@ -548,6 +558,27 @@ FModelDeferredPose* EvaluateGpuDeferredModelPose(const detail::ModelResource& so
     }
     else if (!BuildGpuEvaluationGeometry(source, *sparseMap, animationSource->SparseDeformationIsValidated(), *gpuGeometry, matrices, geometry, error))
         return nullptr;
+    if (corrections.Count() > 0)
+    {
+        if (verifyReference)
+        {
+            if (!animation::EvaluateModelSkinContactGeometry(*gpuGeometry, matrices, corrections.Data(), corrections.Count(), geometry, error))
+            {
+                return nullptr;
+            }
+        }
+        else
+        {
+            for (uint32_t item = 0; item < corrections.Count(); ++item)
+            {
+                const auto& correction = corrections.At(item);
+                for (uint32_t axis = 0; axis < 3; ++axis)
+                {
+                    geometry.positions.At(correction.positionId).value[axis] = static_cast<float>(correction.position[axis]);
+                }
+            }
+        }
+    }
 #if defined(_WIN32) && (defined(GKCORE_TEST_FRAME_CAPTURE) || defined(GKCORE_RENDER_PERFORMANCE_METRICS))
     profile.Stop(2);
     profile.Start(3);
@@ -572,6 +603,7 @@ FModelDeferredPose* EvaluateGpuDeferredModelPose(const detail::ModelResource& so
     result->geometry.positions.MoveFrom(geometry.positions);
     result->geometry.normals.MoveFrom(geometry.normals);
     result->gpuSkinningMatrices.MoveFrom(matrices);
+    result->skinPointCorrections.MoveFrom(corrections);
     result->frozenPose.localTransforms.MoveFrom(sampled.localTransforms);
     result->frozenPose.morphWeights.MoveFrom(sampled.morphWeights);
     result->gpuEvaluationOnly = !verifyReference;
@@ -600,10 +632,8 @@ detail::ModelResource* MaterializeDeferredModelPose(const FModelDeferredPose& po
     const animation::FModelSparsePoseGeometry* geometry = &pose.geometry;
     if (pose.gpuEvaluationOnly)
     {
-        if (!pose.source->animation->source->DeformSparse(pose.frozenPose, evaluatedGeometry, error))
+        if (!EvaluateDeferredModelFallbackGeometry(pose, evaluatedGeometry, error))
         {
-            if (error.Empty())
-                error.Assign("GPU deferred model CPU fallback deformation failed");
             return nullptr;
         }
         geometry = &evaluatedGeometry;
@@ -628,4 +658,36 @@ detail::ModelResource* MaterializeDeferredModelPose(const FModelDeferredPose& po
     error.Clear();
     return result;
 }
+bool EvaluateDeferredModelFallbackGeometry(const FModelDeferredPose& pose, animation::FModelSparsePoseGeometry& output, String& error)
+{
+    if (!pose.source || !pose.source->animation || !pose.source->animation->source)
+    {
+        error.Assign("deferred model fallback source is missing");
+        return false;
+    }
+    const auto& source = *pose.source->animation->source;
+    animation::FModelSparsePoseGeometry candidate;
+    bool success = false;
+    if (pose.skinPointCorrections.Count() > 0)
+    {
+        const auto* skin = source.GpuSkinningGeometry();
+        success = skin && animation::EvaluateModelSkinContactGeometry(*skin, pose.gpuSkinningMatrices, pose.skinPointCorrections.Data(), pose.skinPointCorrections.Count(), candidate, error);
+    }
+    else
+    {
+        success = source.DeformSparse(pose.frozenPose, candidate, error);
+    }
+    if (!success)
+    {
+        if (error.Empty())
+        {
+            error.Assign("deferred model fallback deformation failed");
+        }
+        return false;
+    }
+    output.positions.MoveFrom(candidate.positions);
+    output.normals.MoveFrom(candidate.normals);
+    return true;
+}
+
 }

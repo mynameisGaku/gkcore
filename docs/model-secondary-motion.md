@@ -32,6 +32,8 @@
 
 成功した`UpdateModelSecondaryMotion`は、clip・blend・IKを反映し、揺れを重ねる前の基準姿勢をmodel instanceごとに保存します。
 再生条件が同じ間は、`DrawModel`と骨位置のqueryがこの姿勢を再利用するため、clipを再sampleしません。
+頂点接触の位置番号も設定時に選別し、鎖の再登録で更新します。
+UpdateとResetはこの配列を保持し、Drawで全weightを選別し直しません。
 再生時刻・speed・loop・blend・clip登録・IK・model bone roleの変更でcacheを無効にし、失敗したsetterや揺れ更新は直前の有効な状態を保ちます。
 描画snapshotは毎回独立して作られ、queryとdrawはsimulationやanimation clockを進めません。
 
@@ -62,6 +64,15 @@ if (gk::UpdateModelSecondaryMotion(model, deltaSeconds) != 0)
 ```
 
 身体形状だけを解除して鎖を続ける場合は、`gk::SetModelSecondaryMotionColliders(model, nullptr, 0)`を呼びます。
+
+変形後のskin頂点へ身体形状との接触を追加するには、`SetModelSecondaryMotionVertexContactsEnabled(model, true)`を明示します。
+既定は無効で、揺れものの鎖と身体形状の両方を設定してから有効にしてください。
+現在はzero-morph FBXだけが対応します。
+各frameの明示更新で骨・IK・simulationの姿勢は変更せず、描画直前にskin後の頂点だけを球・カプセルの外へ投影します。
+Draw packetは補正頂点と再構成normalを独立して保持し、CPU描画とGPU描画fallbackで同じ結果を使います。
+
+この頂点接触は三角形内部の面や布全体を押し出すものではなく、自己衝突や更新間の連続衝突にも対応しません。
+morphを含む未対応形状や、最大64回の反復後も接触を解けない場合は描画更新を診断付きで失敗させます。
 
 animationを停止しても、更新を続ければ速度は減衰し、重力などを含む平衡姿勢へ落ち着きます。
 重力がある設定では、平衡姿勢は厳密な元animation姿勢から少しずれることがあります。
@@ -149,7 +160,8 @@ OBJ連番など非skeletal animationには適用できません。
 比較画像では13鎖の変化を確認し、明確な発散や裂けは見つかっていません。
 接近時の揺れと角度制約を含む見た目の品質判定は継続中です。
 skin weightを調べる補助処理は内部向けで、zero-morph FBXに限られます。
-cloth meshを補正する処理はなく、衣服が身体へ埋まらないことは保証しません。
+頂点接触は対応するFBXで個々の変形点を補正します。
+布の面全体の接触は扱わないため、衣服全体が身体へ埋まらないことは保証しません。
 
 身体の球・カプセルとの離散接触を実装しています。
 更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。

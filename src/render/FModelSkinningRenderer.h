@@ -68,7 +68,7 @@ class FModelSkinningRenderer
   private:
     static constexpr uint32_t kFramesInFlight = 2;
     static constexpr uint32_t kMaximumModelsPerFrame = 4096;
-    static constexpr uint32_t kPhasesPerModel = 3;
+    static constexpr uint32_t kPhasesPerModel = 4;
     static constexpr uint32_t kDescriptorSlots = kMaximumModelsPerFrame * kPhasesPerModel;
     static constexpr uint32_t kConstantSlotBytes = 256;
 

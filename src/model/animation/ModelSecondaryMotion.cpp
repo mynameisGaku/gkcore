@@ -5,6 +5,7 @@
 #include "model/animation/ModelSecondaryMotionColliders.h"
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelPoseCache.h"
+#include "model/animation/ModelSkinContactSnapshot.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/FModelPoseChain.h"
 #include "model/animation/AModelAnimationSource.h"
@@ -147,6 +148,9 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
     state->colliders.MoveFrom(candidate.colliders);
     state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
     state->colliderMargin = candidate.colliderMargin;
+    state->skinPointContactsEnabled = candidate.skinPointContactsEnabled;
+    state->skinContactPositionIds.MoveFrom(candidate.skinContactPositionIds);
+    state->skinContactGeometry = candidate.skinContactGeometry;
     delete playback->secondaryMotion;
     playback->secondaryMotion = state;
     transform.playback = playback;
@@ -163,6 +167,13 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
         return true;
     }
     candidate.colliderMargin = previous->colliderMargin;
+    candidate.skinPointContactsEnabled = previous->skinPointContactsEnabled;
+    candidate.skinContactGeometry = previous->skinContactGeometry;
+    if (!candidate.skinContactPositionIds.AppendRange(previous->skinContactPositionIds.Data(), previous->skinContactPositionIds.Count()))
+    {
+        error.Assign("vertex contact selection allocation failed");
+        return false;
+    }
     if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
     {
         error.Assign("secondary motion collision state allocation failed");
@@ -482,6 +493,14 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
     }
     Array<Vec3> targets;
     model::animation::FModelPose validated;
+    if (candidate.skinPointContactsEnabled)
+    {
+        if (!model::SelectModelSkinContactPositions(*resource->animation->source, candidate, candidate.skinContactPositionIds, error))
+        {
+            return Failure(error);
+        }
+        candidate.skinContactGeometry = resource->animation->source->GpuSkinningGeometry();
+    }
     if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
@@ -545,6 +564,12 @@ int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMo
         }
     }
     candidate.colliderMargin = margin;
+    candidate.skinPointContactsEnabled = previous->skinPointContactsEnabled;
+    candidate.skinContactGeometry = previous->skinContactGeometry;
+    if (!candidate.skinContactPositionIds.AppendRange(previous->skinContactPositionIds.Data(), previous->skinContactPositionIds.Count()))
+    {
+        return detail::SetError("vertex contact selection allocation failed");
+    }
     if (count > 0)
     {
         // 新しい形状の取付先とscaleを、現在のclip・blend・IK姿勢で検証する。
@@ -581,4 +606,50 @@ int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMo
     detail::ClearError();
     return 0;
 }
+int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle handle, bool enabled)
+{
+    auto* resource = detail::FindModel(handle);
+    auto* transform = resource ? detail::FindModelTransform(handle) : nullptr;
+    if (!transform)
+    {
+        return detail::SetError("invalid model handle");
+    }
+    auto* state = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (enabled && (!state || state->chains.Count() == 0 || state->colliders.Count() == 0 || !resource->animation || !resource->animation->source || resource->animation->source->Format() != model::EModelAnimationFormat::Fbx || !resource->animation->source->GpuSkinningGeometry()))
+    {
+        return detail::SetError("vertex contacts require configured chains and colliders on a supported FBX model");
+    }
+    if (enabled)
+    {
+        String error;
+        model::animation::FModelPose pose;
+        if (!model::EvaluateModelPlaybackPose(*resource, *transform->playback, pose, error) || !resource->animation->source->SupportsGpuSkinningPose(pose))
+        {
+            return detail::SetError(error.Empty() ? "vertex contacts require a supported zero-morph FBX pose" : error.CStr());
+        }
+    }
+    if (state)
+    {
+        if (enabled)
+        {
+            String error;
+            Array<uint32_t> selected;
+            if (!model::SelectModelSkinContactPositions(*resource->animation->source, *state, selected, error))
+            {
+                return Failure(error);
+            }
+            state->skinContactPositionIds.MoveFrom(selected);
+            state->skinContactGeometry = resource->animation->source->GpuSkinningGeometry();
+        }
+        else
+        {
+            state->skinContactPositionIds.Reset();
+            state->skinContactGeometry = nullptr;
+        }
+        state->skinPointContactsEnabled = enabled;
+    }
+    detail::ClearError();
+    return 0;
+}
+
 }

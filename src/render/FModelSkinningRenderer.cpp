@@ -16,9 +16,11 @@ namespace
 {
 struct FModelSkinningConstants
 {
-    uint32_t ranges[20]; // dispatch headerと同じ20値。
-    uint32_t phase;      // 0はposition、1はnormal。
-    uint32_t padding[3]; // constant bufferの16 byte境界を保つ。
+    uint32_t ranges[20];       // dispatch headerと同じ20値。
+    uint32_t phase;            // shader処理の種類。
+    uint32_t correctionOffset; // 補正recordのframe buffer先頭。
+    uint32_t correctionCount;  // 補正record数。
+    uint32_t padding;          // constant bufferの16 byte境界を保つ。
 };
 
 static_assert(sizeof(FModelSkinningConstants) == 96, "skin constants must match the FSL layout");
@@ -59,7 +61,7 @@ bool StridedRangeEnd(uint32_t offset, uint32_t count, uint32_t stride, uint32_t&
 
 bool DispatchRangesFit(const FModelSkinningDispatch& dispatch, uint32_t recordCount, uint32_t matrixRecordCount, uint32_t outputCount)
 {
-    return dispatch.positionsCount <= UINT32_MAX / 2u && dispatch.matricesCount <= UINT32_MAX / 6u && RangeFits(dispatch.positionsOffset, dispatch.positionsCount * 2u, recordCount) && RangeFits(dispatch.influenceRangesOffset, dispatch.influenceRangesCount, recordCount) && RangeFits(dispatch.influencesOffset, dispatch.influencesCount, recordCount) && RangeFits(dispatch.matricesOffset, dispatch.matricesCount * 6u, matrixRecordCount) && RangeFits(dispatch.facesOffset, dispatch.facesCount, recordCount) && RangeFits(dispatch.cornersOffset, dispatch.cornersCount, recordCount) && RangeFits(dispatch.normalGroupRangesOffset, dispatch.normalGroupRangesCount, recordCount) && RangeFits(dispatch.normalFaceIdsOffset, dispatch.normalFaceIdsCount, recordCount) && StridedRangeFits(dispatch.outputPositionsOffset, dispatch.outputPositionsCount, 3u, outputCount) && StridedRangeFits(dispatch.outputNormalsOffset, dispatch.outputNormalsCount, 3u, outputCount) && dispatch.influenceRangesCount >= dispatch.positionsCount && dispatch.normalGroupRangesCount >= dispatch.outputNormalsCount && dispatch.outputPositionsCount >= dispatch.positionsCount;
+    return dispatch.positionsCount <= UINT32_MAX / 2u && dispatch.matricesCount <= UINT32_MAX / 6u && dispatch.correctionCount <= UINT32_MAX / 3u && dispatch.correctionCount <= dispatch.positionsCount && RangeFits(dispatch.positionsOffset, dispatch.positionsCount * 2u, recordCount) && RangeFits(dispatch.influenceRangesOffset, dispatch.influenceRangesCount, recordCount) && RangeFits(dispatch.influencesOffset, dispatch.influencesCount, recordCount) && RangeFits(dispatch.matricesOffset, dispatch.matricesCount * 6u, matrixRecordCount) && RangeFits(dispatch.correctionOffset, dispatch.correctionCount * 3u, matrixRecordCount) && static_cast<uint64_t>(dispatch.matricesOffset) + static_cast<uint64_t>(dispatch.matricesCount) * 6u == dispatch.correctionOffset && RangeFits(dispatch.facesOffset, dispatch.facesCount, recordCount) && RangeFits(dispatch.cornersOffset, dispatch.cornersCount, recordCount) && RangeFits(dispatch.normalGroupRangesOffset, dispatch.normalGroupRangesCount, recordCount) && RangeFits(dispatch.normalFaceIdsOffset, dispatch.normalFaceIdsCount, recordCount) && StridedRangeFits(dispatch.outputPositionsOffset, dispatch.outputPositionsCount, 3u, outputCount) && StridedRangeFits(dispatch.outputNormalsOffset, dispatch.outputNormalsCount, 3u, outputCount) && dispatch.influenceRangesCount >= dispatch.positionsCount && dispatch.normalGroupRangesCount >= dispatch.outputNormalsCount && dispatch.outputPositionsCount >= dispatch.positionsCount;
 }
 
 void CopyDispatchRanges(FModelSkinningConstants& constants, const FModelSkinningDispatch& dispatch, uint32_t phase)
@@ -67,7 +69,9 @@ void CopyDispatchRanges(FModelSkinningConstants& constants, const FModelSkinning
     const uint32_t values[20] = { dispatch.positionsOffset, dispatch.positionsCount, dispatch.influenceRangesOffset, dispatch.influenceRangesCount, dispatch.influencesOffset, dispatch.influencesCount, dispatch.matricesOffset, dispatch.matricesCount, dispatch.facesOffset, dispatch.facesCount, dispatch.cornersOffset, dispatch.cornersCount, dispatch.normalGroupRangesOffset, dispatch.normalGroupRangesCount, dispatch.normalFaceIdsOffset, dispatch.normalFaceIdsCount, dispatch.outputPositionsOffset, dispatch.outputPositionsCount, dispatch.outputNormalsOffset, dispatch.outputNormalsCount };
     memcpy(constants.ranges, values, sizeof(values));
     constants.phase = phase;
-    memset(constants.padding, 0, sizeof(constants.padding));
+    constants.correctionOffset = dispatch.correctionOffset;
+    constants.correctionCount = dispatch.correctionCount;
+    constants.padding = 0;
 }
 
 }
@@ -244,9 +248,12 @@ bool FModelSkinningRenderer::PrepareFrame(uint32_t frameIndex, const FModelSkinn
         {
             const uint32_t slot = model * kPhasesPerModel + phase;
             uint8_t* constantBytes = static_cast<uint8_t*>(constants_[frameIndex]->pCpuMappedAddress) + static_cast<size_t>(slot) * kConstantSlotBytes;
-            CopyDispatchRanges(*reinterpret_cast<FModelSkinningConstants*>(constantBytes), dispatches[model], phase);
-            const uint32_t workCount = phase == 0 ? dispatches[model].positionsCount : phase == 1 ? dispatches[model].facesCount : dispatches[model].outputNormalsCount;
+            // shader側の実行順はskin、補正、面normal、normal group。
+            const uint32_t shaderPhase = phase == 0 ? 0u : phase == 1 ? 3u : phase == 2 ? 1u : 2u;
+            // 各段階が処理する位置・補正・面・normal groupの数。
+            const uint32_t workCount = phase == 0 ? dispatches[model].positionsCount : phase == 1 ? dispatches[model].correctionCount : phase == 2 ? dispatches[model].facesCount : dispatches[model].outputNormalsCount;
             preparedGroupCounts_[frameIndex][model][phase] = workCount / 64u + (workCount % 64u != 0 ? 1u : 0u);
+            CopyDispatchRanges(*reinterpret_cast<FModelSkinningConstants*>(constantBytes), dispatches[model], shaderPhase);
             DescriptorDataRange constantRange = { slot * kConstantSlotBytes, sizeof(FModelSkinningConstants), 0 };
             DescriptorData data[7]{};
             data[0].mIndex = SRT_RES_IDX(ModelSkinningResources, PerDraw, gSkinRecords);
@@ -327,7 +334,7 @@ bool FModelSkinningRenderer::Dispatch(Cmd* command, uint32_t frameIndex, String&
             const uint32_t groupCount = preparedGroupCounts_[frameIndex][model][phase];
             if (groupCount)
                 cmdDispatch(command, groupCount, 1, 1);
-            if (phase == 0)
+            if (phase == 0 || phase == 1)
             {
                 BufferBarrier barrier{};
                 barrier.pBuffer = outputs_[frameIndex];
@@ -340,7 +347,7 @@ bool FModelSkinningRenderer::Dispatch(Cmd* command, uint32_t frameIndex, String&
                 preciseBarrier.mNewState = RESOURCE_STATE_UNORDERED_ACCESS;
                 cmdResourceBarrier(command, 1, &preciseBarrier, 0, nullptr, 0, nullptr);
             }
-            else if (phase == 1)
+            else if (phase == 2)
             {
                 BufferBarrier faceNormalBarrier{};
                 faceNormalBarrier.pBuffer = faceNormals_[frameIndex];
@@ -351,7 +358,7 @@ bool FModelSkinningRenderer::Dispatch(Cmd* command, uint32_t frameIndex, String&
         }
         if (model + 1u < preparedDispatchCounts_[frameIndex])
         {
-            // 次modelのphase0・phase1が共有scratchを再利用する前に、現在の読み書きを完了させる。
+            // 次modelのskin・面normal処理が共有scratchを再利用する前に、現在の読み書きを完了させる。
             BufferBarrier scratchBarriers[2]{};
             scratchBarriers[0].pBuffer = precisePositions_[frameIndex];
             scratchBarriers[0].mCurrentState = RESOURCE_STATE_UNORDERED_ACCESS;

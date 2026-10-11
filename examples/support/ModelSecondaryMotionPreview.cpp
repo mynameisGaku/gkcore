@@ -55,6 +55,43 @@ bool ParseSecondaryColliderOptions(int& argc, char** argv, const char*& path)
     return ParsePathOption(argc, argv, "--secondary-colliders", path);
 }
 
+bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled)
+{
+    // 値を持つoptionのpathをflagとして誤読しない。
+    int option = -1;
+    for (int index = 6; index < argc; ++index)
+    {
+        if (!argv[index])
+        {
+            return false;
+        }
+        if (strcmp(argv[index], "--materials") == 0 && index + 1 < argc)
+        {
+            ++index;
+            continue;
+        }
+        if (strcmp(argv[index], "--secondary-vertex-contact") == 0)
+        {
+            if (option >= 0)
+            {
+                return false;
+            }
+            option = index;
+        }
+    }
+    enabled = option >= 0;
+    if (option >= 0)
+    {
+        for (int index = option; index + 1 < argc; ++index)
+        {
+            argv[index] = argv[index + 1];
+        }
+        --argc;
+        argv[argc] = nullptr;
+    }
+    return true;
+}
+
 bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
 {
     FILE* file = fopen(path, "rb");

@@ -7,6 +7,7 @@
 #include "model/animation/FModelGpuSkinningGeometry.h"
 #include "model/animation/FModelSparsePoseGeometry.h"
 #include "model/animation/FModelPose.h"
+#include "model/animation/FModelSkinPointCorrection.h"
 #include "resources/Resources.h"
 
 /**
@@ -31,6 +32,8 @@ struct FModelDeferredPose
     animation::FModelPose frozenPose;
     // GPU評価時にCPUでpositions/normalsを全面計算していないことを示す。
     bool gpuEvaluationOnly = false;
+    // 描画予約時に確定したmodel空間の頂点補正。instanceから独立して所有する。
+    Array<animation::FModelSkinPointCorrection> skinPointCorrections;
 };
 
 /**
@@ -45,6 +48,11 @@ FModelDeferredPose* EvaluateGpuDeferredModelPose(const detail::ModelResource& so
  * sparse姿勢を通常の頂点配列へ展開する。返された参照は呼び出し側が解放する。
  */
 detail::ModelResource* MaterializeDeferredModelPose(const FModelDeferredPose& pose, String& error);
+/**
+ * 凍結したpose・行列・頂点補正からCPU用の位置と法線を復元する。
+ * どのGPU fallback経路でも同じ所有値を使う。失敗時はoutputを保つ。
+ */
+bool EvaluateDeferredModelFallbackGeometry(const FModelDeferredPose& pose, animation::FModelSparsePoseGeometry& output, String& error);
 }
 
 #endif

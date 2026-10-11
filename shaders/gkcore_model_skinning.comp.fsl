@@ -6,6 +6,8 @@
     DATA(uint4, Ranges3, None);
     DATA(uint4, Ranges4, None);
     DATA(uint, Phase, None);
+    DATA(uint, CorrectionOffset, None);
+    DATA(uint, CorrectionCount, None);
 };
 
 #include "gkcore_model_skinning.srt.h"
@@ -59,6 +61,8 @@ void CS_MAIN(SV_DispatchThreadID(uint3) dispatchThreadID)
     uint4 ranges3 = gSkinConstants.Ranges3;
     uint4 ranges4 = gSkinConstants.Ranges4;
     uint phase = gSkinConstants.Phase;
+    uint correctionOffset = gSkinConstants.CorrectionOffset;
+    uint correctionCount = gSkinConstants.CorrectionCount;
     if (phase == 0)
     {
         uint positionCount = ranges0.y;
@@ -87,6 +91,36 @@ void CS_MAIN(SV_DispatchThreadID(uint3) dispatchThreadID)
             InterlockedOr(gSkinErrors[0], 1u);
         gSkinPrecisePositions[outputPosition] = double4(skinned, 1.0);
         gSkinOutput[ranges4.x + index * 3] = float4(drawPosition, 1.0);
+    }
+    else if (phase == 3)
+    {
+        if (index >= correctionCount)
+            RETURN();
+        if (correctionOffset > 0xffffffffu - 2u || index > (0xffffffffu - 2u - correctionOffset) / 3u)
+        {
+            InterlockedOr(gSkinErrors[0], 8u);
+            RETURN();
+        }
+        uint correctionBase = correctionOffset + index * 3u;
+        uint4 positionRecord = gSkinMatrices[correctionBase];
+        uint positionId = positionRecord.x;
+        if (positionId >= ranges0.y || positionId >= ranges4.y || positionId > 0xffffffffu - ranges4.x / 3u)
+        {
+            InterlockedOr(gSkinErrors[0], 8u);
+            RETURN();
+        }
+        uint4 xyRecord = gSkinMatrices[correctionBase + 1u];
+        uint4 zRecord = gSkinMatrices[correctionBase + 2u];
+        double3 corrected = double3(asdouble(xyRecord.x, xyRecord.y), asdouble(xyRecord.z, xyRecord.w), asdouble(zRecord.x, zRecord.y));
+        float3 drawPosition = float3(corrected.x, corrected.y, corrected.z);
+        if (!IsFiniteSkinDouble3(corrected) || !all(isfinite(drawPosition)))
+        {
+            InterlockedOr(gSkinErrors[0], 8u);
+            RETURN();
+        }
+        uint outputPosition = ranges4.x / 3u + positionId;
+        gSkinPrecisePositions[outputPosition] = double4(corrected, 1.0);
+        gSkinOutput[ranges4.x + positionId * 3u] = float4(drawPosition, 1.0);
     }
     else if (phase == 1)
     {

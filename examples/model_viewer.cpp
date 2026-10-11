@@ -240,6 +240,12 @@ int main(int argc, char** argv)
         return 2;
     }
     // 大きく移動するmotionを画面内で見るための任意指定。
+    bool vertexContacts = false;
+    if (!gk::examples::ParseSecondaryVertexContactOptions(argc, argv, vertexContacts))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-vertex-contact option\n");
+        return 2;
+    }
     const char* secondaryColliderPath = nullptr;
     if (!gk::examples::ParseSecondaryColliderOptions(argc, argv, secondaryColliderPath))
     {
@@ -258,14 +264,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
-    if (secondaryColliderPath && !secondaryMotionPath)
+    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath))
     {
-        fprintf(stderr, "--secondary-colliders requires --secondary-motion\n");
+        fprintf(stderr, "--secondary-colliders requires --secondary-motion; --secondary-vertex-contact requires colliders\n");
         return 2;
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -519,6 +525,10 @@ int main(int argc, char** argv)
         failed = true;
     }
     if (!failed && secondaryColliderPath && !gk::examples::ApplySecondaryColliderPreview(model, secondaryColliderPath))
+    {
+        failed = true;
+    }
+    if (!failed && vertexContacts && !Check(gk::SetModelSecondaryMotionVertexContactsEnabled(model, true), "SetModelSecondaryMotionVertexContactsEnabled"))
     {
         failed = true;
     }
