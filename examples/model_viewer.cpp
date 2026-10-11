@@ -6,6 +6,7 @@
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
+#include "examples/support/ModelSecondaryMotionDebugView.h"
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -239,7 +240,13 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "unknown error");
         return 2;
     }
-    // 大きく移動するmotionを画面内で見るための任意指定。
+    // 接触形状を起動時から重ねて表示する任意指定。
+    bool collisionDebug = false;
+    if (!gk::examples::ParseSecondaryMotionDebugOptions(argc, argv, collisionDebug))
+    {
+        fprintf(stderr, "invalid or duplicate --collision-debug option\n");
+        return 2;
+    }
     bool vertexContacts = false;
     if (!gk::examples::ParseSecondaryVertexContactOptions(argc, argv, vertexContacts))
     {
@@ -258,6 +265,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --secondary-motion option\n");
         return 2;
     }
+    // 大きく移動するmotionを画面内で見るための任意指定。
     bool followMotion = false;
     if (!gk::examples::ParseMotionViewOptions(argc, argv, followMotion))
     {
@@ -269,9 +277,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "--secondary-colliders requires --secondary-motion; --secondary-vertex-contact requires colliders\n");
         return 2;
     }
+    if (collisionDebug && !secondaryMotionPath)
+    {
+        fprintf(stderr, "--collision-debug requires --secondary-motion\n");
+        return 2;
+    }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--collision-debug]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -570,6 +583,10 @@ int main(int argc, char** argv)
         {
             rotationY += static_cast<float>(2.1 * deltaSeconds);
         }
+        if (secondaryMotionPath && gk::WasKeyPressed(gk::Key::C))
+        {
+            collisionDebug = !collisionDebug;
+        }
         if (gk::WasKeyPressed(gk::Key::R))
         {
             rotationY = 0.0f;
@@ -695,10 +712,20 @@ int main(int argc, char** argv)
         LARGE_INTEGER drawStart{};
         // DrawModel APIのCPU処理終了tick。
         LARGE_INTEGER drawEnd{};
-        if (!QueryPerformanceCounter(&drawStart) || !Check(gk::DrawModel(model), "DrawModel") || !QueryPerformanceCounter(&drawEnd) || !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "SetDrawLayer(UI)") || !Check(gk::DrawString(24.0f, 24.0f, "← / → 回転  M: Motion  B: Blend  Space: Bloom  R: reset  Escape: 終了", gk::ColorRGB(255, 255, 255)), "DrawString(controls)") || !Check(gk::DrawString(24.0f, 58.0f, mode, gk::ColorRGB(215, 225, 240)), "DrawString(mode)"))
+        // 揺れ設定があるときだけ接触表示の切替を案内する。
+        const char* controls = secondaryMotionPath ? "← / → 回転  M: Motion  B: Blend  Space: Bloom  C: 当たり判定  R: reset  Escape: 終了" : "← / → 回転  M: Motion  B: Blend  Space: Bloom  R: reset  Escape: 終了";
+        if (!QueryPerformanceCounter(&drawStart) || !Check(gk::DrawModel(model), "DrawModel") || !QueryPerformanceCounter(&drawEnd) || !Check(gk::SetDrawLayer(gk::DrawLayer::UI), "SetDrawLayer(UI)") || !Check(gk::DrawString(24.0f, 24.0f, controls, gk::ColorRGB(255, 255, 255)), "DrawString(controls)") || !Check(gk::DrawString(24.0f, 58.0f, mode, gk::ColorRGB(215, 225, 240)), "DrawString(mode)"))
         {
             failed = true;
             break;
+        }
+        if (collisionDebug && secondaryMotionPath)
+        {
+            if (!gk::examples::DrawModelSecondaryMotionDebug(model, scale, displayCenter, rotationY) || !Check(gk::DrawString(24.0f, 196.0f, "青: 身体  橙: 揺れもの  白: 固定  灰: 末端", gk::ColorRGB(150, 215, 255)), "DrawString(collision legend)"))
+            {
+                failed = true;
+                break;
+            }
         }
         if (humanoidIkMode)
         {

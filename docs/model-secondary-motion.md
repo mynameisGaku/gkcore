@@ -10,6 +10,12 @@
 
 身体形状は身体のboneへ取り付けます。揺れもの鎖root自身とその子孫boneだけは指定できません。別枝の脚boneなども使用できます。端点・半径の変換を保つため、取付boneとその祖先は正のほぼ一様scaleである必要があります。
 
+鎖ごとの`SetModelSecondaryMotionChainCollisionRadius(model, firstBone, radius)`は、各boneと仮想末端を覆う球の半径をmodel空間で設定します。既定は`0`で、従来の細い節・線分接触を保ちます。指定した半径は身体形状の半径に加えて判定し、鎖を同じ先頭boneで登録し直したときと`ResetModelSecondaryMotion`の後も保持されます。setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMotion`から半径を使います。無効な先頭boneや負値・非有限値は失敗し、前の設定を保ちます。`ClearModelSecondaryMotion`で鎖とともに解放されます。
+
+`GetModelSecondaryMotionDebugShapes`は公開値型`gk::FModelSecondaryMotionDebugShape`で、現在の姿勢に対応する接触形状をmodel空間で返します。`nullptr, 0`は必要な個数を返し、配列が足りない場合や無効なinstanceでは失敗して出力を保ちます。描画用の色分けでは、身体形状を青、自由に動く節を橙色、固定rootを白、仮想末端を灰色で表示します。身体球の半径には`SetModelSecondaryMotionColliders`のmarginが含まれ、鎖の球半径は上記のsetter値です。照会はanimationと物理状態を進めません。
+
+身体形状の中に固定rootがある場合、その形状との最初の節間線分は接触判定から除外します。次の自由節の位置は引き続き検査します。鎖の球による接触は骨の位置を身体から離すもので、skin weightによる頂点位置や布の面全体は補正しません。複数boneのblendとmesh幅があるため、骨が離れていてもmeshが身体へ埋まることがあります。
+
 毎frameはanimation clockを進め、clipをsampleしてblendし、IKを設定・解決した後、描画前に`UpdateModelSecondaryMotion`を一度呼びます。この明示更新がmodel空間の鎖を進め、確定姿勢をinstanceへ保存します。身体形状もその時点のclip・blend・IK姿勢へ追従します。`DrawModel`、`GetModelBonePosition(s)`、描画済みpacketの表示は保存済み姿勢を使い、再度積分しません。更新後に同じframeで何度描画しても結果は変わりません。
 
 成功した`UpdateModelSecondaryMotion`は、clip・blend・IKを反映し、揺れを重ねる前の基準姿勢をmodel instanceごとに保存します。再生条件が同じ間は、`DrawModel`と骨位置のqueryがこの姿勢を再利用するため、clipを再sampleしません。頂点接触の位置番号も設定時に選別し、鎖の再登録で更新します。UpdateとResetはこの配列を保持し、Drawで全weightを選別し直しません。再生時刻・speed・loop・blend・clip登録・IK・model bone roleの変更でcacheを無効にし、失敗したsetterや揺れ更新は直前の有効な状態を保ちます。描画snapshotは毎回独立して作られ、queryとdrawはsimulationやanimation clockを進めません。
@@ -63,12 +69,14 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 ## ViewerのYUMEKA設定
 
-`model_viewer`と`real_model_capture_tests`は`--secondary-motion <config-file>`を受け付けます。設定行は振動数、減衰比、最大曲げ角、末端offsetのXYZ、重力XYZの9数値、区切り`|`、bone名の順です。`|`の前には任意で制約反復数を10個目の数値として指定できます。省略時は8回、指定時は1〜32回です。9数値だけの既存設定は従来どおり読み込めます。空行と`#`コメントを無視し、bone名はモデルから検索します。現在の[YUMEKA設定](../samples/config/yumeka-secondary-motion.txt)は髪2本、尻尾1本、スカート10本の計13鎖です。設定例は検証素材用で、Runtimeへ同梱するassetではありません。
+`model_viewer`は揺れ設定があるとき、`C`キーで接触形状の表示を切り替えます。`--collision-debug`を付けると起動時から表示します。このflagには`--secondary-motion`の指定が必要です。
 
-身体接触には`--secondary-colliders <config-file>`を併用します。各設定行は端点6成分、半径、`|`、取付bone名の順です。bone名はモデルから検索され、節の余白`0.005` model unitが半径へ加わります。現在の[YUMEKA接触鎖設定](../samples/config/yumeka-secondary-contact-motion.txt)は、髪・尻尾の3鎖を8回、スカート10鎖を32回反復する設定です。スカートの角度制約と接触制約が同時に成立しにくい姿勢でも、反復数を増やして解ける場合に備えています。身体半径・余白・角度設定は変えていません。[8個の身体形状](../samples/config/yumeka-secondary-colliders.txt)と併用します。なお、身体接触を使わない既存presetはすべて既定の8回です。
+`model_viewer`と`real_model_capture_tests`は`--secondary-motion <config-file>`を受け付けます。設定行は振動数、減衰比、最大曲げ角、末端offsetのXYZ、重力XYZの9数値に、任意の反復数と節球半径を続け、区切り`|`とbone名を置きます。反復数は10個目で1〜32、半径は11個目で有限な0以上のmodel空間値です。半径は各鎖boneと仮想末端の小球半径を表します。半径を指定する場合は反復数も記述します。両方を省略した9数値の既存設定、半径を省略した10数値設定は引き続き読み込めます。空行と`#`コメントを無視し、bone名はモデルから検索します。身体接触を使わない[YUMEKA設定](../samples/config/yumeka-secondary-motion.txt)は13鎖すべて節半径なしです。設定例は検証素材用で、Runtimeへ同梱するassetではありません。
+
+身体接触には`--secondary-colliders <config-file>`を併用します。各設定行は端点6成分、半径、`|`、取付bone名の順です。bone名はモデルから検索され、節の余白`0.005` model unitが半径へ加わります。[従来の頂点接触用鎖設定](../samples/config/yumeka-secondary-contact-motion.txt)は髪・尻尾の3鎖を8回、スカート10鎖を32回反復し、節球は使いません。[骨の小球と身体カプセル用設定](../samples/config/yumeka-bone-contact-motion.txt)では髪・尻尾の節半径が`0.003`、スカートが`0.008` model unitです。骨の小球設定は[脚へ合わせて拡げた8個の身体形状](../samples/config/yumeka-bone-colliders.txt)、頂点接触の設定は[従来の身体形状](../samples/config/yumeka-secondary-colliders.txt)を使います。スカート鎖はどちらも32回反復します。
 
 ```powershell
-model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-secondary-contact-motion.txt --secondary-colliders yumeka-secondary-colliders.txt
+model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-bone-contact-motion.txt --secondary-colliders yumeka-bone-colliders.txt --collision-debug
 ```
 
 自分のモデル用に`character-secondary-motion.txt`を作り、bone名を実際の名前へ置き換えます。次は1本の鎖の設定行です。
@@ -89,6 +97,6 @@ model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-ble
 
 ## 対応範囲と未対応
 
-この機能はskeletal GLB / FBX等の書き換え可能なbone姿勢へ適用します。OBJ連番など非skeletal animationには適用できません。髪・スカート・アクセサリー等の二次動作自体はユーザー指定の必須範囲です。一方、spring式、重力・風、許容値、model空間でのsimulationは開発側が選んだ成立手段です。実装はばね、減衰、重力、風、bone長、基準方向からの最大曲げ角を扱います。RTX 4070 SUPERで、YUMEKAの髪2鎖・スカート10鎖・尻尾1鎖とSilly Dancing / Capoeiraのblend・IKを組み合わせた120frame実GPU検証が`valid: true`で完了しました。比較画像では13鎖の変化を確認し、明確な発散や裂けは見つかっていません。接近時の揺れと角度制約を含む見た目の品質判定は継続中です。skin weightを調べる補助処理は内部向けで、zero-morph FBXに限られます。頂点接触は対応するFBXで個々の変形点を補正します。布の面全体の接触は扱わないため、衣服全体が身体へ埋まらないことは保証しません。
+この機能はskeletal GLB / FBX等の書き換え可能なbone姿勢へ適用します。OBJ連番など非skeletal animationには適用できません。髪・スカート・アクセサリー等の二次動作自体はユーザー指定の必須範囲です。一方、spring式、重力・風、許容値、model空間でのsimulationは開発側が選んだ成立手段です。実装はばね、減衰、重力、風、bone長、基準方向からの最大曲げ角を扱います。RTX 4070 SUPERで、YUMEKAの髪2鎖・スカート10鎖・尻尾1鎖とSilly Dancing / Capoeiraのblend・IKを組み合わせ、Debug・Releaseの0秒と3.35秒で各120frame、計480frameのNative描画検証が有効に完了しました。対応する24組の画像はbyte単位で一致し、旧形状と節球付き形状のdebug表示も各120frame有効でした。骨・身体形状の接触は確認できましたが、衣服の見た目には身体meshへの埋まりが残っています。skin weightを調べる補助処理は内部向けで、zero-morph FBXに限られます。頂点接触は対応するFBXで個々の変形点を補正します。布の面全体の接触は扱わないため、衣服全体が身体へ埋まらないことは保証しません。
 
 身体の球・カプセルとの離散接触を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。

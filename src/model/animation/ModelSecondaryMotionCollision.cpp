@@ -412,6 +412,75 @@ bool ValidateSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollision
     return true;
 }
 
+bool ExpandSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* input, uint32_t count, float pointRadius, gk::Array<FModelSecondaryMotionCollisionShape>& output, gk::String& error)
+{
+    error.Clear();
+    if (!isfinite(pointRadius) || pointRadius < 0.0f || !ValidateSecondaryMotionCollisionShapes(input, count, error))
+    {
+        if (error.Empty())
+        {
+            error.Assign("Secondary motion skin point radius is invalid");
+        }
+        return false;
+    }
+    gk::Array<FModelSecondaryMotionCollisionShape> candidate;
+    if (!candidate.Reserve(count))
+    {
+        error.Assign("Secondary motion collision shape expansion allocation failed");
+        return false;
+    }
+    if (pointRadius == 0.0f)
+    {
+        if (!candidate.AppendRange(input, count))
+        {
+            error.Assign("Secondary motion collision shape copy failed");
+            return false;
+        }
+    }
+    else
+    {
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            FModelSecondaryMotionCollisionShape shape = input[index];
+            const double radiusSum = static_cast<double>(shape.radius) + static_cast<double>(pointRadius);
+            if (!isfinite(radiusSum) || radiusSum > FLT_MAX)
+            {
+                error.Assign("Secondary motion expanded collision radius exceeds float range");
+                return false;
+            }
+            float expandedRadius = static_cast<float>(radiusSum);
+            if (static_cast<double>(expandedRadius) < radiusSum)
+            {
+                expandedRadius = nextafterf(expandedRadius, INFINITY);
+                if (!isfinite(expandedRadius))
+                {
+                    error.Assign("Secondary motion expanded collision radius cannot be rounded outward");
+                    return false;
+                }
+            }
+            const float dominantRadius = fmaxf(shape.radius, pointRadius);
+            if (expandedRadius <= dominantRadius)
+            {
+                expandedRadius = nextafterf(dominantRadius, INFINITY);
+                if (!isfinite(expandedRadius) || expandedRadius > FLT_MAX)
+                {
+                    error.Assign("Secondary motion expanded collision radius cannot exceed its larger input radius");
+                    return false;
+                }
+            }
+            shape.radius = expandedRadius;
+            if (!candidate.Append(shape))
+            {
+                error.Assign("Secondary motion collision shape expansion allocation failed");
+                return false;
+            }
+        }
+    }
+    output.MoveFrom(candidate);
+    error.Clear();
+    return true;
+}
+
 bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error)
 {
     error.Clear();

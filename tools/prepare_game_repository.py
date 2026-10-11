@@ -50,6 +50,8 @@ EXAMPLE_FILES = (
     "examples/support/FModelMotionView.cpp",
     "examples/support/ModelSecondaryMotionPreview.h",
     "examples/support/ModelSecondaryMotionPreview.cpp",
+    "examples/support/ModelSecondaryMotionDebugView.h",
+    "examples/support/ModelSecondaryMotionDebugView.cpp",
     "examples/assets/model_lighting.glb",
     "examples/shaders/tint.hlsl",
     "examples/shaders/post_effect_tint.hlsl",

@@ -18,6 +18,7 @@
 #include "model/animation/ModelAnimationResources.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
+#include "examples/support/ModelSecondaryMotionPreview.h"
 
 #include <chrono>
 #include <cstring>
@@ -937,8 +938,91 @@ bool TestSkinPointContactsSnapshot()
         frameOpen = false;
         passed = presented && passed;
     }
+    // 骨の半径設定が鎖の再登録と状態更新を越えて保たれ、queryが純粋であることを調べる。
+    if (passed)
+    {
+        gk::Vec3 beforeRadius[2]{};
+        gk::Vec3 afterRadius[2]{};
+        const bool beforePoseReady = gk::GetModelBonePositions(first, chain, 2, beforeRadius) == 0;
+        const int32_t radiusSet = gk::SetModelSecondaryMotionChainCollisionRadius(first, chain[0], 0.05f);
+        const bool afterSetterPoseReady = gk::GetModelBonePositions(first, chain, 2, afterRadius) == 0;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        const bool setterStored = radiusSet == 0 && firstState && firstState->chains.Count() == 1 && firstState->chains.At(0)->collisionRadius == 0.05f;
+        const bool setterDidNotMovePose = beforePoseReady && afterSetterPoseReady && memcmp(beforeRadius, afterRadius, sizeof(beforeRadius)) == 0;
+        const bool invalidRadiusAtomic = gk::SetModelSecondaryMotionChainCollisionRadius(first, chain[0], -0.01f) == -1 && gk::SetModelSecondaryMotionChainCollisionRadius(first, chain[0], std::numeric_limits<float>::quiet_NaN()) == -1 && firstState && firstState->chains.At(0)->collisionRadius == 0.05f;
+        const bool unknownChainRejected = gk::SetModelSecondaryMotionChainCollisionRadius(first, 0, 0.1f) == -1 && firstState && firstState->chains.At(0)->collisionRadius == 0.05f;
+        bool lifecycleKeptRadius = gk::SetModelSecondaryMotionChain(first, chain, 2, settings) == 0;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        lifecycleKeptRadius = lifecycleKeptRadius && firstState && firstState->chains.Count() == 1 && firstState->chains.At(0)->collisionRadius == 0.05f;
+        lifecycleKeptRadius = gk::ResetModelSecondaryMotion(first) == 0 && lifecycleKeptRadius;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        lifecycleKeptRadius = lifecycleKeptRadius && firstState && firstState->chains.Count() == 1 && firstState->chains.At(0)->collisionRadius == 0.05f;
+        lifecycleKeptRadius = gk::UpdateModelSecondaryMotion(first, 0.0) == 0 && lifecycleKeptRadius;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        lifecycleKeptRadius = lifecycleKeptRadius && firstState && firstState->chains.Count() == 1 && firstState->chains.At(0)->collisionRadius == 0.05f;
+        passed = setterStored && setterDidNotMovePose && invalidRadiusAtomic && unknownChainRejected && lifecycleKeptRadius && passed;
+        if (!passed)
+        {
+            fprintf(stderr, "bone collision radius setter or lifecycle contract failed: %s\n", gk::GetLastErrorMessage());
+        }
+
+        gk::FModelSecondaryMotionDebugShape debugShapes[4]{};
+        const int32_t requiredShapes = gk::GetModelSecondaryMotionDebugShapes(first, nullptr, 0);
+        const bool querySize = requiredShapes == 4;
+        const gk::FModelSecondaryMotionDebugShape sentinel{ { 17.0f, 18.0f, 19.0f }, { 20.0f, 21.0f, 22.0f }, 23.0f, 24, true, true, true };
+        const gk::FModelSecondaryMotionDebugShape sentinelOutput[4] = { sentinel, sentinel, sentinel, sentinel };
+        gk::FModelSecondaryMotionDebugShape shortOutput[4] = { sentinel, sentinel, sentinel, sentinel };
+        const bool shortCapacityRejected = gk::GetModelSecondaryMotionDebugShapes(first, shortOutput, 3) == -1 && memcmp(shortOutput, sentinelOutput, sizeof(shortOutput)) == 0;
+        gk::Vec3 beforeQueries[2]{};
+        gk::Vec3 afterQueries[2]{};
+        const bool beforeQueryPoseReady = gk::GetModelBonePositions(first, chain, 2, beforeQueries) == 0;
+        const int32_t copiedShapes = gk::GetModelSecondaryMotionDebugShapes(first, debugShapes, 4);
+        gk::FModelSecondaryMotionDebugShape repeatedShapes[4]{};
+        const int32_t repeatedShapeCount = gk::GetModelSecondaryMotionDebugShapes(first, repeatedShapes, 4);
+        const bool afterQueryPoseReady = gk::GetModelBonePositions(first, chain, 2, afterQueries) == 0;
+        const bool queryDidNotAdvancePose = beforeQueryPoseReady && afterQueryPoseReady && memcmp(beforeQueries, afterQueries, sizeof(beforeQueries)) == 0 && copiedShapes == repeatedShapeCount;
+        const bool invalidHandleRejected = gk::GetModelSecondaryMotionDebugShapes({}, shortOutput, 4) == -1 && memcmp(shortOutput, sentinelOutput, sizeof(shortOutput)) == 0;
+        bool sawBody = false;
+        bool sawFixedBone = false;
+        bool sawChildBone = false;
+        bool sawVirtualTip = false;
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            const gk::FModelSecondaryMotionDebugShape& shape = debugShapes[index];
+            if (shape.body)
+            {
+                sawBody = shape.bone == 0 && Near(shape.radius, 0.805f) && Near(shape.start.x, 0.0f) && Near(shape.start.y, 0.0f) && Near(shape.start.z, 0.0f) && Near(shape.end.x, shape.start.x) && Near(shape.end.y, shape.start.y) && Near(shape.end.z, shape.start.z) && !shape.fixed && !shape.virtualTip;
+            }
+            else if (shape.virtualTip)
+            {
+                sawVirtualTip = shape.bone == chain[1] && Near(shape.radius, 0.05f) && Near(shape.start.x, 0.0f) && Near(shape.start.y, 2.0f) && Near(shape.start.z, 0.0f) && Near(shape.end.x, shape.start.x) && Near(shape.end.y, shape.start.y) && Near(shape.end.z, shape.start.z) && !shape.fixed;
+            }
+            else if (shape.bone == chain[0])
+            {
+                sawFixedBone = shape.fixed && Near(shape.radius, 0.05f) && Near(shape.start.x, 0.0f) && Near(shape.start.y, 0.0f) && Near(shape.start.z, 0.0f) && Near(shape.end.x, shape.start.x) && Near(shape.end.y, shape.start.y) && Near(shape.end.z, shape.start.z);
+            }
+            else if (shape.bone == chain[1])
+            {
+                sawChildBone = !shape.fixed && Near(shape.radius, 0.05f) && Near(shape.start.x, 0.0f) && Near(shape.start.y, 1.0f) && Near(shape.start.z, 0.0f) && Near(shape.end.x, shape.start.x) && Near(shape.end.y, shape.start.y) && Near(shape.end.z, shape.start.z);
+            }
+        }
+        passed = querySize && copiedShapes == 4 && shortCapacityRejected && invalidHandleRejected && queryDidNotAdvancePose && sawBody && sawFixedBone && sawChildBone && sawVirtualTip && passed;
+        if (!passed)
+        {
+            fprintf(stderr, "secondary-motion debug-shape query contract failed (required=%d copied=%d body=%d root=%d child=%d tip=%d): %s\n", requiredShapes, copiedShapes, sawBody ? 1 : 0, sawFixedBone ? 1 : 0, sawChildBone ? 1 : 0, sawVirtualTip ? 1 : 0, gk::GetLastErrorMessage());
+        }
+    }
+
     if (first.IsValid())
     {
+        const bool secondaryCleared = gk::ClearModelSecondaryMotion(first) == 0;
+        firstTransform = gk::detail::FindModelTransform(first);
+        firstState = firstTransform && firstTransform->playback ? firstTransform->playback->secondaryMotion : nullptr;
+        passed = secondaryCleared && (!firstState || firstState->chains.Count() == 0) && passed;
         passed = gk::DeleteModel(first) == 0 && passed;
     }
     if (second.IsValid())
@@ -1190,6 +1274,81 @@ bool TestSecondaryMotionPoseEvaluationBudget()
     settings.endOffset = { 0.0f, 0.25f, 0.0f };
     settings.maxAngleDegrees = 60.0f;
     bool passed = gk::SetModelSecondaryMotionChain(instance, firstChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChain(instance, secondChain, 2, settings) == 0;
+    passed = gk::SetModelSecondaryMotionChainCollisionRadius(instance, firstChain[0], 0.05f) == 0 && gk::SetModelSecondaryMotionChainCollisionRadius(instance, secondChain[0], 0.15f) == 0 && passed;
+    auto* radiusTransform = gk::detail::FindModelTransform(instance);
+    auto* radiusState = radiusTransform && radiusTransform->playback ? radiusTransform->playback->secondaryMotion : nullptr;
+    bool separateRadiiStayIndependent = radiusState && radiusState->chains.Count() == 2;
+    if (separateRadiiStayIndependent)
+    {
+        separateRadiiStayIndependent = radiusState->chains.At(0)->collisionRadius == 0.05f && radiusState->chains.At(1)->collisionRadius == 0.15f;
+    }
+    passed = separateRadiiStayIndependent && passed;
+    if (passed)
+    {
+        namespace fs = std::filesystem;
+        const auto suffix = std::chrono::steady_clock::now().time_since_epoch().count();
+        const auto configDirectory = fs::temp_directory_path() / ("gkcore-secondary-motion-radius-" + std::to_string(suffix));
+        fs::create_directories(configDirectory);
+        const auto configPath = configDirectory / "motion.txt";
+        const std::string configUtf8Path = configPath.string();
+        const auto WriteConfig = [&](const char* contents)
+        {
+            std::ofstream file(configPath, std::ios::binary | std::ios::trunc);
+            file << contents;
+            return file.good();
+        };
+        const auto ReadFirstChain = [&]()
+        {
+            auto* currentTransform = gk::detail::FindModelTransform(instance);
+            auto* currentState = currentTransform && currentTransform->playback ? currentTransform->playback->secondaryMotion : nullptr;
+            if (!currentState || currentState->chains.Count() != 2)
+            {
+                return static_cast<gk::model::FModelSecondaryMotionChain*>(nullptr);
+            }
+            for (uint32_t chainIndex = 0; chainIndex < currentState->chains.Count(); ++chainIndex)
+            {
+                if (currentState->chains.At(chainIndex)->bones.Count() > 0 && currentState->chains.At(chainIndex)->bones.At(0) == firstChain[0])
+                {
+                    return currentState->chains.At(chainIndex);
+                }
+            }
+            return static_cast<gk::model::FModelSecondaryMotionChain*>(nullptr);
+        };
+        bool configPassed = true;
+        const auto CheckRadiusConfigStage = [&](bool result, const char* stage)
+        {
+            if (!result)
+            {
+                auto* current = ReadFirstChain();
+                fprintf(stderr, "secondary-motion radius config failed at %s (chain=%p radius=%.9g frequency=%.9g iterations=%u): %s\n", stage, static_cast<void*>(current), current ? current->collisionRadius : -1.0f, current ? current->settings.frequencyHz : -1.0f, current ? current->settings.constraintIterations : 0u, gk::GetLastErrorMessage());
+            }
+            configPassed = result && configPassed;
+            return result;
+        };
+        bool stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        auto* configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, "11-number radius row");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8, "legacy 9-number row preserves radius");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8, "legacy 10-number row preserves radius");
+        const char* invalidConfigs[4] = { "4 0.8 60 0 0.25 0 0 0 0 8 nan | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 -0.008 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 joint_b joint_c\n" };
+        for (uint32_t index = 0; index < 4; ++index)
+        {
+            stagePassed = WriteConfig(invalidConfigs[index]) && !gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+            configuredFirstChain = ReadFirstChain();
+            const char* stage = index == 0 ? "NaN radius rejected atomically" : (index == 1 ? "negative radius rejected atomically" : (index == 2 ? "extra field rejected atomically" : "missing separator rejected atomically"));
+            CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, stage);
+        }
+        fs::remove_all(configDirectory);
+        passed = configPassed && passed;
+        if (!configPassed)
+        {
+            fprintf(stderr, "bone-radius config contract failed\n");
+        }
+    }
     if (passed)
     {
         gk::model::animation::ResetModelPoseWorkForTesting();
@@ -1276,7 +1435,27 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         CheckCacheStage(failedSetterPreservedCache && source->sampleCount == 0, "failed setter preserves matching cache");
         source->sampleCount = 0;
         const bool secondaryOnlyOperationsSucceeded = gk::ResetModelSecondaryMotion(instance) == 0 && gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.0f) == 0 && gk::SetModelSecondaryMotionChain(instance, secondChain, 2, settings) == 0 && gk::DrawModel(instance) == 0;
-        CheckCacheStage(secondaryOnlyOperationsSucceeded && source->sampleCount == 0, "secondary-only changes preserve base-pose cache");
+        auto* currentTransformAfterChainReplacement = gk::detail::FindModelTransform(instance);
+        auto* currentStateAfterChainReplacement = currentTransformAfterChainReplacement && currentTransformAfterChainReplacement->playback ? currentTransformAfterChainReplacement->playback->secondaryMotion : nullptr;
+        bool firstChainRadiusSurvived = false;
+        bool secondChainRadiusSurvived = false;
+        if (currentStateAfterChainReplacement && currentStateAfterChainReplacement->chains.Count() == 2)
+        {
+            for (uint32_t chainIndex = 0; chainIndex < currentStateAfterChainReplacement->chains.Count(); ++chainIndex)
+            {
+                const auto* currentChain = currentStateAfterChainReplacement->chains.At(chainIndex);
+                if (currentChain->bones.Count() > 0 && currentChain->bones.At(0) == firstChain[0] && currentChain->collisionRadius == 0.008f)
+                {
+                    firstChainRadiusSurvived = true;
+                }
+                if (currentChain->bones.Count() > 0 && currentChain->bones.At(0) == secondChain[0] && currentChain->collisionRadius == 0.15f)
+                {
+                    secondChainRadiusSurvived = true;
+                }
+            }
+        }
+        const bool radiiSurvivedLifecycle = firstChainRadiusSurvived && secondChainRadiusSurvived;
+        CheckCacheStage(secondaryOnlyOperationsSucceeded && source->sampleCount == 0 && radiiSurvivedLifecycle, "secondary-only changes preserve base-pose cache and independent chain radii");
 
         const auto GetPlayback = [&]()
         {

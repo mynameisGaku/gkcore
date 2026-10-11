@@ -1353,3 +1353,19 @@ capture専用DLLへGKCORE_PROFILE_SKIN_CONTACTSの区間QPC計測を追加し、
 CPU MSVC19.51のDebug/Release各60/60件成功（5.02秒/4.43秒）。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、既存ON commandの0秒/3.35秒開始をDebug/Release各120frame実行。480frame全GPU位置/法線valid、Skirt全1,314点は8形状に侵入0、変更前後48画像とDebug/Release24組がbyte一致。最大GPU位置誤差0、normal1.789e-7です。記録はskin-contact-bounds-{Release,Debug}-{start,loop}-capture.logとimage-comparison.json。可視benchmark3000frame/warmup300はON199.698FPS、OFF221.465FPSで完走しました。300FPSと布の面品質は未達です。
 
 この作業中のユーザー指示で、primary検証をスカートbone小球と脚boneカプセルへ変更し、可視化して大きさを調整する方針へ更新しました。頂点接触を新規作業の主手段とせず、既定OFFの任意補正として保持します。次の実装はbone側半径の明示と接触形状の可視化、実脚に合わせたprofileです。
+
+
+## 2026-10-11 骨の小球と接触形状の表示
+
+ユーザー指示に従い、頂点補正をOFFとしてbone小球対身体球・脚カプセルを主検証へ変更しました。鎖ごとの半径APIを追加し、身体半径へ球半径を加えた形状をsolverと描画FKの最終接触検査で共用します。半径0は従来経路を維持。正の加算はfloatの外側へ丸め、FLT_MAX＋微小値のようにdouble加算でも小さい値が消える場合を拒否します。入力形状と失敗時の出力を保ち、alias入力も扱います。既存Settingsの公開layoutは変更しません。
+
+REDは形状拡張を未実装にした実行で、正の球半径を必要とするcontact契約が失敗することを取得しました（bone-sphere-red-test.log）。球・capsule・別鎖半径・半径0のbyte保持・負値/非有限/overflow・Reset/Update/同root再登録/解放を確認。FLT_MAX＋微小値の丸め漏れも検出し修正しました。9/10列のconfig互換を保ち、11列目を球半径とします。config試験のchain配列順の思い込みを修正し、root IDで設定を確認します。
+
+GetModelSecondaryMotionDebugShapesは必要数照会と容量不足/invalid handleの出力保持、現在animation＋IK＋揺れ姿勢のFK、instance独立と照会による時間不変を契約化しました。身体形状は設定margin込み、節球は鎖半径で返します。空配列の0 byte memcpyは独立監査で指摘を受け、件数があるときだけコピーします。可視化helperはmodelと同じscale/center/yawを使い、UIへ輪郭を重ねます。青body・橙節・白root・灰tip。Cで切替、--collision-debugで初期表示し、設定なしのflagはInit前に拒否します。flag重複の引数保持とmaterials値の保護も確認しました。
+
+CPU MSVC19.51のDebug/Release各60/60件成功（4.74秒/4.78秒）。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖、bone半径Skirt .008・髪/尻尾 .003、脚カプセル上部 .045・下部 .035＋margin .005を実行。0秒/3.35秒開始をDebug/Release各120frame、計480frameでGPU位置/法線がCPU参照に一致し、Debug/Release24画像組がbyte一致。最大位置誤差0、normal1.789e-7。旧形状と新形状のdebug overlayも2560×1920、各120frameで確認しました。ログはbone-sphere-{Release,Debug}-{start,loop}-capture.log、bone-sphere-{original,bone}-shapes-capture.log、結果はbone-sphere-image-comparison.jsonです。
+
+通常Release viewer経路の初期表示flagを30frame完走し、START -CheckOnlyで全path/引数を確認。速度計測は表示OFFで3000frame/warmup300、207.044FPS、p95 5.323ms。300FPS未達です。表示画像では身体proxyの適合とスカートの面品質に残件があり、固定rootと最初の線分の既存例外も維持します。球の接触成功だけをcloth全体の品質合格とは扱いません。
+
+
+ゲーム構築用348ファイルを既存curated treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。installしたSDK56ファイルがallowlistに一致し、新公開APIを使う外部consumerのlinkとGPU Init→Present→Shutdownが成功。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はbone-sphere-game-{build,install,consumer-build,consumer-run}.log、game/SDK manifestです。独立監査とformatter、no-STLテスト、BOM/CRLF、diff checkを確認しました。高解像度8画像はpixel完全一致のPNGへ保存し、workspace内の今回生成した約118MBのPPMだけを削除。保存対応はbone-sphere-quality-images.jsonに記録しました。

@@ -24,6 +24,11 @@ namespace gk::model::animation
 bool ValidateSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::String& error);
 
 /**
+ * 身体形状の半径へskin点半径を加えた候補を作る。失敗時はoutputを保つ。
+ */
+bool ExpandSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* input, uint32_t count, float pointRadius, gk::Array<FModelSecondaryMotionCollisionShape>& output, gk::String& error);
+
+/**
  * 節位置の候補を形状の外へ投影する。失敗時はpositionsを保つ。
  */
 bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error);

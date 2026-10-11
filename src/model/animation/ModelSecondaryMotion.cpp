@@ -95,6 +95,7 @@ model::FModelSecondaryMotionChain* CloneChain(const model::FModelSecondaryMotion
     if (source)
     {
         result->settings = source->settings;
+        result->collisionRadius = source->collisionRadius;
         if (!result->bones.AppendRange(source->bones.Data(), source->bones.Count()) || !result->transforms.AppendRange(source->transforms.Data(), source->transforms.Count()) || !result->simulation.points.AppendRange(source->simulation.points.Data(), source->simulation.points.Count()) || !result->simulation.previousTargets.AppendRange(source->simulation.previousTargets.Data(), source->simulation.previousTargets.Count()))
         {
             delete result;
@@ -325,7 +326,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         }
         else
         {
-            const bool advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            const bool advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error, chain.collisionRadius) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
             if (!advanced)
             {
                 // 設定を調整できるよう、接触を解けなかった鎖の先頭boneを示す。
@@ -393,7 +394,9 @@ int Update(ModelHandle handle, double delta, bool reset)
                     return detail::SetError("secondary motion rendered contact allocation failed");
                 }
             }
-            if (!model::animation::CheckSecondaryMotionContacts(currentShapes.Data(), currentShapes.Count(), renderedPoints.Data(), renderedPoints.Count(), error))
+            // 描画FKの検査も、身体と揺れbone球の半径を足した同じ範囲を使う。
+            Array<model::animation::FModelSecondaryMotionCollisionShape> effectiveShapes;
+            if (!model::animation::ExpandSecondaryMotionCollisionShapes(currentShapes.Data(), currentShapes.Count(), candidate.chains.At(index)->collisionRadius, effectiveShapes, error) || !model::animation::CheckSecondaryMotionContacts(effectiveShapes.Data(), effectiveShapes.Count(), renderedPoints.Data(), renderedPoints.Count(), error))
             {
                 // 回転を姿勢へ戻した結果で失敗した鎖も、先頭boneで識別する。
                 error.Append(" (rendered chain root: ");
@@ -487,6 +490,18 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
     }
     auto& chain = *candidate.chains.At(candidate.chains.Count() - 1);
     chain.settings = settings;
+    // 同じ先頭boneの設定置換では、別APIで指定した接触半径を保持する。
+    if (previous)
+    {
+        for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+        {
+            if (previous->chains.At(index)->bones.At(0) == bones[0])
+            {
+                chain.collisionRadius = previous->chains.At(index)->collisionRadius;
+                break;
+            }
+        }
+    }
     if (!chain.bones.AppendRange(bones, count))
     {
         return detail::SetError("secondary motion bone allocation failed");
@@ -650,6 +665,38 @@ int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle handle, bool enable
     }
     detail::ClearError();
     return 0;
+}
+
+int SetModelSecondaryMotionChainCollisionRadius(ModelHandle handle, uint32_t firstBone, float radius)
+{
+    detail::ModelResource* resource = nullptr;
+    detail::ModelTransform* transform = nullptr;
+    if (!Instance(handle, resource, transform))
+    {
+        return -1;
+    }
+    if (!isfinite(radius) || radius < 0.0f || !transform->playback || !transform->playback->secondaryMotion)
+    {
+        return detail::SetError("configure a secondary motion chain before its finite collision radius");
+    }
+    auto& state = *transform->playback->secondaryMotion;
+    for (uint32_t index = 0; index < state.chains.Count(); ++index)
+    {
+        auto* chain = state.chains.At(index);
+        if (chain && chain->bones.Count() > 0 && chain->bones.At(0) == firstBone)
+        {
+            String error;
+            Array<model::animation::FModelSecondaryMotionCollisionShape> checked;
+            if (!model::animation::ExpandSecondaryMotionCollisionShapes(state.previousCollisionShapes.Data(), state.previousCollisionShapes.Count(), radius, checked, error))
+            {
+                return Failure(error);
+            }
+            chain->collisionRadius = radius;
+            detail::ClearError();
+            return 0;
+        }
+    }
+    return detail::SetError("secondary motion collision radius requires a registered chain root");
 }
 
 }

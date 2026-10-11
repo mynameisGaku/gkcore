@@ -44,6 +44,14 @@ ONの追加費用は変形点の評価と接触判定です。GPUへ渡すのは
 
 ユーザーの追加指示に従い、次はスカートboneの小球と脚boneのカプセルを明示し、可視化しながら形状の大きさを合わせます。頂点補正は任意の切替として保持し、骨同士の接触検証ではOFFにします。300FPSは未達です。最新記録は`build/native-validation/skin-contact-bounds-{on,off}-benchmark.log`、区間計測は`skin-contact-bounds-profile-comparison.json`です。
 
+## 骨の小球と脚カプセル
+
+START 12は頂点補正を使わず、スカート鎖の各boneと仮想末端へ半径0.008、髪・尻尾へ0.003 model unitの球を設定します。脚の上部カプセルは半径0.045、下部は0.035で、身体形状のmargin 0.005も判定と表示に含みます。鎖ごとの球半径を身体形状へ足して、節と節間の線分を同じ範囲で検査します。固定rootと、そのrootが身体内にあるときの最初の線分には既存の例外が残ります。
+
+通常Release、1280×720、VSyncなし、YUMEKA＋Silly Dancing / Capoeira blend＋右腕IK＋13鎖＋身体8形状、接触表示OFF、3000frame/warmup300を完走しました。平均207.044FPS、p95 5.323ms、DrawModel .398ms、Present2.333ms、IK .512ms、揺れ更新1.530msです。300FPSは未達で、以前の半径0構成とは接触条件が異なるため速度改善の対照にはしません。ログは`build/native-validation/bone-sphere-benchmark.log`です。
+
+接触表示は設定調整用です。START 12は起動時から表示し、Cキーで切り替えます。青は身体、橙は揺れbone、白は固定root、灰は仮想末端です。表示ありの短い30frame起動確認は初期画像生成の時間も含むため、FPSの判定に使いません。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

@@ -21,10 +21,10 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, FModelSecondaryMotionChainState& state, gk::String& error);
 
 /**
- * 各小刻み更新で身体の接触と鎖の長さ・角度を解く。失敗時はstateを保つ。
+ * 各小刻み更新で身体の接触と鎖の長さ・角度を解く。pointRadiusは節中心を包む半径で、失敗時はstateを保つ。
  * 形状は前回と今回で同数。高速な更新間移動の連続接触は保証しない。
  */
-bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error);
+bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius = 0.0f);
 
 }
 

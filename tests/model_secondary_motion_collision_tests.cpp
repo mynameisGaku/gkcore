@@ -444,6 +444,34 @@ bool TestFeasibleContactWithLengthAndAngle()
 }
 
 /**
+ * 節自身の半径を加味して身体capsuleから離し、元形状と鎖制約を保つ。
+ */
+bool TestSolverPointRadiusKeepsBoneSphereClear()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape body = Shape({ 0.9f, 0.0f, 0.0f }, { 0.9f, 0.0f, 0.0f }, 0.2f);
+    const FModelSecondaryMotionCollisionShape originalBody = body;
+    const gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    const float pointRadius = 0.15f;
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 2, state, error))
+        return Fail(error.CStr());
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &body, &body, 1, state, error, pointRadius))
+        return Fail(error.CStr());
+    if (memcmp(&body, &originalBody, sizeof(body)) != 0)
+        return Fail("point-radius solver modified the caller-owned body shape");
+    const gk::FVector3d positions[2] = { ToDouble(state.points.At(0).position), ToDouble(state.points.At(1).position) };
+    const double bodyDistance = Distance(positions[1], Point(0.9, 0.0, 0.0));
+    if (!IsFinite(state) || fabs(Distance(positions[0], positions[1]) - 1.0) > 0.001 || bodyDistance + 0.000001 < static_cast<double>(body.radius) + pointRadius)
+        return Fail("point-radius solver violated bone length, finiteness, or body-sphere clearance");
+    const double cosine = (positions[1].value[0] - positions[0].value[0]) / Distance(positions[0], positions[1]);
+    if (cosine < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+        return Fail("point-radius solver violated the chain angle limit");
+    return true;
+}
+
+/**
  * 半径より短いcapsuleを避ける可行姿勢と、角度制限で届かない姿勢を区別する。
  */
 bool TestShortCapsuleLengthAndAngleFeasibility()
@@ -685,6 +713,61 @@ bool TestFloatRoundingDoesNotHideSmallColliderPenetration()
 }
 
 /**
+ * 身体形状へ節の半径を足し、丸め後も接触余白を失わない。
+ */
+bool TestExpandCollisionShapesForPointRadius()
+{
+    const FModelSecondaryMotionCollisionShape input[2] = { Shape({ -1.0f, 2.0f, 3.0f }, { 1.0f, 2.0f, 3.0f }, 0.2f), Shape({ 4.0f, 5.0f, 6.0f }, { 4.0f, 5.0f, 6.0f }, 0.75f) };
+    gk::Array<FModelSecondaryMotionCollisionShape> expanded;
+    gk::String error;
+    const float pointRadius = 0.1f;
+    if (!ExpandSecondaryMotionCollisionShapes(input, 2, pointRadius, expanded, error))
+        return Fail(error.CStr());
+    if (expanded.Count() != 2)
+        return Fail("point-radius expansion returned the wrong shape count");
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+        const double exactRadius = static_cast<double>(input[index].radius) + static_cast<double>(pointRadius);
+        const FModelSecondaryMotionCollisionShape& actual = expanded.At(index);
+        if (static_cast<double>(actual.radius) < exactRadius || actual.start.x != input[index].start.x || actual.start.y != input[index].start.y || actual.start.z != input[index].start.z || actual.end.x != input[index].end.x || actual.end.y != input[index].end.y || actual.end.z != input[index].end.z)
+            return Fail("point-radius expansion lost clearance or changed the collider axis");
+    }
+
+    gk::Array<FModelSecondaryMotionCollisionShape> unchanged;
+    if (!ExpandSecondaryMotionCollisionShapes(input, 2, 0.0f, unchanged, error) || unchanged.Count() != 2 || memcmp(unchanged.Data(), input, sizeof(input)) != 0)
+        return Fail("zero point radius did not preserve the shape bytes");
+
+    gk::Array<FModelSecondaryMotionCollisionShape> alias;
+    if (!alias.AppendRange(input, 2) || !ExpandSecondaryMotionCollisionShapes(alias.Data(), alias.Count(), pointRadius, alias, error) || alias.Count() != 2)
+        return Fail("in-place point-radius expansion failed");
+    if (alias.At(0).radius < expanded.At(0).radius || alias.At(1).radius < expanded.At(1).radius)
+        return Fail("in-place point-radius expansion lost its enlarged radius");
+    const FModelSecondaryMotionCollisionShape aliasBefore[2] = { alias.At(0), alias.At(1) };
+    if (ExpandSecondaryMotionCollisionShapes(alias.Data(), alias.Count(), std::numeric_limits<float>::max(), alias, error) || error.Empty() || alias.Count() != 2 || memcmp(alias.Data(), aliasBefore, sizeof(aliasBefore)) != 0)
+        return Fail("failed in-place point-radius expansion changed its aliased output");
+
+    gk::Array<FModelSecondaryMotionCollisionShape> preserved;
+    const FModelSecondaryMotionCollisionShape sentinel = Shape({ 8.0f, 9.0f, 10.0f }, { 8.0f, 9.0f, 10.0f }, 0.5f);
+    if (!preserved.Append(sentinel))
+        return Fail("could not initialize expansion atomicity output");
+    const FModelSecondaryMotionCollisionShape overflow = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, std::numeric_limits<float>::max());
+    if (ExpandSecondaryMotionCollisionShapes(&overflow, 1, std::numeric_limits<float>::max(), preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("overflowing point-radius expansion was accepted or changed output");
+    const FModelSecondaryMotionCollisionShape invalid = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, std::numeric_limits<float>::quiet_NaN());
+    if (ExpandSecondaryMotionCollisionShapes(&invalid, 1, 0.1f, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("non-finite point-radius expansion input was accepted or changed output");
+    if (ExpandSecondaryMotionCollisionShapes(nullptr, 1, 0.1f, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("null point-radius expansion input was accepted or changed output");
+    if (ExpandSecondaryMotionCollisionShapes(input, 65, 0.1f, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("excessive point-radius expansion count was accepted or changed output");
+    if (ExpandSecondaryMotionCollisionShapes(input, 2, -0.1f, preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("negative point radius was accepted or changed output");
+    if (ExpandSecondaryMotionCollisionShapes(input, 2, std::numeric_limits<float>::quiet_NaN(), preserved, error) || error.Empty() || preserved.Count() != 1 || memcmp(preserved.Data(), &sentinel, sizeof(sentinel)) != 0)
+        return Fail("non-finite point radius was accepted or changed output");
+    return true;
+}
+
+/**
  * float保存後にも固定長と角度coneを保つか、崩れる配置をatomicに拒否する。
  */
 bool TestFloatRoundingPreservesLengthAndAngle()
@@ -718,8 +801,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestFloatRoundingPreservesLengthAndAngle };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "float constraint rounding" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

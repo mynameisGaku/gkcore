@@ -6,6 +6,7 @@
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
+#include "examples/support/ModelSecondaryMotionDebugView.h"
 #include "tests/support/ModelSkinPointsCapture.h"
 #include <errno.h>
 #include <math.h>
@@ -450,6 +451,12 @@ bool DrawFrame(gk::ModelHandle model, uint32_t frameIndex, uint32_t frameCount, 
         return false;
     }
     if (!Check(gk::DrawString(20.0f, 20.0f, "実モデル capture  /  Escapeで終了", gk::ColorRGB(255, 255, 255)), "DrawString(title)") || !Check(gk::DrawString(20.0f, 50.0f, mode, gk::ColorRGB(210, 220, 240)), "DrawString(mode)"))
+    {
+        return false;
+    }
+    // 配置を比較する検証では、モデルのSRTへ接触形状を重ねて示す。
+    const char* collisionDebug = getenv("GKCORE_TEST_COLLISION_DEBUG");
+    if (collisionDebug && collisionDebug[0] == '1' && collisionDebug[1] == '\0' && !gk::examples::DrawModelSecondaryMotionDebug(model, scale, { center[0], center[1], center[2] }, angle))
     {
         return false;
     }
