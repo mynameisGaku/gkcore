@@ -1369,3 +1369,20 @@ CPU MSVC19.51のDebug/Release各60/60件成功（4.74秒/4.78秒）。Win11 buil
 
 
 ゲーム構築用348ファイルを既存curated treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。installしたSDK56ファイルがallowlistに一致し、新公開APIを使う外部consumerのlinkとGPU Init→Present→Shutdownが成功。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はbone-sphere-game-{build,install,consumer-build,consumer-run}.log、game/SDK manifestです。独立監査とformatter、no-STLテスト、BOM/CRLF、diff checkを確認しました。高解像度8画像はpixel完全一致のPNGへ保存し、workspace内の今回生成した約118MBのPPMだけを削除。保存対応はbone-sphere-quality-images.jsonに記録しました。
+
+
+## 2026-10-11 スカート球の幅調整と骨接触の重複計算を省く
+
+骨proxyの非侵入と実skin面の非侵入は別です。既記録の443 cloth control point中336点はHips/Spine/Chestとの混合weightで、Skirt合計weightが50%を超えるのは221点、横幅中央値.0378/p95 .0768です。ユーザー指示のbone球対脚capsuleを維持し、vertex補正はOFF。スカート半径.008と中央値へ合わせた.038を同じ3.35秒開始120frameで比較しました。平均侵入点44.708→16.517、最大79→32、最大深さ.048377→.030013。元FBX/skin weightは変更しません。.0768はframe0/root38で骨長内の外部到達が不可能と診断され、不採用です。JSONのvalidはskin参照との一致で、contactClear=falseのframeは残ります。骨sphere成功をcloth全体の品質合格とは扱いません。記録はbone-radius-trial-comparison.json。前面と左右で.008/.038を比較し、少し広がる裾を確認しましたが側面の面の埋まりは残ります。両側の比較は各120frame/GPU全valid、6枚の高解像度PNGを保存しています。
+
+ClosestPointOnAxisを行う前に、正規化済み方向と長さから同じendを求め、parent XYZとlengthがFLT_MAX内かつend有限のときだけ外向きnextafterのAABBでstrict disjointを除外します。境界/巨大double/overflowは従来経路へ戻し、failureではdirection不変。solverは同じ座標でfraction0のstrict検査が成功した直後だけdefault検査を省きます。float保存後の接触・骨長・角度検査は保持します。半径や反復数を性能調整で下げません。
+
+REDは距離budget0回と接触check budget3回の2契約失敗（bone-contact-early-out-red-test.log）。GREENではfar sphere/capsule・XYZ・diagonal/endpoint反転・FLT_MAX範囲・1ULP・bounds接触・DBL_MAX endoverflowで入力保持を確認。strict成功ケースはcheck4→3回です。counterはGKCORE_TESTINGだけで通常Runtimeに含みません。独立監査で入力検査/巨大値fallback/同位置でstrictがdefaultを包含する条件を確認しました。
+
+CPU MSVC19.51のDebug60/60（5.18秒）、Release60/60（4.80秒）。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0で、.038設定の0秒/3.35秒開始をDebug/Release各120、合計480frame実行。全GPU位置/法線とSkirt1,314点のCPU参照がvalid。位置最大9.314e-10、normal1.789e-7。旧solver対新版24画像、Debug/Release24組がbyte一致。start/loopの侵入点平均15.683/16.517、最大23/32、最大深さ.029584/.030013で残存。記録はbone-contact-early-out-{Release,Debug}-{start,loop}.logとimage-comparison.json。
+
+同じ.038設定の通常可視Release、1280×720、VSyncなし、debug表示OFF、3000frame/warmup300を変更前後とも完走。184.749→190.296FPS、変更後p95 5.721ms、Draw .424 / Present2.388 / IK .509 / secondary1.876ms。変更前secondary1.886msとの差は小さいため大きな改善率を主張しません。前の.008設定207.044FPSとは物理条件が異なります。300FPS未達です。benchmarkはproduct buildが始まる17秒前に完了しており、buildと計測の重複はありません。
+
+ゲーム構築用348ファイルを既存curated treeへ更新し、Runtimeと5sampleのRelease buildが成功しました。SDK56ファイルがallowlistに一致し、更新DLLを配置した外部consumerのGPU Init→Present→Shutdownが成功。START CheckOnly、formatter、BOM/CRLF、no-STLテストとdiff checkを確認。tests・検証tool・開発記録・私有assetはmainへ含めません。記録はbone-contact-early-out-game-{build,install,consumer-run}.logとgame/SDK manifestです。
+
+高解像度6画像はpixel完全一致のPNGへ保存し、今回生成したPPM6枚とhash一致を確認した旧solver/Debug比較の重複PPM48枚を片づけました。最新Release24画像、比較hash、quality画像、実行logは保持しています。

@@ -275,6 +275,93 @@ bool TestLongCapsuleFixedLengthAvoidance()
 }
 
 /**
+ * AABBで離れた球とカプセルは最近点計算を省き、境界付近は精密判定へ進む。
+ */
+bool TestCollisionSegmentBoundsFastPath()
+{
+    const float largest = std::numeric_limits<float>::max();
+    const FModelSecondaryMotionCollisionShape farShapes[8] = { Shape({ 4.0f, 0.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, 0.5f), Shape({ 0.0f, 4.0f, 0.0f }, { 0.0f, 4.0f, 0.0f }, 0.5f), Shape({ 0.0f, 0.0f, 4.0f }, { 0.0f, 0.0f, 4.0f }, 0.5f), Shape({ -8.0f, 3.0f, -5.0f }, { -8.0f, 3.0f, -5.0f }, 0.25f), Shape({ 5.0f, -3.0f, 4.0f }, { 8.0f, 1.0f, 7.0f }, 0.5f), Shape({ 8.0f, 1.0f, 7.0f }, { 5.0f, -3.0f, 4.0f }, 0.5f), Shape({ largest, 0.0f, 0.0f }, { largest, 0.0f, 0.0f }, largest), Shape({ -largest, 0.0f, 0.0f }, { -largest, 0.0f, 0.0f }, largest) };
+    const double independentFarDistances[6] = { 4.0, 2.0, 4.0, sqrt(90.0), 5.0, 5.0 };
+    const gk::FVector3d parent = Point(0.0, 0.0, 0.0);
+    const gk::FVector3d originalDirection = Point(0.0, 1.0, 0.0);
+    for (uint32_t index = 0; index < 6; ++index)
+    {
+        if (!(independentFarDistances[index] > farShapes[index].radius))
+            return Fail("far-path fixture is not geometrically separated from its segment");
+        gk::FVector3d direction = originalDirection;
+        gk::String error;
+        ResetSecondaryMotionCollisionAxisQueryCount();
+        if (!AvoidSecondaryMotionCollisionSegment(farShapes[index], parent, 2.0, false, direction, error))
+            return Fail(error.CStr());
+        if (GetSecondaryMotionCollisionAxisQueryCount() != 0 || memcmp(&direction, &originalDirection, sizeof(direction)) != 0)
+            return Fail("separated sphere or capsule used an exact axis query or changed its normalized direction");
+    }
+
+    // 半径と端点がFLT_MAX近辺でもdoubleの境界計算は保守的に精密判定へ送る。
+    for (uint32_t index = 6; index < 8; ++index)
+    {
+        gk::FVector3d direction = originalDirection;
+        gk::String error;
+        ResetSecondaryMotionCollisionAxisQueryCount();
+        if (!AvoidSecondaryMotionCollisionSegment(farShapes[index], parent, 2.0, false, direction, error))
+            return Fail(error.CStr());
+        if (GetSecondaryMotionCollisionAxisQueryCount() == 0 || memcmp(&direction, &originalDirection, sizeof(direction)) != 0)
+            return Fail("FLT_MAX radius boundary was skipped or moved a tangent segment");
+    }
+
+    const float oneUlpAboveBoundary = 0.750000059604644775390625f;
+    const FModelSecondaryMotionCollisionShape justOutside = Shape({ oneUlpAboveBoundary, 2.6f, 0.0f }, { oneUlpAboveBoundary, 2.6f, 0.0f }, 0.75f);
+    const double oneUlpClosestDistance = sqrt(static_cast<double>(oneUlpAboveBoundary) * oneUlpAboveBoundary + 0.6 * 0.6);
+    gk::FVector3d direction = originalDirection;
+    gk::String error;
+    ResetSecondaryMotionCollisionAxisQueryCount();
+    if (!AvoidSecondaryMotionCollisionSegment(justOutside, parent, 2.0, false, direction, error))
+        return Fail(error.CStr());
+    if (!(oneUlpClosestDistance > justOutside.radius) || GetSecondaryMotionCollisionAxisQueryCount() != 0 || memcmp(&direction, &originalDirection, sizeof(direction)) != 0)
+        return Fail("one-ULP separated bounds performed an unnecessary axis query or changed direction");
+
+    const FModelSecondaryMotionCollisionShape boundaryOverlap = Shape({ 0.75f, 2.6f, 0.0f }, { 0.75f, 2.6f, 0.0f }, 0.75f);
+    // 線分最近点は(0,2,0)、球中心との距離はsqrt(0.75^2+0.6^2)で半径より大きい。
+    const double independentClosestDistance = sqrt(0.75 * 0.75 + 0.6 * 0.6);
+    direction = originalDirection;
+    ResetSecondaryMotionCollisionAxisQueryCount();
+    if (!AvoidSecondaryMotionCollisionSegment(boundaryOverlap, parent, 2.0, false, direction, error))
+        return Fail(error.CStr());
+    if (!(independentClosestDistance > boundaryOverlap.radius) || GetSecondaryMotionCollisionAxisQueryCount() == 0 || memcmp(&direction, &originalDirection, sizeof(direction)) != 0)
+        return Fail("touching expanded bounds did not reach exact geometry or changed a clear direction");
+
+    const double huge = std::numeric_limits<double>::max();
+    const gk::FVector3d overflowingParent = Point(huge * 0.75, 0.0, 0.0);
+    gk::FVector3d overflowDirection = Point(1.0, 0.0, 0.0);
+    const gk::FVector3d originalOverflowDirection = overflowDirection;
+    ResetSecondaryMotionCollisionAxisQueryCount();
+    if (AvoidSecondaryMotionCollisionSegment(farShapes[0], overflowingParent, huge * 0.5, false, overflowDirection, error) || error.Empty() || memcmp(&overflowDirection, &originalOverflowDirection, sizeof(overflowDirection)) != 0)
+        return Fail("overflowing segment endpoint was accepted or changed its direction");
+    return true;
+}
+
+/**
+ * 遠い接触形状では反復後の接触確認を重複実行しない。
+ */
+bool TestFarColliderContactCheckBudget()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape farSphere = Shape({ 100.0f, 100.0f, 100.0f }, { 100.0f, 100.0f, 100.0f }, 0.5f);
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.constraintIterations = 1;
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 2, state, error))
+        return Fail(error.CStr());
+    ResetSecondaryMotionContactCheckCount();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &farSphere, &farSphere, 1, state, error))
+        return Fail(error.CStr());
+    if (GetSecondaryMotionContactCheckCount() != 3)
+        return Fail("far-collider solver repeated a successful contact check after the pass was already clear");
+    return true;
+}
+
+/**
  * rootが形状内でもfirst spanだけを除外し、末端節の侵入は解消する。
  */
 bool TestRootInsideFirstSpanException()
@@ -801,8 +888,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

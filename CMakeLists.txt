@@ -141,6 +141,7 @@ if(GKCORE_BUILD_TESTS)
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_collision_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_collision_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_secondary_motion_collision_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_secondary_motion_collision_tests)
     add_test(NAME gkcore.model_secondary_motion_collision COMMAND gkcore_model_secondary_motion_collision_tests)
     add_executable(gkcore_model_skin_points_tests tests/model_skin_points_tests.cpp

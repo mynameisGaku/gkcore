@@ -13,7 +13,7 @@
 9. Downloads内の`Swinging.fbx`をYUMEKAへ外部motionとして単独適用し、腰の移動に表示中心を追従させます。
 10. `Skinning Test.fbx`と`Swinging.fbx`をYUMEKAへblendし、右腕IKと腰の移動に追従する表示中心を使います。
 11. YUMEKAの外部blendと右腕IKに髪2鎖、尻尾1鎖、スカート10鎖の揺れを重ねます。
-12. 「骨の小球と身体カプセル」。11と同じ13鎖に節球と脚側面を含む身体形状8個を加え、`--collision-debug`の形状表示を初期状態で有効にします。`C`キーで表示を切り替えます。
+12. 「骨の小球と身体カプセル」。11と同じ13鎖に節球（髪・尻尾`0.003`、スカート`0.038` model unit）と脚側面を含む身体形状8個を加え、`--collision-debug`の形状表示を初期状態で有効にします。`C`キーで表示を切り替えます。
 13. 従来の身体形状による接触に`--secondary-vertex-contact`を追加し、skin後の頂点を補正します。この項目は任意です。
 
 5と6はローカル準備素材を使います。素材と起動設定がないcheckoutでは、その番号を選んだときに未準備の場所を表示します。motionが見つからない場合はファイルの場所を尋ねます。8〜13はDownloads内のmotion素材が必要で、選んだ項目のファイルがなければ場所を尋ねます。8〜10は`--follow-motion`を付け、motion中のHips移動分だけ表示中心を動かします。motion自体の腰位置は変えません。12は`--secondary-motion`、`--secondary-colliders`、`--collision-debug`を使い、接触形状を初期表示します。髪・尻尾を8回、スカート鎖を32回制約反復し、`C`キーで表示を切り替えます。13は従来の頂点接触用設定に`--secondary-vertex-contact`を加えます。鎖設定は9数値の既存行を読み込み、必要な行には`|`の前へ10個目として反復数（1〜32）、11個目として節球半径（model unit）を指定できます。`START.bat -CheckOnly`は11〜13を含むviewer起動引数と設定ファイルの存在を確認しますが、viewerやNative描画は起動しません。`build/local-assets/UnrealModels/viewer-models.json`がある場合は5と6のモデル、外部motion、材質設定と画像を確認し、定義ファイルがない場合は2項目を省略します。Silly DancingとCapoeiraは従来どおり必須確認です。Skinning TestとSwingingは任意確認で、未提供のmotion単独項目を省略し、blend + IKは両方がある場合だけ確認します。
