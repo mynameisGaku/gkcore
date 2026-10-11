@@ -63,6 +63,16 @@ void ResetSecondaryMotionContactCheckCount();
  * 接触全体の検査呼び出し回数を返す。
  */
 uint64_t GetSecondaryMotionContactCheckCount();
+
+/**
+ * 接触形状の準備回数を0へ戻す。
+ */
+void ResetSecondaryMotionCollisionPrepareCount();
+
+/**
+ * 接触形状の準備回数を返す。
+ */
+uint64_t GetSecondaryMotionCollisionPrepareCount();
 #endif
 
 }

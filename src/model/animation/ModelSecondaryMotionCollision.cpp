@@ -18,11 +18,28 @@ const uint32_t kMaximumPointCount = 1025;
 // 複数接触を交互に押し戻す最大回数。
 const uint32_t kProjectionPassCount = 64;
 
+/**
+ * 1回の接触検査で再利用する形状軸と範囲。
+ */
+struct FPreparedCollisionShape
+{
+    gk::FVector3d start;      // 形状軸の始点。
+    gk::FVector3d end;        // 形状軸の終点。
+    gk::FVector3d axis;       // 始点から終点へ向かう軸。
+    double axisLengthSquared; // 最近点計算に使う軸長の二乗。
+    double radius;            // 接触判定に使う半径。
+    double tolerance;         // 接触判定に使う許容幅。
+    double boundsLow[3];      // 半径分広げたAABBの下限。
+    double boundsHigh[3];     // 半径分広げたAABBの上限。
+};
+
 #if defined(GKCORE_TESTING)
 // 接触形状軸への最近点計算回数。
 uint64_t secondaryMotionCollisionAxisQueryCount = 0;
 // 接触全体の検査呼び出し回数。
 uint64_t secondaryMotionContactCheckCount = 0;
+// 接触形状の準備回数。
+uint64_t secondaryMotionCollisionPrepareCount = 0;
 #endif
 
 /**
@@ -137,19 +154,82 @@ bool IsFinite(const gk::FVector3d& value)
 }
 
 /**
+ * 半径に比例する接触許容誤差を返す。
+ */
+double ContactTolerance(double radius)
+{
+    // 半径比を基本にし、倍精度丸め誤差だけを下限にする。
+    return fmax(radius * 1.0e-3, radius * DBL_EPSILON * 64.0);
+}
+
+/**
+ * 検証済み形状の軸と判定値を1回だけ計算する。
+ */
+FPreparedCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisionShape& shape)
+{
+    // この呼出し中に再利用する形状値。
+    FPreparedCollisionShape prepared = {};
+    prepared.start = ToDouble(shape.start);
+    prepared.end = ToDouble(shape.end);
+    prepared.axis = Subtract(prepared.end, prepared.start);
+    prepared.axisLengthSquared = Dot(prepared.axis, prepared.axis);
+    prepared.radius = shape.radius;
+    prepared.tolerance = ContactTolerance(prepared.radius);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        // 半径を含む旧判定範囲を保存する。
+        prepared.boundsLow[axis] = fmin(prepared.start.value[axis], prepared.end.value[axis]) - prepared.radius;
+        prepared.boundsHigh[axis] = fmax(prepared.start.value[axis], prepared.end.value[axis]) + prepared.radius;
+    }
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionCollisionPrepareCount;
+#endif
+    return prepared;
+}
+
+/**
+ * 点と準備済み軸の最近位置を求める。
+ */
+gk::FVector3d ClosestPointOnPreparedAxis(const gk::FVector3d& point, const FPreparedCollisionShape& shape)
+{
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionCollisionAxisQueryCount;
+#endif
+    // 点が形状軸上に作る割合。
+    double amount = shape.axisLengthSquared > 0.0 ? Dot(Subtract(point, shape.start), shape.axis) / shape.axisLengthSquared : 0.0;
+    amount = fmax(0.0, fmin(1.0, amount));
+    return Add(shape.start, Multiply(shape.axis, amount));
+}
+
+/**
+ * 線分が準備済み形状の膨張AABBから離れているか調べる。
+ */
+bool IsOutsideExpandedBounds(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape)
+{
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        // 線分と膨張形状の座標範囲。
+        const double low = fmin(first.value[axis], second.value[axis]);
+        const double high = fmax(first.value[axis], second.value[axis]);
+        if (high < shape.boundsLow[axis] || low > shape.boundsHigh[axis])
+            return true;
+    }
+    return false;
+}
+
+/**
  * AABBが半径分を含めても離れているか調べる。
  */
 bool IsOutsideExpandedBounds(const gk::FVector3d& first, const gk::FVector3d& second, const FModelSecondaryMotionCollisionShape& shape)
 {
-    // 接触形状の軸端点。
+    // 比較に使う形状軸の端点。
     const gk::FVector3d start = ToDouble(shape.start);
     const gk::FVector3d end = ToDouble(shape.end);
-    // 点・線分との比較に使う半径。
+    // 旧判定と同じ膨張量。
     const double radius = shape.radius;
-    // XYZ各方向の重なりを調べる。
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
-        // 鎖線分の軸方向範囲。
+        // 線分と膨張形状の座標範囲。
         const double low = fmin(first.value[axis], second.value[axis]);
         const double high = fmax(first.value[axis], second.value[axis]);
         // 半径分を広げた形状範囲。
@@ -190,8 +270,9 @@ gk::FVector3d ClosestPointOnAxis(const gk::FVector3d& point, const FModelSeconda
 {
 #if defined(GKCORE_TESTING)
     ++secondaryMotionCollisionAxisQueryCount;
+    ++secondaryMotionCollisionPrepareCount;
 #endif
-    // 形状軸の始点と方向。
+    // 回避処理で使う形状軸の始点と方向。
     const gk::FVector3d start = ToDouble(shape.start);
     const gk::FVector3d axis = Subtract(ToDouble(shape.end), start);
     // 軸長の二乗と点の軸上割合。
@@ -244,15 +325,13 @@ gk::FVector3d FallbackNormal(const gk::FVector3d& point, const gk::FVector3d& ax
 /**
  * 線分同士の最近点と両方の補間率を求める。
  */
-void ClosestSegmentPair(const gk::FVector3d& firstStart, const gk::FVector3d& firstEnd, const gk::FVector3d& secondStart, const gk::FVector3d& secondEnd, double& firstAmount, double& secondAmount, gk::FVector3d& firstPoint, gk::FVector3d& secondPoint)
+void ClosestSegmentPairWithAxis(const gk::FVector3d& firstStart, const gk::FVector3d& firstEnd, const gk::FVector3d& secondStart, const gk::FVector3d& secondAxis, double secondLength, double& firstAmount, double& secondAmount, gk::FVector3d& firstPoint, gk::FVector3d& secondPoint)
 {
     // 最近点を求める2本の線分方向と始点差。
     const gk::FVector3d firstAxis = Subtract(firstEnd, firstStart);
-    const gk::FVector3d secondAxis = Subtract(secondEnd, secondStart);
     const gk::FVector3d offset = Subtract(firstStart, secondStart);
     // 軸長、相互内積、始点差の射影値。
     const double firstLength = Dot(firstAxis, firstAxis);
-    const double secondLength = Dot(secondAxis, secondAxis);
     const double mixed = Dot(firstAxis, secondAxis);
     const double firstOffset = Dot(firstAxis, offset);
     const double secondOffset = Dot(secondAxis, offset);
@@ -290,18 +369,20 @@ void ClosestSegmentPair(const gk::FVector3d& firstStart, const gk::FVector3d& fi
 }
 
 /**
- * 半径に比例する接触許容誤差を返す。
+ * 2本の線分の軸データを計算して最近点を求める。
  */
-double ContactTolerance(double radius)
+void ClosestSegmentPair(const gk::FVector3d& firstStart, const gk::FVector3d& firstEnd, const gk::FVector3d& secondStart, const gk::FVector3d& secondEnd, double& firstAmount, double& secondAmount, gk::FVector3d& firstPoint, gk::FVector3d& secondPoint)
 {
-    // 半径比を基本にし、倍精度丸め誤差だけを下限にする。
-    return fmax(radius * 1.0e-3, radius * DBL_EPSILON * 64.0);
+    // 呼出しごとにだけ使う形状線分の軸データ。
+    const gk::FVector3d secondAxis = Subtract(secondEnd, secondStart);
+    const double secondLength = Dot(secondAxis, secondAxis);
+    ClosestSegmentPairWithAxis(firstStart, firstEnd, secondStart, secondAxis, secondLength, firstAmount, secondAmount, firstPoint, secondPoint);
 }
 
 /**
  * 検査対象の線分が接触形状へ侵入しているか調べる。
  */
-bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, const FModelSecondaryMotionCollisionShape& shape, double toleranceFraction = 1.0)
+bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape, double toleranceFraction = 1.0)
 {
     // 軸方向の範囲が離れている線分は最近点計算を省く。
     if (IsOutsideExpandedBounds(first, second, shape))
@@ -311,41 +392,37 @@ bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, con
     double axisAmount = 0.0;
     gk::FVector3d spanPoint{};
     gk::FVector3d axisPoint{};
-    ClosestSegmentPair(first, second, ToDouble(shape.start), ToDouble(shape.end), spanAmount, axisAmount, spanPoint, axisPoint);
+    ClosestSegmentPairWithAxis(first, second, shape.start, shape.axis, shape.axisLengthSquared, spanAmount, axisAmount, spanPoint, axisPoint);
     (void)spanAmount;
     (void)axisAmount;
-    return Length(Subtract(spanPoint, axisPoint)) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius) * toleranceFraction;
+    return Length(Subtract(spanPoint, axisPoint)) < shape.radius - shape.tolerance * toleranceFraction;
 }
 
 /**
  * 配列内の自由点を球またはカプセル表面へ押し出す。
  */
-void ProjectPoint(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& reference, gk::FVector3d& point)
+void ProjectPoint(const FPreparedCollisionShape& shape, const gk::FVector3d& reference, gk::FVector3d& point)
 {
     // 形状の膨張AABBから外れた点はそのまま保つ。
     if (IsOutsideExpandedBounds(point, point, shape))
         return;
-    const gk::FVector3d axisStart = ToDouble(shape.start);
-    const gk::FVector3d axisEnd = ToDouble(shape.end);
-    const gk::FVector3d axis = Subtract(axisEnd, axisStart);
     // 形状軸上の最近点と点からの差。
-    const gk::FVector3d closest = ClosestPointOnAxis(point, shape);
+    const gk::FVector3d closest = ClosestPointOnPreparedAxis(point, shape);
     gk::FVector3d normal = Subtract(point, closest);
     // 接触面までの距離と必要半径。
     const double distance = Length(normal);
-    const double radius = shape.radius;
     // 侵入していない点はそのまま保つ。
-    if (distance >= radius - ContactTolerance(radius))
+    if (distance >= shape.radius - shape.tolerance)
         return;
     if (!Normalize(normal))
-        normal = FallbackNormal(point, closest, axis, reference);
-    point = Add(closest, Multiply(normal, radius));
+        normal = FallbackNormal(point, closest, shape.axis, reference);
+    point = Add(closest, Multiply(normal, shape.radius));
 }
 
 /**
  * 侵入した鎖線分を自由端点の重みに応じて押し戻す。
  */
-void ProjectSpan(const FModelSecondaryMotionCollisionShape& shape, bool firstFixed, gk::FVector3d& first, gk::FVector3d& second)
+void ProjectSpan(const FPreparedCollisionShape& shape, bool firstFixed, gk::FVector3d& first, gk::FVector3d& second)
 {
     // 接触形状から離れた線分は最近点計算を省く。
     if (IsOutsideExpandedBounds(first, second, shape))
@@ -355,22 +432,20 @@ void ProjectSpan(const FModelSecondaryMotionCollisionShape& shape, bool firstFix
     double axisAmount = 0.0;
     gk::FVector3d spanPoint{};
     gk::FVector3d axisPoint{};
-    ClosestSegmentPair(first, second, ToDouble(shape.start), ToDouble(shape.end), spanAmount, axisAmount, spanPoint, axisPoint);
+    ClosestSegmentPairWithAxis(first, second, shape.start, shape.axis, shape.axisLengthSquared, spanAmount, axisAmount, spanPoint, axisPoint);
     const double distance = Length(Subtract(spanPoint, axisPoint));
-    const double radius = shape.radius;
     // 半径を超えて鎖線分を押し戻す量。
-    const double penetration = radius - distance;
+    const double penetration = shape.radius - distance;
     // 許容誤差を超える侵入がなければ動かさない。
-    if (!(penetration > ContactTolerance(radius)))
+    if (!(penetration > shape.tolerance))
         return;
     // 退避方向と端点ごとの移動割合。
-    const gk::FVector3d axis = Subtract(ToDouble(shape.end), ToDouble(shape.start));
     gk::FVector3d normal = Subtract(spanPoint, axisPoint);
     if (!Normalize(normal))
     {
         // 中心交差時は線分方向とカプセル軸の外積で押し出し軸を作る。
         const gk::FVector3d spanDirection = Subtract(second, first);
-        normal = Cross(spanDirection, axis);
+        normal = Cross(spanDirection, shape.axis);
         if (!Normalize(normal))
             normal = DeterministicPerpendicular(spanDirection);
     }
@@ -421,6 +496,66 @@ bool ValidatePositions(const gk::FVector3d* positions, uint32_t pointCount, gk::
     return true;
 }
 
+/**
+ * 準備済み形状で点と鎖線分の接触を検査する。
+ */
+bool CheckPreparedContacts(const FPreparedCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
+{
+    // rootを除く全節は必ず形状の外にあることを確認する。
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        // この順で検査する準備済み形状。
+        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
+        {
+            if (IsOutsideExpandedBounds(positions[pointIndex], positions[pointIndex], shape))
+                continue;
+            // 点と形状軸の最近位置。
+            const gk::FVector3d closest = ClosestPointOnPreparedAxis(positions[pointIndex], shape);
+            if (Length(Subtract(positions[pointIndex], closest)) < shape.radius - shape.tolerance * toleranceFraction)
+            {
+                error.Assign("Secondary motion point intersects a collision shape");
+                error.Append(" (shape: ");
+                error.AppendUnsigned(shapeIndex);
+                error.Append(", point: ");
+                error.AppendUnsigned(pointIndex);
+                error.Append(")");
+                return false;
+            }
+        }
+    }
+    // 各形状についてroot例外を適用し、全鎖線分を調べる。
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        // root例外を調べる準備済み形状。
+        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        // 鎖の固定root位置。
+        const gk::FVector3d root = positions[0];
+        // 固定rootと形状軸の最近位置。
+        const gk::FVector3d rootClosest = ClosestPointOnPreparedAxis(root, shape);
+        // rootが内部なら最初の線分を免除する。
+        const bool rootInside = Length(Subtract(root, rootClosest)) < shape.radius - shape.tolerance;
+        // rootが形状内なら最初の線分だけを検査対象から外す。
+        for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
+        {
+            if (spanIndex == 1 && rootInside)
+                continue;
+            if (SpanPenetrates(positions[spanIndex - 1], positions[spanIndex], shape, toleranceFraction))
+            {
+                error.Assign("Secondary motion chain intersects a collision shape");
+                error.Append(" (shape: ");
+                error.AppendUnsigned(shapeIndex);
+                error.Append(", span: ");
+                error.AppendUnsigned(spanIndex);
+                error.Append(")");
+                return false;
+            }
+        }
+    }
+    error.Clear();
+    return true;
+}
+
 }
 
 #if defined(GKCORE_TESTING)
@@ -442,6 +577,16 @@ void ResetSecondaryMotionContactCheckCount()
 uint64_t GetSecondaryMotionContactCheckCount()
 {
     return secondaryMotionContactCheckCount;
+}
+
+void ResetSecondaryMotionCollisionPrepareCount()
+{
+    secondaryMotionCollisionPrepareCount = 0;
+}
+
+uint64_t GetSecondaryMotionCollisionPrepareCount()
+{
+    return secondaryMotionCollisionPrepareCount;
 }
 #endif
 
@@ -568,16 +713,27 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
         error.Assign("Secondary motion collision workspace allocation failed");
         return false;
     }
+    // 形状ごとの軸、半径、許容幅、旧AABBを呼出し中だけ保持する。
+    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    // 動かないrootの形状内判定を一度だけ保持する。
+    bool rootInsideByShape[kMaximumCollisionShapes] = {};
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        // この順で使う接触形状の準備値。
+        preparedShapes[shapeIndex] = PrepareCollisionShape(shapes[shapeIndex]);
+        // 固定rootと形状軸の最近位置。
+        const gk::FVector3d rootClosest = ClosestPointOnPreparedAxis(candidate.At(0), preparedShapes[shapeIndex]);
+        // 最初の線分を免除するためのroot侵入状態。
+        rootInsideByShape[shapeIndex] = Length(Subtract(candidate.At(0), rootClosest)) < preparedShapes[shapeIndex].radius - preparedShapes[shapeIndex].tolerance;
+    }
     // 形状ごとに線分接触と点接触を反復して解く。
     for (uint32_t pass = 0; pass < kProjectionPassCount; ++pass)
     {
         for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
         {
             // この反復で解く接触形状とrootの侵入状態。
-            const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
-            const gk::FVector3d root = candidate.At(0);
-            const gk::FVector3d axisPoint = ClosestPointOnAxis(root, shape);
-            const bool rootInside = Length(Subtract(root, axisPoint)) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius);
+            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+            const bool rootInside = rootInsideByShape[shapeIndex];
             // rootが形状内なら、動かせないrootを含む最初の線分だけを省く。
             for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
             {
@@ -596,12 +752,13 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
         for (uint32_t shapeIndex = 0; shapeIndex < shapeCount && !anyPenetration; ++shapeIndex)
         {
             // 残留接触を調べる形状。
-            const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
+            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
             // 投影後も形状内に残る自由点を探す。
             for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
             {
-                const gk::FVector3d closest = ClosestPointOnAxis(candidate.At(pointIndex), shape);
-                if (Length(Subtract(candidate.At(pointIndex), closest)) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius))
+                // 投影後の自由点と形状軸の最近位置。
+                const gk::FVector3d closest = ClosestPointOnPreparedAxis(candidate.At(pointIndex), shape);
+                if (Length(Subtract(candidate.At(pointIndex), closest)) < shape.radius - shape.tolerance)
                 {
                     anyPenetration = true;
                     break;
@@ -610,8 +767,7 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
             if (anyPenetration)
                 break;
             // root侵入時は最初の線分だけ免除する。
-            const gk::FVector3d root = candidate.At(0);
-            const bool rootInside = Length(Subtract(root, ClosestPointOnAxis(root, shape))) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius);
+            const bool rootInside = rootInsideByShape[shapeIndex];
             // 形状を横切る線分が残っていないか調べる。
             for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
             {
@@ -630,19 +786,26 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
     // 収束上限で止まった場合も点侵入を許さない。
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
+        const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
         // rootを除く各点の最終侵入を検証する。
         for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
         {
-            const gk::FVector3d closest = ClosestPointOnAxis(candidate.At(pointIndex), shape);
-            if (Length(Subtract(candidate.At(pointIndex), closest)) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius))
+            // 最終自由点と形状軸の最近位置。
+            const gk::FVector3d closest = ClosestPointOnPreparedAxis(candidate.At(pointIndex), shape);
+            if (Length(Subtract(candidate.At(pointIndex), closest)) < shape.radius - shape.tolerance)
             {
                 error.Assign("Secondary motion collision point remains inside a collision shape");
                 return false;
             }
         }
     }
-    if (!CheckSecondaryMotionContacts(shapes, shapeCount, candidate.Data(), pointCount, error))
+    // 公開検査と同じ呼出し数を保ち、準備済み形状をそのまま最終確認へ渡す。
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionContactCheckCount;
+#endif
+    if (!ValidatePositions(candidate.Data(), pointCount, error))
+        return false;
+    if (!CheckPreparedContacts(preparedShapes, shapeCount, candidate.Data(), pointCount, error, 1.0))
         return false;
     // 確定前に候補位置の有限性を確認する。
     for (uint32_t index = 0; index < pointCount; ++index)
@@ -671,52 +834,14 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
     }
     if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error) || !ValidatePositions(positions, pointCount, error))
         return false;
-    // rootを除く全節は必ず形状の外にあることを確認する。
+    // 接触形状の軸と範囲をこの検査中だけ再利用する。
+    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
-        for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
-        {
-            if (IsOutsideExpandedBounds(positions[pointIndex], positions[pointIndex], shape))
-                continue;
-            const gk::FVector3d closest = ClosestPointOnAxis(positions[pointIndex], shape);
-            if (Length(Subtract(positions[pointIndex], closest)) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius) * toleranceFraction)
-            {
-                error.Assign("Secondary motion point intersects a collision shape");
-                error.Append(" (shape: ");
-                error.AppendUnsigned(shapeIndex);
-                error.Append(", point: ");
-                error.AppendUnsigned(pointIndex);
-                error.Append(")");
-                return false;
-            }
-        }
+        // この順で検査する形状の準備値。
+        preparedShapes[shapeIndex] = PrepareCollisionShape(shapes[shapeIndex]);
     }
-    // 各形状についてroot例外を適用し、全鎖線分を調べる。
-    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
-    {
-        const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
-        const gk::FVector3d root = positions[0];
-        const bool rootInside = Length(Subtract(root, ClosestPointOnAxis(root, shape))) < static_cast<double>(shape.radius) - ContactTolerance(shape.radius);
-        // rootが形状内なら最初の線分だけを検査対象から外す。
-        for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
-        {
-            if (spanIndex == 1 && rootInside)
-                continue;
-            if (SpanPenetrates(positions[spanIndex - 1], positions[spanIndex], shape, toleranceFraction))
-            {
-                error.Assign("Secondary motion chain intersects a collision shape");
-                error.Append(" (shape: ");
-                error.AppendUnsigned(shapeIndex);
-                error.Append(", span: ");
-                error.AppendUnsigned(spanIndex);
-                error.Append(")");
-                return false;
-            }
-        }
-    }
-    error.Clear();
-    return true;
+    return CheckPreparedContacts(preparedShapes, shapeCount, positions, pointCount, error, toleranceFraction);
 }
 
 bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error)
