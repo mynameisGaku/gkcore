@@ -288,6 +288,11 @@ int Update(ModelHandle handle, double delta, bool reset)
     const uint32_t profileChainCount = previous->chains.Count();
     const char* profileSetting = getenv("GKCORE_PROFILE_SECONDARY_MOTION");
     bool profile = profileSetting && strcmp(profileSetting, "1") == 0 && QueryPerformanceFrequency(&profileFrequency) && profileFrequency.QuadPart > 0 && QueryPerformanceCounter(&profileTimes[0]);
+    if (profile)
+    {
+        // このUpdateだけで、制約の参照方向を何回計算したか記録する。
+        model::animation::ResetSecondaryMotionReferenceCalculationCount();
+    }
 #endif
     String error;
     model::animation::FModelPose base;
@@ -503,7 +508,7 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         // 初期化を含む更新か分かるよう、各区間をミリ秒で記録する。
         const double milliseconds = 1000.0 / profileFrequency.QuadPart;
-        fprintf(stderr, "{\"type\":\"gkcore_secondary_motion_profile\",\"reset\":%s,\"chains\":%u,\"baseMs\":%.9f,\"shapesMs\":%.9f,\"solverMs\":%.9f,\"orientMs\":%.9f,\"renderCheckMs\":%.9f,\"commitMs\":%.9f,\"totalMs\":%.9f}\n", reset ? "true" : "false", profileChainCount, (profileTimes[1].QuadPart - profileTimes[0].QuadPart) * milliseconds, (profileTimes[2].QuadPart - profileTimes[1].QuadPart) * milliseconds, (profileTimes[3].QuadPart - profileTimes[2].QuadPart) * milliseconds, (profileTimes[4].QuadPart - profileTimes[3].QuadPart) * milliseconds, (profileTimes[5].QuadPart - profileTimes[4].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[5].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[0].QuadPart) * milliseconds);
+        fprintf(stderr, "{\"type\":\"gkcore_secondary_motion_profile\",\"reset\":%s,\"chains\":%u,\"referenceCalculations\":%llu,\"baseMs\":%.9f,\"shapesMs\":%.9f,\"solverMs\":%.9f,\"orientMs\":%.9f,\"renderCheckMs\":%.9f,\"commitMs\":%.9f,\"totalMs\":%.9f}\n", reset ? "true" : "false", profileChainCount, static_cast<unsigned long long>(model::animation::GetSecondaryMotionReferenceCalculationCount()), (profileTimes[1].QuadPart - profileTimes[0].QuadPart) * milliseconds, (profileTimes[2].QuadPart - profileTimes[1].QuadPart) * milliseconds, (profileTimes[3].QuadPart - profileTimes[2].QuadPart) * milliseconds, (profileTimes[4].QuadPart - profileTimes[3].QuadPart) * milliseconds, (profileTimes[5].QuadPart - profileTimes[4].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[5].QuadPart) * milliseconds, (profileTimes[6].QuadPart - profileTimes[0].QuadPart) * milliseconds);
     }
 #endif
     detail::ClearError();

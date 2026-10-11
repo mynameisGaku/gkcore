@@ -11,7 +11,7 @@ namespace gk::model::animation
 {
 
 /**
- * 接触計算向けに準備した身体形状。PrepareSecondaryMotionFreeSegmentShapesの出力だけを使う。
+ * 接触計算向けに準備した身体形状。接触形状の準備関数が生成した値だけを使う。
  */
 struct FPreparedSecondaryMotionCollisionShape
 {

@@ -1435,3 +1435,23 @@ Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0�
 固定delta1/60のRelease区間計測（初期20frame除外後100sample）はsolver3.309927→3.260583ms、全Update3.924160→3.865686ms。通常可視Release1280×720、標準効果、VSyncなし、debug表示OFF、3000frame/warmup300は176.127→174.119FPS、secondary2.462→2.436ms、後p95 6.968ms、Draw .421/Present2.314/IK .512ms。揺れ更新の短縮は小さく、FPS改善は確認できず300FPS未達です。prepared共有だけの中間runは171.800FPSで、最終結果とは分けます。ログはlink-cache-{before,after,final}-benchmark.log、区間と画像はlink-cache-image-comparison.json、OFFはlink-cache-off-image-comparison.jsonです。
 
 ゲーム構築用352ファイルを既存curated treeへ反映し、Runtimeと5sampleのRelease build成功。Runtime SDK57ファイルがallowlistに一致し、payloadを更新した外部consumerのGPU Init→Present→Shutdownも成功しました。公開API/SDKファイル数は保持し、追加headerはソース内の接触計算用です。test counter・tests・開発記録・私有assetはmain/SDKへ含めません。独立read-onlyレビューで重大な問題は見つからず、prepared lifetimeは各Update内に限ること、shape/link/pass順と最終FK検査を維持することを確認しました。全480frameのskin検証JSONも旧版と一致しました。生成画像はhash一致を確認した後、重複するDebug/旧版/中間画像を片づけ、最新Releaseと最新の検証記録、元assetを保持しました。記録はlink-cache-game-{build,install,package,consumer-build,consumer-run}.log、game/SDK manifest、link-cache-cleanup.jsonです。
+
+## 鎖制約の参照値と接触準備をsubstep内で共有する
+
+固定されたstepTargetsから求める長さと正規化方向を、各substepの最初のconstraint passで骨順に保存し、後のpassで再利用します。Projectが先に失敗する場合やゼロ長でrestartする場所は保持。substepごとにcacheをClearし、動くpositionsは再利用しません。通常鎖のProject/Checkも準備済み形状を受ける内部関数へ分け、半径拡張→補間→1.001ガード後の形状をsubstepごとに一度準備します。rawとpreparedは共通projection kernelを使い、root例外・PBD・shape/pass順・許容幅・失敗output保持を維持。RawAvoidとfloat保存後の最終RawCheckは保持し、raw投影/検査の固定領域も保ちます。公開APIとsettings layoutは変更しません。
+
+REDは反復ごとの参照計算、prepared Contacts stub、solverの形状準備3回 expected2で確認。2 segment×2 substepではiterations8/32とも参照4回、bodyありdelta0では1回。overlap sphereのProject非収束は参照0回のままstateを保持。prepared投影/検査はrawとbyte一致、独立距離・root内部免除・別名・空形状・不正入力・失敗atomicityを検査。接触形状の準備型契約を汎用builderにも合わせました。追加counterとJSONはCPU tests/frame-captureだけ、直列Update用で、通常Runtimeには入れません。
+
+最終CPU MSVC19.51 Debug60/60（4.85秒）、Release60/60（4.38秒）成功。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0で、YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖＋8body＋輪状10接続・.038・頂点補正OFFを0秒/3.35秒からDebug/Release各120frame、順番に実行。480frameのGPU位置/法線とSkirt1314点の参照がvalid、全480skin JSONが旧版と一致。両構成48画像は旧24姿勢とbyte一致、構成間24組も一致。接続OFF Release120frame/12画像も旧版と一致。侵入平均15.833/最大深さ.020639 model unitは保持します。
+
+固定delta1/60のRelease、初期20frame除外後100sampleは参照計算平均2216.88→241.20（最大5888→472）、solver3.292944→2.967918ms、全Update3.898166→3.572878ms。参照共有だけの中間solver3.246410msから、形状準備の共有でさらに削減できました。可視Release1280×720・標準効果・VSyncなし・3000frame/warmup300は前171.990FPS/secondary2.437ms、完走した再計測173.519FPS/secondary2.288ms、p95 6.872ms、Draw .523/Present2.378/IK .513ms。FPS改善は小さく、300FPSには未達です。
+
+最初の可視計測はwarmup中に形状5/接続8の自由線分接触で失敗し、計測0frame・completed=false。原因は未確定で、成功扱いにしません。失敗時点のdeltaが未保存だったため、benchmark専用のdelta trace/replayを追加。更新前に各deltaを保存し、replayは有限非負値/件数をInit前に検査します。診断modeはFPSを出しません。空白だけの行の受理をRED後に修正し、6種類の不正入力をInit前に拒否しました。通常viewerはこの診断機構をcompileしません。
+
+実測3300deltaと乱数seed7の1200delta（.001〜.019秒、113frameごと.075秒）を、変更前HEADのSolver/Collisionから作った一時capture DLLと現在版で各4500frame再生し、双方が完走。新側は初回delta .001/.004/.008/.012/.018/.025/.040/.075/.120/.220/.300、その後.006秒の各300frameも完走。可視trace2回も各3300frame完走しましたが、元の失敗の再現・原因確定ではありません。接続投影と描画FKの失敗に診断contextを追加し、次の失敗時に区別できるようにしました。
+
+SDK57ファイルがallowlistに一致し、現在DLLを置いた外部consumerのGPU Init→Present→Shutdownも成功。START CheckOnly成功。devへ検証済みの計算共有と再現診断を保存しますが、この区切りのmain反映は未確定の実時間接触失敗のため保留します。全SDKの完成待ちや、全変更に対するGPU検証待ちの禁止条件ではありません。記録はreference-cache-{red,final-debug-test,final-release-test,before-benchmark,retry-benchmark}.log、reference-cache-image-comparison.json、reference-cache-off-image-comparison.json、constraint-delta-{trace-1,jitter}-{replay,legacy}.log、reference-cache-final-benchmark-failed.log、reference-cache-dev-{install,package,consumer-run}.logです。
+
+重複した旧版/中間/Debug画像と、一時legacy captureのソース・project・object・DLLをworkspace内の生成物と確認して片づけました。240ファイル、110,587,791byteを削除し、最新Release画像・元asset・現build・SDK・成功/失敗ログ・再現用trace1/2とjitter入力・削除前hashを保持しています。整理記録はreference-cache-cleanup.jsonです。
+
+最後のread-onlyレビューで見つかったreplay行内NULの見落としもRED後に修正。binary読取のftell差と文字列長を照合し、NUL入りEOF行をInit前exit2で拒否しました。通常のCRLF10行は実モデルで完走。ログはconstraint-invalid-nul-{red,green}.log、constraint-valid-crlf-green.logです。

@@ -242,3 +242,9 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖＋8身体形状＋輪状10接続、半径.038、頂点補正OFFの設定を保持して、接続端点と同半径の身体形状を各Update内で共有しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0で0秒・3.35秒開始を各120frame、Debug/Releaseで順番に実行し、480frameのGPU位置/法線と全Skirt点の参照一致を確認しました。
 
 24姿勢の両構成48画像は旧実装とbyte一致し、構成間24組も一致しました。接続OFFのRelease120frame/12画像も従来と一致しています。最大位置差9.314e-10、normal1.789e-7、loopの侵入点平均15.833/最大深さ.020639 model unitを保持しました。見た目や侵入を改善する変更ではありません。記録はbuild/native-validation/link-cache-image-comparison.json、link-cache-off-image-comparison.jsonです。
+
+## substep内の共有と実時間再生
+
+YUMEKAの接続10本設定を保持して、目標方向/長さと接触形状の準備をsubstep内で共有しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0でDebug/Release各2区間×120frame、計480frameのGPU位置/法線とSkirt点を確認。旧版と全480skin JSON・48画像が一致し、構成間24組もbyte一致。接続OFFのRelease120frame/12画像も一致しました。最大位置差9.314e-10、normal1.789e-7。画質・侵入を改善する変更ではありません。
+
+可視計測の1回はwarmup中に接触検査で失敗しました。そのdeltaを保存できておらず、元の失敗は未再現です。benchmarkだけにGKCORE_BENCHMARK_DELTA_TRACE_PATH/GKCORE_BENCHMARK_DELTA_REPLAY_PATHを追加し、更新間隔を再生します。診断modeではFPS値を出しません。実測3300frameと変動1200frameを変更前HEADのsolver/collision DLLと現在版で各4500frame再生し、双方が完走しました。これを元の失敗の修正完了とは扱いません。比較と実機ログはreference-cache-image-comparison.json、reference-cache-off-image-comparison.json、constraint-delta-{trace-1,jitter}-{replay,legacy}.logです。

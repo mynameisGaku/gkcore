@@ -759,47 +759,12 @@ bool ExpandSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionSh
     return true;
 }
 
-bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error)
+static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondaryMotionCollisionShape* preparedShapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& candidate, gk::String& error)
 {
-    error.Clear();
-    // 入力数、既存位置、目標方向を先に検証し、出力をまだ変更しない。
-    if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error) || !ValidatePositions(positions.Data(), positions.Count(), error) || positions.Count() != pointCount)
-    {
-        if (error.Empty())
-            error.Assign("Secondary motion collision point count does not match its positions");
-        return false;
-    }
-    if (shapeCount == 0)
-        return true;
-    if (!referenceTargets)
-    {
-        error.Assign("Secondary motion collision references are missing");
-        return false;
-    }
-    // fallbackに使う全目標位置が有限値か調べる。
-    for (uint32_t index = 0; index < pointCount; ++index)
-    {
-        if (!IsFinite(referenceTargets[index]))
-        {
-            error.Assign("Secondary motion collision reference is non-finite");
-            return false;
-        }
-    }
-    // すべての接触が解けたときだけpositionsへ確定する候補。
-    gk::Array<gk::FVector3d> candidate;
-    if (!candidate.AppendRange(positions.Data(), pointCount))
-    {
-        error.Assign("Secondary motion collision workspace allocation failed");
-        return false;
-    }
-    // 形状ごとの軸、半径、許容幅、旧AABBを呼出し中だけ保持する。
-    FPreparedSecondaryMotionCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
     // 動かないrootの形状内判定を一度だけ保持する。
     bool rootInsideByShape[kMaximumCollisionShapes] = {};
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        // この順で使う接触形状の準備値。
-        preparedShapes[shapeIndex] = PrepareCollisionShape(shapes[shapeIndex]);
         // 固定rootと形状軸の最近位置。
         const gk::FVector3d rootClosest = ClosestPointOnPreparedAxis(candidate.At(0), preparedShapes[shapeIndex]);
         // 最初の線分を免除するためのroot侵入状態。
@@ -900,6 +865,88 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
     return true;
 }
 
+bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error)
+{
+    error.Clear();
+    // 入力数、既存位置、目標方向を先に検証し、出力をまだ変更しない。
+    if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error) || !ValidatePositions(positions.Data(), positions.Count(), error) || positions.Count() != pointCount)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion collision point count does not match its positions");
+        return false;
+    }
+    if (shapeCount == 0)
+        return true;
+    if (!referenceTargets)
+    {
+        error.Assign("Secondary motion collision references are missing");
+        return false;
+    }
+    // fallbackに使う全目標位置が有限値か調べる。
+    for (uint32_t index = 0; index < pointCount; ++index)
+    {
+        if (!IsFinite(referenceTargets[index]))
+        {
+            error.Assign("Secondary motion collision reference is non-finite");
+            return false;
+        }
+    }
+    // 候補の確保を従来どおり形状準備より先に行う。
+    gk::Array<gk::FVector3d> candidate;
+    if (!candidate.AppendRange(positions.Data(), pointCount))
+    {
+        error.Assign("Secondary motion collision workspace allocation failed");
+        return false;
+    }
+    // raw経路は従来の固定領域を使い、追加の確保なしで共通kernelへ渡す。
+    FPreparedSecondaryMotionCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    for (uint32_t index = 0; index < shapeCount; ++index)
+    {
+        preparedShapes[index] = PrepareCollisionShape(shapes[index]);
+    }
+    return ProjectPreparedSecondaryMotionContactsKernel(preparedShapes, shapeCount, referenceTargets, pointCount, positions, candidate, error);
+}
+
+bool ProjectPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error)
+{
+    error.Clear();
+    if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
+    {
+        error.Assign("Secondary motion prepared collision shape count is invalid");
+        return false;
+    }
+    if (!ValidatePositions(positions.Data(), positions.Count(), error) || positions.Count() != pointCount)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion collision point count does not match its positions");
+        return false;
+    }
+    if (shapeCount == 0)
+        return true;
+    if (!referenceTargets)
+    {
+        error.Assign("Secondary motion collision references are missing");
+        return false;
+    }
+    // fallbackに使う全目標位置が有限値か調べる。
+    for (uint32_t index = 0; index < pointCount; ++index)
+    {
+        if (!IsFinite(referenceTargets[index]))
+        {
+            error.Assign("Secondary motion collision reference is non-finite");
+            return false;
+        }
+    }
+    // すべての接触が解けたときだけpositionsへ確定する候補。
+    gk::Array<gk::FVector3d> candidate;
+    if (!candidate.AppendRange(positions.Data(), pointCount))
+    {
+        error.Assign("Secondary motion collision workspace allocation failed");
+        return false;
+    }
+    return ProjectPreparedSecondaryMotionContactsKernel(shapes, shapeCount, referenceTargets, pointCount, positions, candidate, error);
+}
+
 bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
 {
 #if defined(GKCORE_TESTING)
@@ -915,10 +962,9 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
         return false;
     // 接触形状の軸と範囲をこの検査中だけ再利用する。
     FPreparedSecondaryMotionCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
-    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    for (uint32_t index = 0; index < shapeCount; ++index)
     {
-        // この順で検査する形状の準備値。
-        preparedShapes[shapeIndex] = PrepareCollisionShape(shapes[shapeIndex]);
+        preparedShapes[index] = PrepareCollisionShape(shapes[index]);
     }
     return CheckPreparedContacts(preparedShapes, shapeCount, positions, pointCount, error, toleranceFraction);
 }
@@ -1315,29 +1361,13 @@ bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisio
             error.Assign("Secondary motion free-segment radius is invalid");
         return false;
     }
+    if (radius == 0.0f)
+        return PrepareSecondaryMotionCollisionShapes(shapes, shapeCount, output, error);
     // 身体半径へ線分半径を加え、既存の外向き丸めと上限検査を使う。
     gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
     if (!ExpandSecondaryMotionCollisionShapes(shapes, shapeCount, radius, expandedShapes, error))
         return false;
-    // 準備値は候補配列へ作り、全件成功後にだけ置き換える。
-    gk::Array<FPreparedSecondaryMotionCollisionShape> candidate;
-    if (!candidate.Reserve(shapeCount))
-    {
-        error.Assign("Secondary motion prepared collision shape allocation failed");
-        return false;
-    }
-    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
-    {
-        const FPreparedSecondaryMotionCollisionShape prepared = PrepareCollisionShape(expandedShapes.At(shapeIndex));
-        if (!candidate.Append(prepared))
-        {
-            error.Assign("Secondary motion prepared collision shape allocation failed");
-            return false;
-        }
-    }
-    output.MoveFrom(candidate);
-    error.Clear();
-    return true;
+    return PrepareSecondaryMotionCollisionShapes(expandedShapes.Data(), shapeCount, output, error);
 }
 
 bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
@@ -1356,6 +1386,52 @@ bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMot
         return true;
     }
     return CheckFreeSegmentPrepared(shapes, shapeCount, first, second, error);
+}
+
+bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
+{
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionContactCheckCount;
+#endif
+    error.Clear();
+    if (!isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
+    {
+        error.Assign("Secondary motion collision tolerance fraction is invalid");
+        return false;
+    }
+    if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
+    {
+        error.Assign("Secondary motion prepared collision shape count is invalid");
+        return false;
+    }
+    if (!ValidatePositions(positions, pointCount, error))
+        return false;
+    return CheckPreparedContacts(shapes, shapeCount, positions, pointCount, error, toleranceFraction);
+}
+
+bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error)
+{
+    if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error))
+        return false;
+    // 準備値は候補配列へ作り、全件成功後にだけ置き換える。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> candidate;
+    if (!candidate.Reserve(shapeCount))
+    {
+        error.Assign("Secondary motion prepared collision shape allocation failed");
+        return false;
+    }
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        const FPreparedSecondaryMotionCollisionShape prepared = PrepareCollisionShape(shapes[shapeIndex]);
+        if (!candidate.Append(prepared))
+        {
+            error.Assign("Secondary motion prepared collision shape allocation failed");
+            return false;
+        }
+    }
+    output.MoveFrom(candidate);
+    error.Clear();
+    return true;
 }
 
 }

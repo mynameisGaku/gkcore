@@ -286,6 +286,7 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             if (!animation::ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data() + link.shapeOffset, shapeCount, { { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, projectedFirst, projectedSecond, error) || !StorePosition(projectedFirst, first, error) || !StorePosition(projectedSecond, second, error))
             {
                 LinkFailure(index, error);
+                error.Append(" (link projection)");
                 return false;
             }
             affected.At(link.firstChain) = 1;
@@ -363,6 +364,7 @@ bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, 
         if (!animation::CheckSecondaryMotionFreeSegmentContacts(shapes, shapeCount, link.radius, firstPosition, secondPosition, error))
         {
             LinkFailure(index, error);
+            error.Append(" (rendered link)");
             return false;
         }
     }

@@ -69,6 +69,21 @@ bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryM
  */
 bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error);
 
+/**
+ * 準備済み形状で節位置を投影する。失敗時はpositionsを保つ。
+ */
+bool ProjectPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error);
+
+/**
+ * 準備済み形状で節と隣接節の接触を調べる。許容幅の割合は0から1。
+ */
+bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction = 1.0);
+
+/**
+ * 半径を変えずに生形状を検証・準備し、失敗時はoutputを保つ。
+ */
+bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error);
+
 #if defined(GKCORE_TESTING)
 /**
  * 接触形状の軸距離計算回数を0へ戻す。

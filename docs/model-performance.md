@@ -103,3 +103,11 @@ START14と同じ10接続・半径.038・身体8形状・13鎖で、同じUpdate�
 通常可視Release1280×720、標準効果、VSyncなし、debug表示と頂点補正OFF、3000frame/warmup300を変更前後とも完走しました。176.127→174.119FPS、揺れ更新2.462→2.436ms、後p95 6.968ms、Draw .421/Present2.314/IK .512msです。更新時間の短縮は小さく、FPS改善は確認できませんでした。300FPSは未達です。ログはlink-cache-{before,final}-benchmark.logです。
 
 capture専用DLLの固定delta1/60・初期20frame除外後100sampleはsolver3.309927→3.260583ms、全Update3.924160→3.865686ms。通常表示とは更新間隔・検証条件が違うためFPSへ換算しません。Debug/Release480frameが参照と一致し、保存24姿勢の48画像は変更前とbyte一致しました。布面の貫通は保持されており、品質を改善した結果ではありません。次は鎖制約を繰り返す費用を区間ごとに調べます。
+
+## 鎖制約の参照方向と接触準備
+
+devではsubstep内の一定な目標方向・骨長と、半径ガード後の身体形状を反復間で共有しました。投影順、骨長・角度、root例外、float保存後と描画FKの最終検査は維持しています。
+
+固定delta1/60のcaptureでは、参照計算平均2216.88→241.20、solver3.292944→2.967918ms、全Update3.898166→3.572878msでした。通常可視Release1280×720、VSyncなし、標準効果、debug表示/頂点補正OFF、YUMEKAと2motion・右腕IK・13鎖・身体8形状・接続10本、3000frame/warmup300の完走結果は171.990→173.519FPS、secondary2.437→2.288msです。captureを通常FPSへ換算しません。300FPSは未達で、布面の貫通も保持しています。
+
+最初の可視計測はwarmup中の接触失敗で未完走でした。失敗を調べるdelta trace/replayを追加し、同じ実測3300frameと変動1200frameを変更前後で再生して双方完走しましたが、元の失敗は再現できていません。この区切りのmain反映は保留です。ログはreference-cache-{before,retry}-benchmark.log、reference-cache-final-benchmark-failed.log、constraint-delta-{trace-1,jitter}-{replay,legacy}.logです。

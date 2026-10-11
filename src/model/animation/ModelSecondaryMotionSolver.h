@@ -2,6 +2,7 @@
 #ifndef GKCORE_MODEL_ANIMATION_MODELSECONDARYMOTIONSOLVER_H
 #define GKCORE_MODEL_ANIMATION_MODELSECONDARYMOTIONSOLVER_H
 
+#include <stdint.h>
 #include <gkcore/FModelSecondaryMotionSettings.h>
 #include "foundation/String.h"
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
@@ -25,6 +26,18 @@ bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk:
  * 形状は前回と今回で同数。高速な更新間移動の連続接触は保証しない。
  */
 bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius = 0.0f);
+
+#if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
+/**
+ * 鎖制約の参照方向・長さ計算回数を0へ戻す。検証用の直列Updateで使う。
+ */
+void ResetSecondaryMotionReferenceCalculationCount();
+
+/**
+ * 鎖制約の参照方向・長さ計算回数を返す。
+ */
+uint64_t GetSecondaryMotionReferenceCalculationCount();
+#endif
 
 }
 
