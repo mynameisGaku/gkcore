@@ -43,6 +43,16 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
  */
 bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error);
 
+/**
+ * float範囲内の有限な端点を持つ自由線分を身体形状から押し出す。入力が不正か収束しない場合は両端を保つ。
+ */
+bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
+
+/**
+ * float範囲内の有限な自由線分の両端と全区間が身体形状の外か調べる。不正入力や接触があれば失敗する。
+ */
+bool CheckSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error);
+
 #if defined(GKCORE_TESTING)
 /**
  * 接触形状の軸距離計算回数を0へ戻す。

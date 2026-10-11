@@ -31,6 +31,17 @@ setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMoti
 無効な先頭boneや負値・非有限値は失敗し、前の設定を保ちます。
 `ClearModelSecondaryMotion`で鎖とともに解放されます。
 
+複数の鎖の自由boneを線分で結ぶには、`SetModelSecondaryMotionLinks`へ`FModelSecondaryMotionLink`配列を渡します。
+各端点は別々に登録した鎖の自由boneで、固定rootや仮想末端は指定できません。
+最大1024本、半径はmodel空間の有限な0以上、反復数は1〜32です。
+端点の順序を反転した重複も拒否します。
+既定の反復数は32で、`nullptr, 0`は接続線分だけを解除し、鎖や身体形状は保持します。
+`ResetModelSecondaryMotion`と鎖の再登録後も接続線分と反復数を保持し、次の明示更新で接触を解きます。
+
+複数鎖の接触制約を同時に解けない場合、`UpdateModelSecondaryMotion`は`-1`を返し、直前に確定した全鎖の物理状態と姿勢を保ちます。
+`GetLastErrorMessage()`で失敗理由を確認してください。
+接続線分は骨長や角度制約と両立しない設定では成立しません。
+
 `GetModelSecondaryMotionDebugShapes`は公開値型`gk::FModelSecondaryMotionDebugShape`で、現在の姿勢に対応する接触形状をmodel空間で返します。
 `nullptr, 0`は必要な個数を返し、配列が足りない場合や無効なinstanceでは失敗して出力を保ちます。
 描画用の色分けでは、身体形状を青、自由に動く節を橙色、固定rootを白、仮想末端を灰色で表示します。
@@ -150,6 +161,12 @@ bone名はモデルから検索され、節の余白`0.005` model unitが半径�
 骨の小球設定は脚へ合わせて拡げた8個の身体形状、頂点接触の設定は従来の身体形状を使います。
 スカート鎖はどちらも32回反復します。
 
+鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。
+このoptionには`--secondary-colliders`が必要です。
+各行は`半径 | firstBone secondBone`で、半径はmodel空間です。
+設定ファイルはスカート接続線分を参照してください。
+接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
+
 ```powershell
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-bone-contact-motion.txt --secondary-colliders yumeka-bone-colliders.txt --collision-debug
 ```
@@ -172,6 +189,13 @@ model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-ble
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend <motion-a> <motion-b> --secondary-motion character-secondary-motion.txt
 ```
 
+YUMEKAのSTART14では、節球・脚の身体形状に加え、スカート10本を輪状に結ぶ接続線分を設定します。
+線分半径は`0.038` model unit、制約反復数は32です。
+接続線分ありでは平均侵入頂点数が16.517から15.833、最大侵入深度が0.03001から0.02064へ下がりましたが、侵入は残ります。
+一本だけの接続は480frame完走したものの、開始時の最大侵入深度が0.03020で輪状設定より大きく、採用していません。
+半径`0.055`はframe 76で制約を解けず失敗したため使いません。
+これらの結果は接続線分比較記録とDebug/Release画像比較に記録しています。
+
 ## 対応範囲と未対応
 
 この機能は、書き換え可能なbone姿勢を持つGLB / FBXへ適用します。
@@ -187,8 +211,8 @@ YUMEKAの骨球設定では、計測したスカート幅の中央値`0.0378` mo
 骨球の設定では無効です。
 どちらも布の面全体の接触を扱わないため、衣服全体が身体へ埋まらないことは保証しません。
 
-身体の球・カプセルとの離散接触を実装しています。
-更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。
+身体の球・カプセルと、登録した鎖の自由bone間の離散接触を実装しています。
+更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。
 この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。
 骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。
 実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。

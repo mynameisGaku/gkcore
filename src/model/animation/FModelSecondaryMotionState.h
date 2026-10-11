@@ -4,6 +4,7 @@
 
 #include "model/animation/FModelSecondaryMotionChain.h"
 #include <gkcore/FModelSecondaryMotionCollider.h>
+#include <gkcore/FModelSecondaryMotionLink.h>
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelGpuSkinningGeometry.h"
 
@@ -21,6 +22,10 @@ struct FModelSecondaryMotionState
     Array<FModelSecondaryMotionChain*> chains;
     // 身体に取り付ける接触形状。端点と半径はboneのローカル空間。
     Array<FModelSecondaryMotionCollider> colliders;
+    // 異なる鎖の自由boneを結ぶ身体接触の補助線分。
+    Array<FModelSecondaryMotionLink> links;
+    // 線分接触と既存の骨制約を交互に解く上限。
+    uint32_t linkIterations = 32;
     // 前回更新した身体のmodel空間形状。
     Array<animation::FModelSecondaryMotionCollisionShape> previousCollisionShapes;
     // 節の接触に足すmodel空間の余白。

@@ -60,6 +60,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionColliders.cpp
     src/model/animation/ModelSecondaryMotion.cpp
     src/model/animation/ModelSecondaryMotionDebug.cpp
+    src/model/animation/ModelSecondaryMotionLinks.cpp
     src/model/animation/FModelSecondaryMotionState.cpp
     src/model/animation/ObjSequence.cpp
     src/model/animation/FModelPlayback.cpp
@@ -357,7 +358,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/HumanoidBoneTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
-    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimationMappingInfo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelMaterial.h include/gkcore/ModelMaterialSettings.h include/gkcore/ModelAlphaModeTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)

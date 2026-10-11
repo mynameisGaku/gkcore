@@ -556,6 +556,85 @@ bool CheckPreparedContacts(const FPreparedCollisionShape* shapes, uint32_t shape
     return true;
 }
 
+/**
+ * 自由線分の端点が有限で、float保存に使える範囲か調べる。
+ */
+bool ValidateFreeSegmentEndpoints(const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
+{
+    if (!IsFinite(first) || !IsFinite(second))
+    {
+        error.Assign("Secondary motion free-segment endpoint is non-finite");
+        return false;
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (fabs(first.value[axis]) > FLT_MAX || fabs(second.value[axis]) > FLT_MAX)
+        {
+            error.Assign("Secondary motion free-segment endpoint exceeds the float range");
+            return false;
+        }
+    }
+    // 端点間距離の計算がdouble範囲に収まるか調べる。
+    const gk::FVector3d difference = Subtract(second, first);
+    if (!IsFinite(difference) || !isfinite(Length(difference)))
+    {
+        error.Assign("Secondary motion free-segment length is outside the numeric range");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 準備済み形状に対する線分接触をすべて検査する。
+ */
+bool CheckFreeSegmentPrepared(const FPreparedCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0)
+{
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        // この順で検査する膨張済み身体形状。
+        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        if (IsOutsideExpandedBounds(first, second, shape))
+            continue;
+        // 自由線分と身体軸の最近位置。
+        double spanAmount = 0.0;
+        double axisAmount = 0.0;
+        gk::FVector3d spanPoint{};
+        gk::FVector3d axisPoint{};
+        ClosestSegmentPairWithAxis(first, second, shape.start, shape.axis, shape.axisLengthSquared, spanAmount, axisAmount, spanPoint, axisPoint);
+        (void)spanAmount;
+        (void)axisAmount;
+        // 線分と身体形状の最短距離。
+        const double distance = Length(Subtract(spanPoint, axisPoint));
+        if (!isfinite(distance) || distance < shape.radius - shape.tolerance * toleranceFraction)
+        {
+            error.Assign("Secondary motion free segment intersects a collision shape");
+            error.Append(" (shape: ");
+            error.AppendUnsigned(shapeIndex);
+            error.Append(")");
+            return false;
+        }
+    }
+    error.Clear();
+    return true;
+}
+
+/**
+ * float保存後の接触を減らすため、現在座標に応じた外向き余白を返す。
+ */
+double FreeSegmentProjectionGuard(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape)
+{
+    // 端点・形状位置で最も大きい座標尺度。
+    double coordinateScale = 0.0;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        coordinateScale = fmax(coordinateScale, fabs(first.value[axis]));
+        coordinateScale = fmax(coordinateScale, fabs(second.value[axis]));
+        coordinateScale = fmax(coordinateScale, fabs(shape.start.value[axis]));
+        coordinateScale = fmax(coordinateScale, fabs(shape.end.value[axis]));
+    }
+    return fmax(1.0e-7, fmax(shape.radius * 1.0e-6, coordinateScale * FLT_EPSILON));
+}
+
 }
 
 #if defined(GKCORE_TESTING)
@@ -1069,6 +1148,146 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     direction = candidateDirection;
     error.Clear();
     return true;
+}
+
+bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+{
+    error.Clear();
+    if (&first == &second)
+    {
+        error.Assign("Secondary motion free-segment endpoints cannot alias");
+        return false;
+    }
+    // 入力参照と現在端点を先に写し、出力との別名を安全に扱う。
+    const gk::FVector3d candidateReferenceFirst = referenceFirst;
+    const gk::FVector3d candidateReferenceSecond = referenceSecond;
+    gk::FVector3d candidateFirst = first;
+    gk::FVector3d candidateSecond = second;
+    if (!isfinite(radius) || radius < 0.0f || !ValidateFreeSegmentEndpoints(candidateReferenceFirst, candidateReferenceSecond, error) || !ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion free-segment radius is invalid");
+        return false;
+    }
+    if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error))
+        return false;
+    if (shapeCount == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    // 身体半径へ線分の太さを足し、float上限と外向き丸めを共有する。
+    gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
+    if (!ExpandSecondaryMotionCollisionShapes(shapes, shapeCount, radius, expandedShapes, error))
+        return false;
+    // 形状数は検証済みのため、接触計算用の準備値を固定領域へ作る。
+    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        preparedShapes[shapeIndex] = PrepareCollisionShape(expandedShapes.At(shapeIndex));
+    }
+    for (uint32_t pass = 0; pass < kProjectionPassCount; ++pass)
+    {
+        for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+        {
+            // この順で線分を押し出す膨張済み形状。
+            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+            if (IsOutsideExpandedBounds(candidateFirst, candidateSecond, shape))
+                continue;
+            // 線分と身体軸の最近位置および線分上の割合。
+            double spanAmount = 0.0;
+            double axisAmount = 0.0;
+            gk::FVector3d spanPoint{};
+            gk::FVector3d axisPoint{};
+            ClosestSegmentPairWithAxis(candidateFirst, candidateSecond, shape.start, shape.axis, shape.axisLengthSquared, spanAmount, axisAmount, spanPoint, axisPoint);
+            (void)axisAmount;
+            // 線分と身体形状の最短距離。
+            const double distance = Length(Subtract(spanPoint, axisPoint));
+            if (!isfinite(distance))
+            {
+                error.Assign("Secondary motion free-segment distance is outside the numeric range");
+                return false;
+            }
+            if (distance >= shape.radius)
+                continue;
+            // 中心交差時は現在辺、参照辺、形状軸の順で退避方向を選ぶ。
+            gk::FVector3d normal = Subtract(spanPoint, axisPoint);
+            if (!Normalize(normal))
+            {
+                const gk::FVector3d currentDirection = Subtract(candidateSecond, candidateFirst);
+                normal = Cross(currentDirection, shape.axis);
+                if (!Normalize(normal))
+                {
+                    const gk::FVector3d referenceDirection = Subtract(candidateReferenceSecond, candidateReferenceFirst);
+                    normal = Cross(referenceDirection, shape.axis);
+                    if (!Normalize(normal))
+                    {
+                        if (Length(shape.axis) > 0.0)
+                            normal = DeterministicPerpendicular(shape.axis);
+                        else if (Length(referenceDirection) > 0.0)
+                            normal = DeterministicPerpendicular(referenceDirection);
+                        else
+                            normal = { { 1.0, 0.0, 0.0 } };
+                    }
+                }
+            }
+            // float保存誤差を越えて形状外へ出すための補正量。
+            const double guard = FreeSegmentProjectionGuard(candidateFirst, candidateSecond, shape);
+            const double targetDistance = shape.radius + guard;
+            // 最近点を表面の外へ運ぶ距離。
+            const double penetration = targetDistance - distance;
+            // 両端の逆質量を1としたPBD補正の分母。
+            const double firstWeight = 1.0 - spanAmount;
+            const double secondWeight = spanAmount;
+            // 両端の補正を距離変化へ換算する重みの二乗和。
+            const double denominator = firstWeight * firstWeight + secondWeight * secondWeight;
+            if (!isfinite(targetDistance) || !isfinite(penetration) || !(penetration > 0.0) || !isfinite(denominator) || !(denominator > 0.0))
+            {
+                error.Assign("Secondary motion free-segment correction is invalid");
+                return false;
+            }
+            candidateFirst = Add(candidateFirst, Multiply(normal, penetration * firstWeight / denominator));
+            candidateSecond = Add(candidateSecond, Multiply(normal, penetration * secondWeight / denominator));
+            if (!ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
+                return false;
+        }
+        if (CheckFreeSegmentPrepared(preparedShapes, shapeCount, candidateFirst, candidateSecond, error, 0.0))
+        {
+            first = candidateFirst;
+            second = candidateSecond;
+            error.Clear();
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CheckSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
+{
+    error.Clear();
+    if (!isfinite(radius) || radius < 0.0f)
+    {
+        error.Assign("Secondary motion free-segment radius is invalid");
+        return false;
+    }
+    if (!ValidateFreeSegmentEndpoints(first, second, error) || !ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error))
+        return false;
+    if (shapeCount == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    // 検査側も投影側と同じ半径拡張およびfloat上限を使う。
+    gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
+    if (!ExpandSecondaryMotionCollisionShapes(shapes, shapeCount, radius, expandedShapes, error))
+        return false;
+    // 形状数は検証済みのため、接触計算用の準備値を固定領域へ作る。
+    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    {
+        preparedShapes[shapeIndex] = PrepareCollisionShape(expandedShapes.At(shapeIndex));
+    }
+    return CheckFreeSegmentPrepared(preparedShapes, shapeCount, first, second, error);
 }
 
 }
