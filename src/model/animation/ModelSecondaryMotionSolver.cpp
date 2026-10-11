@@ -504,6 +504,14 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
     {
         return StepSecondaryMotionChainCore(targets, count, settings, delta, previousShapes, currentShapes, shapeCount, state, error);
     }
+    if (previousShapes == currentShapes)
+    {
+        // 同じ形状列を前後で使う場合は、半径拡張を一度だけ行う。
+        gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
+        if (!ExpandSecondaryMotionCollisionShapes(previousShapes, shapeCount, pointRadius, expandedShapes, error))
+            return false;
+        return StepSecondaryMotionChainCore(targets, count, settings, delta, expandedShapes.Data(), expandedShapes.Data(), shapeCount, state, error);
+    }
     gk::Array<FModelSecondaryMotionCollisionShape> expandedPreviousShapes;
     gk::Array<FModelSecondaryMotionCollisionShape> expandedCurrentShapes;
     if (!ExpandSecondaryMotionCollisionShapes(previousShapes, shapeCount, pointRadius, expandedPreviousShapes, error) || !ExpandSecondaryMotionCollisionShapes(currentShapes, shapeCount, pointRadius, expandedCurrentShapes, error))

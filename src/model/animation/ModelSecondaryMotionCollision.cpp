@@ -18,21 +18,6 @@ const uint32_t kMaximumPointCount = 1025;
 // 複数接触を交互に押し戻す最大回数。
 const uint32_t kProjectionPassCount = 64;
 
-/**
- * 1回の接触検査で再利用する形状軸と範囲。
- */
-struct FPreparedCollisionShape
-{
-    gk::FVector3d start;      // 形状軸の始点。
-    gk::FVector3d end;        // 形状軸の終点。
-    gk::FVector3d axis;       // 始点から終点へ向かう軸。
-    double axisLengthSquared; // 最近点計算に使う軸長の二乗。
-    double radius;            // 接触判定に使う半径。
-    double tolerance;         // 接触判定に使う許容幅。
-    double boundsLow[3];      // 半径分広げたAABBの下限。
-    double boundsHigh[3];     // 半径分広げたAABBの上限。
-};
-
 #if defined(GKCORE_TESTING)
 // 接触形状軸への最近点計算回数。
 uint64_t secondaryMotionCollisionAxisQueryCount = 0;
@@ -40,6 +25,8 @@ uint64_t secondaryMotionCollisionAxisQueryCount = 0;
 uint64_t secondaryMotionContactCheckCount = 0;
 // 接触形状の準備回数。
 uint64_t secondaryMotionCollisionPrepareCount = 0;
+// 身体形状の半径拡張回数。
+uint64_t secondaryMotionCollisionExpansionCount = 0;
 #endif
 
 /**
@@ -165,10 +152,10 @@ double ContactTolerance(double radius)
 /**
  * 検証済み形状の軸と判定値を1回だけ計算する。
  */
-FPreparedCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisionShape& shape)
+FPreparedSecondaryMotionCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisionShape& shape)
 {
     // この呼出し中に再利用する形状値。
-    FPreparedCollisionShape prepared = {};
+    FPreparedSecondaryMotionCollisionShape prepared = {};
     prepared.start = ToDouble(shape.start);
     prepared.end = ToDouble(shape.end);
     prepared.axis = Subtract(prepared.end, prepared.start);
@@ -190,7 +177,7 @@ FPreparedCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisi
 /**
  * 点と準備済み軸の最近位置を求める。
  */
-gk::FVector3d ClosestPointOnPreparedAxis(const gk::FVector3d& point, const FPreparedCollisionShape& shape)
+gk::FVector3d ClosestPointOnPreparedAxis(const gk::FVector3d& point, const FPreparedSecondaryMotionCollisionShape& shape)
 {
 #if defined(GKCORE_TESTING)
     ++secondaryMotionCollisionAxisQueryCount;
@@ -204,7 +191,7 @@ gk::FVector3d ClosestPointOnPreparedAxis(const gk::FVector3d& point, const FPrep
 /**
  * 線分が準備済み形状の膨張AABBから離れているか調べる。
  */
-bool IsOutsideExpandedBounds(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape)
+bool IsOutsideExpandedBounds(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedSecondaryMotionCollisionShape& shape)
 {
     for (uint32_t axis = 0; axis < 3; ++axis)
     {
@@ -382,7 +369,7 @@ void ClosestSegmentPair(const gk::FVector3d& firstStart, const gk::FVector3d& fi
 /**
  * 検査対象の線分が接触形状へ侵入しているか調べる。
  */
-bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape, double toleranceFraction = 1.0)
+bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedSecondaryMotionCollisionShape& shape, double toleranceFraction = 1.0)
 {
     // 軸方向の範囲が離れている線分は最近点計算を省く。
     if (IsOutsideExpandedBounds(first, second, shape))
@@ -401,7 +388,7 @@ bool SpanPenetrates(const gk::FVector3d& first, const gk::FVector3d& second, con
 /**
  * 配列内の自由点を球またはカプセル表面へ押し出す。
  */
-void ProjectPoint(const FPreparedCollisionShape& shape, const gk::FVector3d& reference, gk::FVector3d& point)
+void ProjectPoint(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& reference, gk::FVector3d& point)
 {
     // 形状の膨張AABBから外れた点はそのまま保つ。
     if (IsOutsideExpandedBounds(point, point, shape))
@@ -422,7 +409,7 @@ void ProjectPoint(const FPreparedCollisionShape& shape, const gk::FVector3d& ref
 /**
  * 侵入した鎖線分を自由端点の重みに応じて押し戻す。
  */
-void ProjectSpan(const FPreparedCollisionShape& shape, bool firstFixed, gk::FVector3d& first, gk::FVector3d& second)
+void ProjectSpan(const FPreparedSecondaryMotionCollisionShape& shape, bool firstFixed, gk::FVector3d& first, gk::FVector3d& second)
 {
     // 接触形状から離れた線分は最近点計算を省く。
     if (IsOutsideExpandedBounds(first, second, shape))
@@ -499,13 +486,13 @@ bool ValidatePositions(const gk::FVector3d* positions, uint32_t pointCount, gk::
 /**
  * 準備済み形状で点と鎖線分の接触を検査する。
  */
-bool CheckPreparedContacts(const FPreparedCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
+bool CheckPreparedContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
 {
     // rootを除く全節は必ず形状の外にあることを確認する。
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
         // この順で検査する準備済み形状。
-        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        const FPreparedSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
         for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
         {
             if (IsOutsideExpandedBounds(positions[pointIndex], positions[pointIndex], shape))
@@ -528,7 +515,7 @@ bool CheckPreparedContacts(const FPreparedCollisionShape* shapes, uint32_t shape
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
         // root例外を調べる準備済み形状。
-        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        const FPreparedSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
         // 鎖の固定root位置。
         const gk::FVector3d root = positions[0];
         // 固定rootと形状軸の最近位置。
@@ -587,12 +574,12 @@ bool ValidateFreeSegmentEndpoints(const gk::FVector3d& first, const gk::FVector3
 /**
  * 準備済み形状に対する線分接触をすべて検査する。
  */
-bool CheckFreeSegmentPrepared(const FPreparedCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0)
+bool CheckFreeSegmentPrepared(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0)
 {
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
         // この順で検査する膨張済み身体形状。
-        const FPreparedCollisionShape& shape = shapes[shapeIndex];
+        const FPreparedSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
         if (IsOutsideExpandedBounds(first, second, shape))
             continue;
         // 自由線分と身体軸の最近位置。
@@ -621,7 +608,7 @@ bool CheckFreeSegmentPrepared(const FPreparedCollisionShape* shapes, uint32_t sh
 /**
  * float保存後の接触を減らすため、現在座標に応じた外向き余白を返す。
  */
-double FreeSegmentProjectionGuard(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedCollisionShape& shape)
+double FreeSegmentProjectionGuard(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedSecondaryMotionCollisionShape& shape)
 {
     // 端点・形状位置で最も大きい座標尺度。
     double coordinateScale = 0.0;
@@ -667,6 +654,16 @@ uint64_t GetSecondaryMotionCollisionPrepareCount()
 {
     return secondaryMotionCollisionPrepareCount;
 }
+
+void ResetSecondaryMotionCollisionExpansionCount()
+{
+    secondaryMotionCollisionExpansionCount = 0;
+}
+
+uint64_t GetSecondaryMotionCollisionExpansionCount()
+{
+    return secondaryMotionCollisionExpansionCount;
+}
 #endif
 
 bool ValidateSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::String& error)
@@ -701,6 +698,9 @@ bool ExpandSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionSh
         }
         return false;
     }
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionCollisionExpansionCount;
+#endif
     gk::Array<FModelSecondaryMotionCollisionShape> candidate;
     if (!candidate.Reserve(count))
     {
@@ -793,7 +793,7 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
         return false;
     }
     // 形状ごとの軸、半径、許容幅、旧AABBを呼出し中だけ保持する。
-    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    FPreparedSecondaryMotionCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
     // 動かないrootの形状内判定を一度だけ保持する。
     bool rootInsideByShape[kMaximumCollisionShapes] = {};
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
@@ -811,7 +811,7 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
         for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
         {
             // この反復で解く接触形状とrootの侵入状態。
-            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+            const FPreparedSecondaryMotionCollisionShape& shape = preparedShapes[shapeIndex];
             const bool rootInside = rootInsideByShape[shapeIndex];
             // rootが形状内なら、動かせないrootを含む最初の線分だけを省く。
             for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
@@ -831,7 +831,7 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
         for (uint32_t shapeIndex = 0; shapeIndex < shapeCount && !anyPenetration; ++shapeIndex)
         {
             // 残留接触を調べる形状。
-            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+            const FPreparedSecondaryMotionCollisionShape& shape = preparedShapes[shapeIndex];
             // 投影後も形状内に残る自由点を探す。
             for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
             {
@@ -865,7 +865,7 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
     // 収束上限で止まった場合も点侵入を許さない。
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+        const FPreparedSecondaryMotionCollisionShape& shape = preparedShapes[shapeIndex];
         // rootを除く各点の最終侵入を検証する。
         for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
         {
@@ -914,7 +914,7 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
     if (!ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error) || !ValidatePositions(positions, pointCount, error))
         return false;
     // 接触形状の軸と範囲をこの検査中だけ再利用する。
-    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    FPreparedSecondaryMotionCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
         // この順で検査する形状の準備値。
@@ -1176,22 +1176,44 @@ bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollis
         error.Clear();
         return true;
     }
-    // 身体半径へ線分の太さを足し、float上限と外向き丸めを共有する。
-    gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
-    if (!ExpandSecondaryMotionCollisionShapes(shapes, shapeCount, radius, expandedShapes, error))
+    // 半径込みの形状準備を共有し、投影本体へ渡す。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedShapes;
+    if (!PrepareSecondaryMotionFreeSegmentShapes(shapes, shapeCount, radius, preparedShapes, error))
         return false;
-    // 形状数は検証済みのため、接触計算用の準備値を固定領域へ作る。
-    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
-    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+    return ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data(), preparedShapes.Count(), referenceFirst, referenceSecond, first, second, error);
+}
+
+bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+{
+    error.Clear();
+    if (&first == &second)
     {
-        preparedShapes[shapeIndex] = PrepareCollisionShape(expandedShapes.At(shapeIndex));
+        error.Assign("Secondary motion free-segment endpoints cannot alias");
+        return false;
+    }
+    // 入力参照と現在端点を先に写し、出力との別名を安全に扱う。
+    const gk::FVector3d candidateReferenceFirst = referenceFirst;
+    const gk::FVector3d candidateReferenceSecond = referenceSecond;
+    gk::FVector3d candidateFirst = first;
+    gk::FVector3d candidateSecond = second;
+    if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
+    {
+        error.Assign("Secondary motion prepared collision shape count is invalid");
+        return false;
+    }
+    if (!ValidateFreeSegmentEndpoints(candidateReferenceFirst, candidateReferenceSecond, error) || !ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
+        return false;
+    if (shapeCount == 0)
+    {
+        error.Clear();
+        return true;
     }
     for (uint32_t pass = 0; pass < kProjectionPassCount; ++pass)
     {
         for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
         {
             // この順で線分を押し出す膨張済み形状。
-            const FPreparedCollisionShape& shape = preparedShapes[shapeIndex];
+            const FPreparedSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
             if (IsOutsideExpandedBounds(candidateFirst, candidateSecond, shape))
                 continue;
             // 線分と身体軸の最近位置および線分上の割合。
@@ -1251,7 +1273,7 @@ bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollis
             if (!ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
                 return false;
         }
-        if (CheckFreeSegmentPrepared(preparedShapes, shapeCount, candidateFirst, candidateSecond, error, 0.0))
+        if (CheckFreeSegmentPrepared(shapes, shapeCount, candidateFirst, candidateSecond, error, 0.0))
         {
             first = candidateFirst;
             second = candidateSecond;
@@ -1277,17 +1299,63 @@ bool CheckSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisio
         error.Clear();
         return true;
     }
-    // 検査側も投影側と同じ半径拡張およびfloat上限を使う。
+    // 半径込みの形状準備を共有し、検査本体へ渡す。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedShapes;
+    if (!PrepareSecondaryMotionFreeSegmentShapes(shapes, shapeCount, radius, preparedShapes, error))
+        return false;
+    return CheckPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data(), preparedShapes.Count(), first, second, error);
+}
+
+bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error)
+{
+    error.Clear();
+    if (!isfinite(radius) || radius < 0.0f || !ValidateSecondaryMotionCollisionShapes(shapes, shapeCount, error))
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion free-segment radius is invalid");
+        return false;
+    }
+    // 身体半径へ線分半径を加え、既存の外向き丸めと上限検査を使う。
     gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
     if (!ExpandSecondaryMotionCollisionShapes(shapes, shapeCount, radius, expandedShapes, error))
         return false;
-    // 形状数は検証済みのため、接触計算用の準備値を固定領域へ作る。
-    FPreparedCollisionShape preparedShapes[kMaximumCollisionShapes] = {};
+    // 準備値は候補配列へ作り、全件成功後にだけ置き換える。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> candidate;
+    if (!candidate.Reserve(shapeCount))
+    {
+        error.Assign("Secondary motion prepared collision shape allocation failed");
+        return false;
+    }
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        preparedShapes[shapeIndex] = PrepareCollisionShape(expandedShapes.At(shapeIndex));
+        const FPreparedSecondaryMotionCollisionShape prepared = PrepareCollisionShape(expandedShapes.At(shapeIndex));
+        if (!candidate.Append(prepared))
+        {
+            error.Assign("Secondary motion prepared collision shape allocation failed");
+            return false;
+        }
     }
-    return CheckFreeSegmentPrepared(preparedShapes, shapeCount, first, second, error);
+    output.MoveFrom(candidate);
+    error.Clear();
+    return true;
+}
+
+bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
+{
+    error.Clear();
+    if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
+    {
+        error.Assign("Secondary motion prepared collision shape count is invalid");
+        return false;
+    }
+    if (!ValidateFreeSegmentEndpoints(first, second, error))
+        return false;
+    if (shapeCount == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    return CheckFreeSegmentPrepared(shapes, shapeCount, first, second, error);
 }
 
 }

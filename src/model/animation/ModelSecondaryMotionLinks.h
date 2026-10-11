@@ -23,6 +23,20 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
  * 描画FKから解決したbone原点の接続線分を身体形状へ検査する。
  */
 bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, const Array<float>& matrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, String& error);
+#if defined(GKCORE_TESTING)
+/**
+ * 接続の端点解決と形状準備の回数を0へ戻す。
+ */
+void ResetSecondaryMotionLinkPreparationCounts();
+/**
+ * 接続solver内で確定した端点の組数を返す。
+ */
+uint64_t GetSecondaryMotionLinkResolutionCount();
+/**
+ * 接続solver内で準備した身体形状の数を返す。
+ */
+uint64_t GetSecondaryMotionLinkShapePreparationCount();
+#endif
 }
 
 #endif
