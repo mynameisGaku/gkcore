@@ -43,6 +43,28 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
  */
 bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error);
 
+#if defined(GKCORE_TESTING)
+/**
+ * 接触形状の軸距離計算回数を0へ戻す。
+ */
+void ResetSecondaryMotionCollisionAxisQueryCount();
+
+/**
+ * 接触形状の軸距離計算回数を返す。
+ */
+uint64_t GetSecondaryMotionCollisionAxisQueryCount();
+
+/**
+ * 接触全体の検査呼び出し回数を0へ戻す。
+ */
+void ResetSecondaryMotionContactCheckCount();
+
+/**
+ * 接触全体の検査呼び出し回数を返す。
+ */
+uint64_t GetSecondaryMotionContactCheckCount();
+#endif
+
 }
 
 #endif

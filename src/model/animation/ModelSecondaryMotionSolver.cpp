@@ -370,6 +370,8 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 positions.At(index).value[axis] += velocities.At(index).value[axis] * step;
             }
         }
+        // 許容誤差なしの検査が通った位置は、通常許容幅による直後の再検査を省く。
+        bool contactsClear = false;
         for (uint32_t pass = 0; pass < settings.constraintIterations; ++pass)
         {
             if (shapeCount > 0 && !ProjectSecondaryMotionContacts(stepShapes.Data(), shapeCount, stepTargets.Data(), count, positions, error))
@@ -422,10 +424,11 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
             // 骨長と曲げ角を戻した後も接触が解けていれば、残りの反復は不要。
             if (shapeCount > 0 && CheckSecondaryMotionContacts(stepShapes.Data(), shapeCount, positions.Data(), count, error, 0.0))
             {
+                contactsClear = true;
                 break;
             }
         }
-        if (shapeCount > 0 && !CheckSecondaryMotionContacts(stepShapes.Data(), shapeCount, positions.Data(), count, error))
+        if (shapeCount > 0 && !contactsClear && !CheckSecondaryMotionContacts(stepShapes.Data(), shapeCount, positions.Data(), count, error))
         {
             return false;
         }

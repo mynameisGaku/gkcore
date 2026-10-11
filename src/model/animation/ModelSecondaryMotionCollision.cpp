@@ -18,6 +18,13 @@ const uint32_t kMaximumPointCount = 1025;
 // 複数接触を交互に押し戻す最大回数。
 const uint32_t kProjectionPassCount = 64;
 
+#if defined(GKCORE_TESTING)
+// 接触形状軸への最近点計算回数。
+uint64_t secondaryMotionCollisionAxisQueryCount = 0;
+// 接触全体の検査呼び出し回数。
+uint64_t secondaryMotionContactCheckCount = 0;
+#endif
+
 /**
  * 倍精度座標を形状のfloat位置から作る。
  */
@@ -155,10 +162,35 @@ bool IsOutsideExpandedBounds(const gk::FVector3d& first, const gk::FVector3d& se
 }
 
 /**
+ * 丸めで狭まらないAABBを使い、線分が形状から確実に離れているか調べる。
+ */
+bool IsOutsideExpandedBoundsConservative(const gk::FVector3d& first, const gk::FVector3d& second, const FModelSecondaryMotionCollisionShape& shape)
+{
+    const double start[3] = { shape.start.x, shape.start.y, shape.start.z };
+    const double end[3] = { shape.end.x, shape.end.y, shape.end.z };
+    const double radius = shape.radius;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const double segmentLow = fmin(first.value[axis], second.value[axis]);
+        const double segmentHigh = fmax(first.value[axis], second.value[axis]);
+        const double shapeLow = nextafter(fmin(start[axis], end[axis]) - radius, -HUGE_VAL);
+        const double shapeHigh = nextafter(fmax(start[axis], end[axis]) + radius, HUGE_VAL);
+        if (segmentHigh < shapeLow || segmentLow > shapeHigh)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
  * pointとカプセル軸上の最近点を求める。
  */
 gk::FVector3d ClosestPointOnAxis(const gk::FVector3d& point, const FModelSecondaryMotionCollisionShape& shape)
 {
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionCollisionAxisQueryCount;
+#endif
     // 形状軸の始点と方向。
     const gk::FVector3d start = ToDouble(shape.start);
     const gk::FVector3d axis = Subtract(ToDouble(shape.end), start);
@@ -391,6 +423,28 @@ bool ValidatePositions(const gk::FVector3d* positions, uint32_t pointCount, gk::
 
 }
 
+#if defined(GKCORE_TESTING)
+void ResetSecondaryMotionCollisionAxisQueryCount()
+{
+    secondaryMotionCollisionAxisQueryCount = 0;
+}
+
+uint64_t GetSecondaryMotionCollisionAxisQueryCount()
+{
+    return secondaryMotionCollisionAxisQueryCount;
+}
+
+void ResetSecondaryMotionContactCheckCount()
+{
+    secondaryMotionContactCheckCount = 0;
+}
+
+uint64_t GetSecondaryMotionContactCheckCount()
+{
+    return secondaryMotionContactCheckCount;
+}
+#endif
+
 bool ValidateSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::String& error)
 {
     error.Clear();
@@ -606,6 +660,9 @@ bool ProjectSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* s
 
 bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
 {
+#if defined(GKCORE_TESTING)
+    ++secondaryMotionContactCheckCount;
+#endif
     error.Clear();
     if (!isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
     {
@@ -677,6 +734,16 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     {
         error.Assign("Secondary motion collision segment direction is invalid");
         return false;
+    }
+    // float座標の安全域だけ先にAABBで除外し、遠方の親軸距離を計算しない。
+    if (fabs(parent.value[0]) <= FLT_MAX && fabs(parent.value[1]) <= FLT_MAX && fabs(parent.value[2]) <= FLT_MAX && length <= FLT_MAX)
+    {
+        const gk::FVector3d boundedEnd = Add(parent, Multiply(candidateDirection, length));
+        if (IsFinite(boundedEnd) && IsOutsideExpandedBoundsConservative(parent, boundedEnd, shape))
+        {
+            direction = candidateDirection;
+            return true;
+        }
     }
     // 親からカプセル軸への最近点で、親が形状内か調べる。
     const gk::FVector3d parentClosest = ClosestPointOnAxis(parent, shape);
