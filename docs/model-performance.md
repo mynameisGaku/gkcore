@@ -40,6 +40,10 @@ instanceごとの基準姿勢cacheを加えた身体形状8個・13鎖の測定�
 
 ONの追加費用は変形点の評価と接触判定です。GPUへ渡すのは変わった点だけで、法線はGPU上で補正後の位置から作り直します。CPU参照やGPU readbackを行うcaptureは速度計測に含めません。最適化前後の固定時刻48画像はbyte一致しました。300FPSはON/OFFとも未達で、今後はskin評価と接触候補の絞り込みを確認します。ログは`build/native-validation/vertex-contact-final-{off,on}-benchmark.log`です。平均FPSには実行時の負荷も含まれるため、全環境で同じ改善率になる保証はありません。
 
+球・カプセルを確実に囲む範囲で遠方の点を除外する変更後、頂点接触ONは199.698FPS（p95 5.579ms、Draw .886ms、Present2.345ms、IK .516ms、secondary1.204ms）、同batch OFFは221.465FPSでした。両方3000frame/warmup300を完走しています。capture用の区間計測では4,172点のうち平均63.1点を補正し、接触計算は1.097285msから.163308ms、形状構築・skin評価を含む全体は1.462256msから.505134msへ減りました。captureの数値は通常viewerのFPSとは別の計測です。保存48画像は変更前後でbyte一致しました。
+
+ユーザーの追加指示に従い、次はスカートboneの小球と脚boneのカプセルを明示し、可視化しながら形状の大きさを合わせます。頂点補正は任意の切替として保持し、骨同士の接触検証ではOFFにします。300FPSは未達です。最新記録は`build/native-validation/skin-contact-bounds-{on,off}-benchmark.log`、区間計測は`skin-contact-bounds-profile-comparison.json`です。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

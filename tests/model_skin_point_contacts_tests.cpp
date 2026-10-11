@@ -8,6 +8,8 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+#include <cmath>
+#include <float.h>
 #include <limits>
 
 namespace
@@ -196,6 +198,227 @@ bool CheckSphereAndCapsuleProjection()
     if (!gk::model::animation::ProjectModelSkinPoints(zeroAxisInput, 2, &zeroAxisSphere, 1, 8, zeroAxisOutput, error) || zeroAxisOutput.Count() != 2 || Distance(zeroAxisOutput.At(0), zeroAxisCenter) < 0.5 || Distance(zeroAxisOutput.At(0), zeroAxisCenter) > 0.5 + 1.0e-5 || zeroAxisOutput.At(0).value[0] < 3.5 || zeroAxisOutput.At(0).value[0] > 3.5 + 1.0e-5 || fabs(zeroAxisOutput.At(0).value[1]) > 1.0e-5 || fabs(zeroAxisOutput.At(0).value[2]) > 1.0e-5 || memcmp(&zeroAxisOutput.At(1), &zeroAxisInput[1], sizeof(FPoint)) != 0)
     {
         return Fail("zero-axis capsule was not treated as a sphere");
+    }
+    return true;
+}
+
+/**
+ * 形状の移動、軸向き、半径境界を幾何計算で検査する。
+ */
+bool CheckTranslatedAndBoundaryGeometry()
+{
+    gk::String error;
+    const FShape spheres[3] = { { { 0.0f, 1.0f, 2.0f }, { 0.0f, 1.0f, 2.0f }, 1.0f }, { { -3.0f, 0.0f, 1.0f }, { -3.0f, 0.0f, 1.0f }, 1.0f }, { { 2.0f, -4.0f, 0.0f }, { 2.0f, -4.0f, 0.0f }, 1.0f } };
+    // 各軸で中心成分を0にし、AABB境界の1 ULP内にある点を取りこぼさないことを確かめる。
+    const double inward = std::nextafter(1.0, 0.0);
+    const double outward = std::nextafter(1.0, 2.0);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const FPoint center{ { spheres[axis].start.x, spheres[axis].start.y, spheres[axis].start.z } };
+        FPoint inside = center;
+        FPoint outside = center;
+        FPoint insideNear = center;
+        FPoint outsideNear = center;
+        FPoint boundary = center;
+        inside.value[axis] += 0.25;
+        outside.value[axis] += 2.0;
+        insideNear.value[axis] += inward;
+        outsideNear.value[axis] += outward;
+        boundary.value[axis] += 1.0;
+        const FPoint inputs[5] = { inside, outside, insideNear, outsideNear, boundary };
+        gk::Array<FPoint> output;
+        if (!gk::model::animation::ProjectModelSkinPoints(inputs, 5, &spheres[axis], 1, 8, output, error) || output.Count() != 5)
+        {
+            return Fail("translated sphere or radius-boundary projection failed");
+        }
+        const double projectedInside = Distance(output.At(0), center);
+        const double projectedNearInside = Distance(output.At(2), center);
+        if (projectedInside < 1.0 || projectedInside > 1.0 + 1.0e-5 || projectedNearInside < 1.0 || projectedNearInside > 1.0 + 1.0e-5 || output.At(0).value[axis] < center.value[axis] + 1.0 || output.At(0).value[axis] > center.value[axis] + 1.0 + 1.0e-5 || memcmp(&output.At(1), &outside, sizeof(FPoint)) != 0 || memcmp(&output.At(3), &outsideNear, sizeof(FPoint)) != 0 || memcmp(&output.At(4), &boundary, sizeof(FPoint)) != 0)
+        {
+            return Fail("translated sphere moved an outside boundary point or left an inside point penetrating");
+        }
+    }
+
+    const FShape capsules[3] = { { { 4.0f, -2.0f, 1.0f }, { 6.0f, -2.0f, 1.0f }, 0.5f }, { { -3.0f, 4.0f, 2.0f }, { -3.0f, 6.0f, 2.0f }, 0.5f }, { { 2.0f, -4.0f, 5.0f }, { 2.0f, -4.0f, 7.0f }, 0.5f } };
+    const FPoint capsuleInputs[3][3] = { { { { 5.0, -1.75, 1.0 } }, { { 6.25, -2.0, 1.0 } }, { { 5.0, -1.0, 1.0 } } }, { { { -2.75, 5.0, 2.0 } }, { { -3.0, 6.25, 2.0 } }, { { -3.0, 5.0, 3.0 } } }, { { { 2.0, -3.75, 6.0 } }, { { 2.0, -4.0, 7.25 } }, { { 2.0, -3.0, 6.0 } } } };
+    const FPoint capsuleExpected[3][2] = { { { { 5.0, -1.5, 1.0 } }, { { 6.5, -2.0, 1.0 } } }, { { { -2.5, 5.0, 2.0 } }, { { -3.0, 6.5, 2.0 } } }, { { { 2.0, -3.5, 6.0 } }, { { 2.0, -4.0, 7.5 } } } };
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        gk::Array<FPoint> output;
+        if (!gk::model::animation::ProjectModelSkinPoints(capsuleInputs[axis], 3, &capsules[axis], 1, 8, output, error) || output.Count() != 3)
+        {
+            return Fail("translated rotated capsule projection failed");
+        }
+        const FPoint start{ { capsules[axis].start.x, capsules[axis].start.y, capsules[axis].start.z } };
+        const FPoint end{ { capsules[axis].end.x, capsules[axis].end.y, capsules[axis].end.z } };
+        for (uint32_t point = 0; point < 2; ++point)
+        {
+            if (DistanceToSegment(output.At(point), start, end) < 0.5 || DistanceToSegment(output.At(point), start, end) > 0.5 + 1.0e-5 || Distance(output.At(point), capsuleExpected[axis][point]) > 1.0e-5)
+            {
+                return Fail("translated capsule side or end cap projection missed its analytical location");
+            }
+        }
+        if (memcmp(&output.At(2), &capsuleInputs[axis][2], sizeof(FPoint)) != 0)
+        {
+            return Fail("translated capsule moved an outside point");
+        }
+    }
+
+    const FShape zeroAxisCapsules[3] = { { { 3.0f, 0.0f, 0.0f }, { 3.0f, 0.0f, 0.0f }, 0.5f }, { { 0.0f, 4.0f, 0.0f }, { 0.0f, 4.0f, 0.0f }, 0.5f }, { { 0.0f, 0.0f, 5.0f }, { 0.0f, 0.0f, 5.0f }, 0.5f } };
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const FPoint center{ { zeroAxisCapsules[axis].start.x, zeroAxisCapsules[axis].start.y, zeroAxisCapsules[axis].start.z } };
+        FPoint inside = center;
+        inside.value[axis] += 0.25;
+        const FPoint expected = [&]()
+        {
+            FPoint value = center;
+            value.value[axis] += 0.5;
+            return value;
+        }();
+        gk::Array<FPoint> output;
+        if (!gk::model::animation::ProjectModelSkinPoints(&inside, 1, &zeroAxisCapsules[axis], 1, 8, output, error) || output.Count() != 1 || Distance(output.At(0), center) < 0.5 || Distance(output.At(0), center) > 0.5 + 1.0e-5 || Distance(output.At(0), expected) > 1.0e-5)
+        {
+            return Fail("translated zero-axis capsule did not behave like a sphere");
+        }
+    }
+    return true;
+}
+
+/**
+ * 斜めで負座標のカプセルを独立距離で検査し、端点順に依存しないことを確かめる。
+ */
+bool CheckReversedArbitraryCapsule()
+{
+    const FShape forward{ { -3.0f, 2.0f, -4.0f }, { -1.0f, -2.0f, 2.0f }, 0.75f };
+    const FShape reversed{ forward.end, forward.start, forward.radius };
+    const FPoint start{ { forward.start.x, forward.start.y, forward.start.z } };
+    const FPoint end{ { forward.end.x, forward.end.y, forward.end.z } };
+    const FPoint midpoint{ { -2.0, 0.0, -1.0 } };
+    const double inverseLength = 1.0 / sqrt(70.0);
+    const double direction[3] = { -3.0 * inverseLength, 6.0 * inverseLength, 5.0 * inverseLength };
+    FPoint inside = midpoint;
+    FPoint outside = midpoint;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        inside.value[axis] += direction[axis] * 0.25;
+        outside.value[axis] += direction[axis] * 1.5;
+    }
+    if (!Near(DistanceToSegment(inside, start, end), 0.25, 1.0e-12) || !Near(DistanceToSegment(outside, start, end), 1.5, 1.0e-12))
+    {
+        return Fail("arbitrary capsule fixture did not match its independent closest-point distances");
+    }
+
+    const FPoint inputs[2] = { inside, outside };
+    gk::Array<FPoint> forwardOutput;
+    gk::Array<FPoint> reversedOutput;
+    gk::String error;
+    if (!gk::model::animation::ProjectModelSkinPoints(inputs, 2, &forward, 1, 8, forwardOutput, error) || !gk::model::animation::ProjectModelSkinPoints(inputs, 2, &reversed, 1, 8, reversedOutput, error) || forwardOutput.Count() != 2 || reversedOutput.Count() != 2)
+    {
+        return Fail("arbitrary capsule projection failed");
+    }
+    const double forwardDistance = DistanceToSegment(forwardOutput.At(0), start, end);
+    const double reversedDistance = DistanceToSegment(reversedOutput.At(0), start, end);
+    if (forwardDistance < forward.radius || forwardDistance > forward.radius + 1.0e-5 || reversedDistance < forward.radius || reversedDistance > forward.radius + 1.0e-5 || Distance(forwardOutput.At(0), reversedOutput.At(0)) > 1.0e-5 || memcmp(&forwardOutput.At(1), &outside, sizeof(FPoint)) != 0 || memcmp(&reversedOutput.At(1), &outside, sizeof(FPoint)) != 0)
+    {
+        return Fail("reversing an arbitrary capsule changed its outside projection result");
+    }
+    return true;
+}
+
+/**
+ * 離れた点群が正確な形状距離評価へ入らない予算を確認する。
+ */
+bool CheckFarPointProjectionBudget()
+{
+    constexpr uint32_t pointCount = 4096;
+    FPoint points[pointCount]{};
+    for (uint32_t point = 0; point < pointCount; ++point)
+    {
+        points[point] = { { 1000.0 + static_cast<double>(point) * 0.125, -700.0 + static_cast<double>(point % 17), 500.0 - static_cast<double>(point % 29) } };
+    }
+    FShape shapes[8]{};
+    for (uint32_t shape = 0; shape < 8; ++shape)
+    {
+        const float x = static_cast<float>(static_cast<int32_t>(shape) * 3 - 10);
+        const float y = static_cast<float>(static_cast<int32_t>(shape % 3) * 4 - 5);
+        const float z = static_cast<float>(static_cast<int32_t>(shape % 5) * 2 - 4);
+        shapes[shape].start = { x, y, z };
+        shapes[shape].end = shape % 2 == 0 ? gk::Vec3{ x, y, z } : gk::Vec3{ x, y + 1.5f, z - 0.5f };
+        shapes[shape].radius = 0.75f;
+    }
+    gk::Array<FPoint> output;
+    gk::String error;
+    gk::model::animation::ResetModelSkinContactWorkForTesting();
+    const bool projected = gk::model::animation::ProjectModelSkinPoints(points, pointCount, shapes, 8, 64, output, error);
+    const uint64_t exactDistanceCount = gk::model::animation::GetModelSkinContactExactDistanceCountForTesting();
+    if (!projected || !error.Empty() || output.Count() != pointCount || memcmp(output.Data(), points, sizeof(points)) != 0)
+    {
+        return Fail("far finite points were not preserved by contact projection");
+    }
+    if (exactDistanceCount != 0)
+    {
+        fprintf(stderr, "far point projection used %llu exact distance evaluations\n", static_cast<unsigned long long>(exactDistanceCount));
+        return false;
+    }
+
+    FShape oneNearShapes[8]{};
+    oneNearShapes[0] = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f };
+    for (uint32_t shape = 1; shape < 8; ++shape)
+    {
+        oneNearShapes[shape] = shapes[shape - 1];
+    }
+    const FPoint inside{ { 0.25, 0.0, 0.0 } };
+    gk::Array<FPoint> projectedInside;
+    gk::model::animation::ResetModelSkinContactWorkForTesting();
+    const bool resolved = gk::model::animation::ProjectModelSkinPoints(&inside, 1, oneNearShapes, 8, 64, projectedInside, error);
+    const uint64_t insideDistanceCount = gk::model::animation::GetModelSkinContactExactDistanceCountForTesting();
+    const double resolvedRadius = projectedInside.Count() == 1 ? Distance(projectedInside.At(0), FPoint{}) : -1.0;
+    if (!resolved || !error.Empty() || projectedInside.Count() != 1 || resolvedRadius < 1.0 || resolvedRadius > 1.0 + 1.0e-5 || insideDistanceCount == 0 || insideDistanceCount > 4)
+    {
+        fprintf(stderr, "near shape projection or far-shape gate failed (radius=%.12g exact=%llu)\n", resolvedRadius, static_cast<unsigned long long>(insideDistanceCount));
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 巨大有限座標の距離overflowを成功扱いせずoutputを保つ。
+ */
+bool CheckOverflowProjectionAtomicity()
+{
+    const FPoint huge{ { std::numeric_limits<double>::max(), std::numeric_limits<double>::max(), 0.0 } };
+    const FShape sphere{ { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f };
+    const FPoint sentinel{ { -9.0, 8.0, 7.0 } };
+    gk::Array<FPoint> output;
+    gk::String error;
+    if (!output.Append(sentinel) || gk::model::animation::ProjectModelSkinPoints(&huge, 1, &sphere, 1, 64, output, error) || error.Empty() || output.Count() != 1 || memcmp(output.Data(), &sentinel, sizeof(sentinel)) != 0)
+    {
+        return Fail("overflowing finite distance was accepted or modified output");
+    }
+    return true;
+}
+
+/**
+ * FLT_MAX端点と半径の拡張範囲でもdouble計算が有限で外点を保つ。
+ */
+bool CheckExtremeFiniteCapsuleBounds()
+{
+    const FShape capsule{ { -FLT_MAX, 0.0f, 0.0f }, { FLT_MAX, 0.0f, 0.0f }, FLT_MAX };
+    const FPoint outside{ { 0.0, static_cast<double>(FLT_MAX), static_cast<double>(FLT_MAX) } };
+    const FPoint sentinel{ { -4.0, -5.0, -6.0 } };
+    gk::Array<FPoint> output;
+    gk::String error;
+    if (!output.Append(sentinel) || !gk::model::animation::ProjectModelSkinPoints(&outside, 1, &capsule, 1, 8, output, error) || !error.Empty() || output.Count() != 1 || memcmp(output.Data(), &outside, sizeof(outside)) != 0)
+    {
+        return Fail("FLT_MAX capsule bounds became non-finite or moved an outside point");
+    }
+    const FPoint start{ { capsule.start.x, capsule.start.y, capsule.start.z } };
+    const FPoint end{ { capsule.end.x, capsule.end.y, capsule.end.z } };
+    const double distance = DistanceToSegment(output.At(0), start, end);
+    if (!isfinite(distance) || distance <= static_cast<double>(capsule.radius))
+    {
+        return Fail("FLT_MAX capsule outside result did not remain geometrically clear");
     }
     return true;
 }
@@ -435,7 +658,7 @@ bool CheckGeometryCorrectionAtomicity()
 
 int main()
 {
-    if (!CheckSphereAndCapsuleProjection() || !CheckFallbackAndMultipleShapes() || !CheckProjectionInputs() || !CheckTriangleGeometryCorrection() || !CheckQuadAndMixedWeightGeometry() || !CheckGeometryCorrectionAtomicity())
+    if (!CheckSphereAndCapsuleProjection() || !CheckTranslatedAndBoundaryGeometry() || !CheckReversedArbitraryCapsule() || !CheckFarPointProjectionBudget() || !CheckOverflowProjectionAtomicity() || !CheckExtremeFiniteCapsuleBounds() || !CheckFallbackAndMultipleShapes() || !CheckProjectionInputs() || !CheckTriangleGeometryCorrection() || !CheckQuadAndMixedWeightGeometry() || !CheckGeometryCorrectionAtomicity())
     {
         return 1;
     }

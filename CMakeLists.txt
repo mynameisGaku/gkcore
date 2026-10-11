@@ -153,6 +153,7 @@ if(GKCORE_BUILD_TESTS)
         src/model/animation/ModelSkinPointContacts.cpp src/model/animation/ModelSkinPoints.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_skin_point_contacts_tests PRIVATE cxx_std_17)
+    target_compile_definitions(gkcore_model_skin_point_contacts_tests PRIVATE GKCORE_TESTING=1)
     target_include_directories(gkcore_model_skin_point_contacts_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_skin_point_contacts_tests)
     add_test(NAME gkcore.model_skin_point_contacts COMMAND gkcore_model_skin_point_contacts_tests)

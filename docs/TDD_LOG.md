@@ -1340,3 +1340,16 @@ nativeはWin11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0
 通常Release1280×720、標準効果、VSyncなし、3000frame/warmup300をON/OFFとも完走しました。最初ON133.568FPS/Draw3.391msから、選別IDと形状軸の前計算後ON171.985FPS、p95 6.373ms、Draw1.811ms、Present2.243ms、IK .509ms、secondary1.196msです。同batch OFF227.082FPS、p95 4.928ms、Draw .405ms、Present2.246ms、IK .510ms、secondary1.186ms。実行時負荷も含まれるため改善率は全環境への保証ではなく、300FPSも未達です。ログはvertex-contact-final-{on,off}-benchmark.logです。
 
 ゲーム構築用344ファイルをprepare_game_repository.pyのallowlist/変換処理で既存treeへ更新し、Runtimeと5sampleのRelease buildを確認しました。installしたRuntime SDK55ファイルがallowlistに一致し、新APIを参照する外部consumerのlinkとGPU Init→Present→Shutdownが成功しました。tests・検証tool・開発記録・私有assetをmainへ含めません。ログはvertex-contact-game-{build,install,consumer-build,consumer-run}.log、tree hashはvertex-contact-game-manifest.jsonです。比較用の2560×1920画像8枚はpixel完全一致のPNGへ保存し、workspace内の今回生成した大きなPPMだけを削除しました。保存対応はvertex-contact-quality-images.jsonに記録しています。
+
+
+## 2026-10-11 遠方の頂点接触計算を省く
+
+prepared shapeへ端点の各軸min/maxに半径を足した範囲を保存し、double nextafterで上下を各1ULP外側へ広げます。XYZすべてFLT範囲の点がstrictに外なら、最近距離とsqrtを省きます。境界と内側は旧計算を保ち、巨大doubleは従来の距離/overflow経路へ戻します。初回・投影中・pass後・最終strict検査で同じ保守的な除外を使い、shape順、半径、margin、補正式は変更しません。入力と候補outputの原子性を維持します。
+
+REDは4096遠方点×8形状で65,536回の精密距離計算が発生するbudget失敗（skin-contact-bounds-red-test.log）。GREENは同じ点のbyte保持と計算0回。1点だけ球内・残り7形状が遠方のcaseは補正成功と1〜4回のbudgetで、投影内の除外も確認します。移動した球、xyz軸のcapsule、negative斜めcapsule/端点反転、半径の1ULP内外、FLT_MAX端点/半径、DBL_MAX2成分のoverflow原子性を独立距離fixtureで確認しました。testing counterは通常Runtimeに含めません。
+
+capture専用DLLへGKCORE_PROFILE_SKIN_CONTACTSの区間QPC計測を追加し、通常SDKではcompileしません。YUMEKA同じ3.35秒開始120frame、20frame除外後100sample、4,172選別点・平均63.1補正点です。変更前shape .042343 / skin .312558 / contact1.097285 / total1.462256ms、変更後shape .041025 / skin .291392 / contact .163308 / total .505134msでした。RootShape構築とskin位置の式は維持します。記録はskin-contact-bounds-profile-{before,after}.logとprofile-comparison.json。
+
+CPU MSVC19.51のDebug/Release各60/60件成功（5.02秒/4.43秒）。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK22621.0で、既存ON commandの0秒/3.35秒開始をDebug/Release各120frame実行。480frame全GPU位置/法線valid、Skirt全1,314点は8形状に侵入0、変更前後48画像とDebug/Release24組がbyte一致。最大GPU位置誤差0、normal1.789e-7です。記録はskin-contact-bounds-{Release,Debug}-{start,loop}-capture.logとimage-comparison.json。可視benchmark3000frame/warmup300はON199.698FPS、OFF221.465FPSで完走しました。300FPSと布の面品質は未達です。
+
+この作業中のユーザー指示で、primary検証をスカートbone小球と脚boneカプセルへ変更し、可視化して大きさを調整する方針へ更新しました。頂点接触を新規作業の主手段とせず、既定OFFの任意補正として保持します。次の実装はbone側半径の明示と接触形状の可視化、実脚に合わせたprofileです。
