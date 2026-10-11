@@ -13,6 +13,7 @@
 #include <math.h>
 #include "foundation/FVector3d.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionLinks.h"
 #include <string.h>
 
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
@@ -153,6 +154,8 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
     }
     state->chains.MoveFrom(candidate.chains);
     state->colliders.MoveFrom(candidate.colliders);
+    state->links.MoveFrom(candidate.links);
+    state->linkIterations = candidate.linkIterations;
     state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
     state->colliderMargin = candidate.colliderMargin;
     state->skinPointContactsEnabled = candidate.skinPointContactsEnabled;
@@ -174,6 +177,7 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
         return true;
     }
     candidate.colliderMargin = previous->colliderMargin;
+    candidate.linkIterations = previous->linkIterations;
     candidate.skinPointContactsEnabled = previous->skinPointContactsEnabled;
     candidate.skinContactGeometry = previous->skinContactGeometry;
     if (!candidate.skinContactPositionIds.AppendRange(previous->skinContactPositionIds.Data(), previous->skinContactPositionIds.Count()))
@@ -181,7 +185,7 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
         error.Assign("vertex contact selection allocation failed");
         return false;
     }
-    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
+    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
     {
         error.Assign("secondary motion collision state allocation failed");
         return false;
@@ -376,6 +380,32 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
+    if (!reset && candidate.links.Count() > 0 && currentShapes.Count() > 0)
+    {
+        // 全鎖の候補を解いてから接続を押し出し、描画へ使う点列を更新する。
+        if (!model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error))
+        {
+            return Failure(error);
+        }
+        orientationPoints.Clear();
+        orientationChains.Clear();
+        for (uint32_t index = 0; index < candidate.chains.Count(); ++index)
+        {
+            const auto& chain = *candidate.chains.At(index);
+            const uint32_t pointOffset = orientationPoints.Count();
+            for (uint32_t point = 0; point < chain.simulation.points.Count(); ++point)
+            {
+                if (!orientationPoints.Append(chain.simulation.points.At(point).position))
+                {
+                    return detail::SetError("secondary link orientation allocation failed");
+                }
+            }
+            if (!orientationChains.Append(model::animation::FModelPoseChain{ chain.bones.Data(), chain.bones.Count(), chain.settings.endOffset, orientationPoints.Data() + pointOffset }))
+            {
+                return detail::SetError("secondary link orientation allocation failed");
+            }
+        }
+    }
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
     if (profile && !QueryPerformanceCounter(&profileTimes[3]))
     {
@@ -413,6 +443,10 @@ int Update(ModelHandle handle, double delta, bool reset)
             return detail::SetError("secondary motion pose allocation failed");
         }
         if (!model::animation::EvaluateModelPose(resource->animation->source->Skeleton(), combined, renderedMatrices, error))
+        {
+            return Failure(error);
+        }
+        if (candidate.links.Count() > 0 && !model::CheckRenderedSecondaryMotionLinks(candidate, renderedMatrices, currentShapes.Data(), currentShapes.Count(), error))
         {
             return Failure(error);
         }
@@ -568,7 +602,7 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
         }
         candidate.skinContactGeometry = resource->animation->source->GpuSkinningGeometry();
     }
-    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !Commit(*transform, candidate, error))
+    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !model::ValidateSecondaryMotionLinks(candidate, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
     }
@@ -631,6 +665,11 @@ int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMo
         }
     }
     candidate.colliderMargin = margin;
+    candidate.linkIterations = previous->linkIterations;
+    if (!candidate.links.AppendRange(previous->links.Data(), previous->links.Count()))
+    {
+        return detail::SetError("secondary link settings allocation failed");
+    }
     candidate.skinPointContactsEnabled = previous->skinPointContactsEnabled;
     candidate.skinContactGeometry = previous->skinContactGeometry;
     if (!candidate.skinContactPositionIds.AppendRange(previous->skinContactPositionIds.Data(), previous->skinContactPositionIds.Count()))
@@ -714,6 +753,51 @@ int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle handle, bool enable
             state->skinContactGeometry = nullptr;
         }
         state->skinPointContactsEnabled = enabled;
+    }
+    detail::ClearError();
+    return 0;
+}
+
+int SetModelSecondaryMotionLinks(ModelHandle handle, const FModelSecondaryMotionLink* links, uint32_t count, uint32_t iterations)
+{
+    detail::ModelResource* resource = nullptr;
+    detail::ModelTransform* transform = nullptr;
+    if (!Instance(handle, resource, transform))
+    {
+        return -1;
+    }
+    if (count > 1024 || (count > 0 && !links) || iterations == 0 || iterations > 32)
+    {
+        return detail::SetError("secondary link count, pointer, or iterations are invalid");
+    }
+    const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (!previous)
+    {
+        if (count == 0)
+        {
+            detail::ClearError();
+            return 0;
+        }
+        return detail::SetError("configure secondary chains before their links");
+    }
+    String error;
+    model::FModelSecondaryMotionState candidate;
+    if (!CopyCollisionSettings(previous, candidate, error))
+    {
+        return Failure(error);
+    }
+    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    {
+        if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
+        {
+            return Failure(error);
+        }
+    }
+    candidate.links.Clear();
+    candidate.linkIterations = iterations;
+    if (!candidate.links.AppendRange(links, count) || !model::ValidateSecondaryMotionLinks(candidate, error) || !Commit(*transform, candidate, error))
+    {
+        return Failure(error);
     }
     detail::ClearError();
     return 0;

@@ -29,6 +29,14 @@ bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled);
  * 身体のbone名とローカル形状を設定ファイルから読み、全形状を一括登録する。
  */
 bool ApplySecondaryColliderPreview(ModelHandle model, const char* path);
+/**
+ * --secondary-linksのpathを取り出す。欠落・重複では引数列を保つ。
+ */
+bool ParseSecondaryLinkOptions(int& argc, char** argv, const char*& path);
+/**
+ * 半径と2個のbone名から接続線分を読み、全設定を一括登録する。
+ */
+bool ApplySecondaryLinkPreview(ModelHandle model, const char* path);
 
 }
 

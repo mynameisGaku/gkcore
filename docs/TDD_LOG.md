@@ -1405,3 +1405,17 @@ dev専用skin診断を追加し、選択1frameのみ最大32点のposition/mesh�
 ゲーム構築用348ファイルを既存curated treeへ反映し、Runtime+5sampleのRelease build成功。SDK56ファイルがallowlistに一致し、更新DLLを置いた外部consumerのGPU Init→Present→Shutdown成功。test toolと詳細diagnostic export、開発記録、私有assetはmain/SDKへ含めません。通常RuntimeではQPC/counterコードがcompileされません。記録はsecondary-prepared-game-{build,install,consumer-run}.log、game/SDK manifestです。
 
 今回生成したDebug比較24画像、hash一致した旧Release24画像と区間計測2画像を片づけ、詳細81frameはlossless PNGへ保存してPPMを削除しました。最新Release24画像、全検証logと比較hash/診断JSONは保持します。
+
+## 自由bone間の接触補助
+
+FModelSecondaryMotionLinkとSetModelSecondaryMotionLinksを追加し、別々の鎖の自由bone原点を半径付き線分で結び、身体球・カプセルから両端を押し出します。骨長・角度・鎖接触を再適用し、float保存後と描画FKの線分を検査してから候補を確定します。辺の長さやcloth幅を固定する機能ではありません。root/仮想末端・同じ鎖・重複pair・不正半径/反復数は拒否します。最大1024本、反復1〜32、既定32。Resetとcollider置換/解除後も設定を保持します。
+
+REDは自由線分stub、setter stub、collider置換時の設定消失で取得。複数形状・側面/端部・中点・退化線分・大きな有限値・float範囲・別名・失敗出力保持を独立距離計算で確認しました。APIではdeep copy、独立instance、再登録、reset、delta0/正delta/hitch/teleport、非収束時のsecondary state/cache/FK保持を検査しています。animation clockとIKを先に変更した呼出しまで巻き戻す契約ではありません。CLI重複テストの文字列はpointer比較を内容比較へ直しました。監査で見つかった8.5を反復8+半径.5と読む問題もRED後、整数直後の区切りを必須に修正。従来9/10/11数値行は保持します。鎖config helperは行ごとに登録し、後の行の失敗時にはviewer/captureが起動を中止してmodelを破棄します。設定file全体をrollbackするAPIではありません。
+
+CPU MSVC19.51のDebug/Release各60/60件成功。Win11 build26200 / RTX4070SUPER driver617.42 / v142 MSVC19.29 / SDK10.0.22621.0で、単一接続と10本輪状接続を各0秒/3.35秒開始、Debug/Release各120frame確認。合計960frameのGPU位置/法線とSkirt1314点のCPU参照がvalid、48組の構成間画像がbyte一致。位置最大誤差9.314e-10、normal1.789e-7。接続OFFのRelease240frameもvalidで、従来24姿勢がbyte一致しました。半径.055の試行はframe76で失敗し、完走結果へ数えません。
+
+START14は既存.038骨球/身体8形状に、スカートの2番目の自由boneを輪状に結ぶ10線分を加えます。頂点補正OFF、Cで表示切替。loop120frameの平均侵入点は16.517→15.833、最大25点、最大深さ.030013→.020639 model unit。start最大深さは.017353。2560×1920の同時刻画像で限定的な改善を確認し、面の埋まりは残ります。最大侵入点の骨原点間距離は.052388で半径.038の外、2つのskin寄与位置もbody内でした。weightからの位置再構成誤差3.154e-9。骨原点の接触成功をskin面全体の非侵入と取り違えません。線分の長さ固定、自己衝突、三角形面、連続接触、world SRT慣性は未対応です。
+
+通常表示Release1280×720、VSyncなし、標準効果、3000frame/warmup300を同batchで完走。接続OFF207.058FPS、p95 5.378ms、secondary1.551ms。輪状ON177.136FPS、p95 6.869ms、Draw .397/Present2.232/IK .508/secondary2.450ms。接触条件の違うON/OFFを速度最適化とは扱いません。300FPS未達です。最新記録はsecondary-links-final-{debug,release}-test.log、secondary-links-image-comparison.json、secondary-links-off-image-comparison.json、secondary-links-{off,ring}-benchmark.log、bone-link-coverage-analysis.json、secondary-links-quality-images.json。
+
+最終format後のCPU Debug60/60（6.89秒）、Release60/60（4.72秒）成功。ゲーム構築用351ファイルのcurated treeからRuntimeと5sampleのRelease build成功、Runtime SDK57ファイルがallowlistに一致し、新APIを参照した外部consumerのGPU Init→Present→Shutdownが成功しました。通常viewerの接続debug表示30frameとSTART -CheckOnlyも成功。公開ABIの既存settings layoutは保持し、新しい値型と関数を追加しています。独立read-onlyレビューでもcoreに重大な指摘はありません。tests・開発記録・私有assetをmainへ含めません。最新記録はsecondary-links-game-{build,install,package,consumer-build,consumer-run}.logとgame/SDK manifestです。使用後の生成PPM・重複Debug/旧版画像・調査scriptを片づけ、最新Release画像・lossless拡大PNG・失敗記録・現build・元assetを保持しました。cleanup manifestに削除前hashと試行configを残しています。

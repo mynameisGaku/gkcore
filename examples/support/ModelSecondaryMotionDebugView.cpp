@@ -213,6 +213,10 @@ bool DrawCapsule(gk::Vec3 start, gk::Vec3 end, float radius, uint32_t color, flo
         return DrawSphere(start, radius, color, scale);
     }
     const double scaledRadius = static_cast<double>(radius) * scale;
+    if (scaledRadius == 0.0)
+    {
+        return DrawRibbon(start, end, color);
+    }
     if (!DrawEndRing(start, axis, scaledRadius, color) || !DrawEndRing(end, axis, scaledRadius, color))
     {
         return false;

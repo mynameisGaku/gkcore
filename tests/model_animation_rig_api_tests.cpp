@@ -29,6 +29,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <string>
+#include <vector>
 
 /**
  * Viewerの頂点接触option契約を同じ軽量な検証実行へ含める。
@@ -1283,6 +1284,351 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         separateRadiiStayIndependent = radiusState->chains.At(0)->collisionRadius == 0.05f && radiusState->chains.At(1)->collisionRadius == 0.15f;
     }
     passed = separateRadiiStayIndependent && passed;
+    const auto ReadSecondaryState = [](gk::ModelHandle handle)
+    {
+        auto* currentTransform = gk::detail::FindModelTransform(handle);
+        return currentTransform && currentTransform->playback ? currentTransform->playback->secondaryMotion : nullptr;
+    };
+    const auto ReportLinkStage = [&](bool result, const char* stage)
+    {
+        if (!result)
+        {
+            const auto* currentState = ReadSecondaryState(instance);
+            fprintf(stderr, "secondary-motion link contract failed at %s (links=%u iterations=%u): %s\n", stage, currentState ? currentState->links.Count() : 0u, currentState ? currentState->linkIterations : 0u, gk::GetLastErrorMessage());
+        }
+        passed = result && passed;
+        return result;
+    };
+    if (passed)
+    {
+        gk::FModelSecondaryMotionLink links[1]{};
+        links[0].firstBone = 2;
+        links[0].secondBone = 4;
+        links[0].radius = 0.125f;
+        const int32_t debugCountBeforeLinks = gk::GetModelSecondaryMotionDebugShapes(instance, nullptr, 0);
+        const bool linkSet = gk::SetModelSecondaryMotionLinks(instance, links, 1, 12) == 0;
+        auto* currentState = ReadSecondaryState(instance);
+        const bool copiedLink = currentState && currentState->chains.Count() == 2 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12;
+        ReportLinkStage(linkSet && copiedLink, "copies a link between free bones in different chains and stores iterations");
+        links[0].firstBone = 4;
+        links[0].secondBone = 2;
+        links[0].radius = 9.0f;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(currentState && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->links.At(0).radius == 0.125f, "caller mutation does not change copied link settings");
+        const int32_t debugCountWithLink = gk::GetModelSecondaryMotionDebugShapes(instance, nullptr, 0);
+        ReportLinkStage(debugCountBeforeLinks >= 0 && debugCountWithLink == debugCountBeforeLinks + 1, "debug shape count includes the registered link");
+
+        gk::FModelSecondaryMotionCollider replacementCollider{};
+        replacementCollider.bone = 0;
+        replacementCollider.start = { 10.0f, 10.0f, 10.0f };
+        replacementCollider.end = replacementCollider.start;
+        replacementCollider.radius = 0.15f;
+        const bool bodyReplacementSucceeded = gk::SetModelSecondaryMotionColliders(instance, &replacementCollider, 1, 0.01f) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(bodyReplacementSucceeded && currentState && currentState->colliders.Count() == 1 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12, "body collider replacement preserves links and iteration settings");
+        const bool bodyRemovalSucceeded = gk::SetModelSecondaryMotionColliders(instance, nullptr, 0) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(bodyRemovalSucceeded && currentState && currentState->colliders.Count() == 0 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12, "clearing body colliders preserves links and iteration settings");
+
+        const uint32_t queriedBones[7] = { 0, 1, 2, 3, 4, 5, 6 };
+        gk::Vec3 beforeLinkUpdate[7]{};
+        gk::Vec3 afterLinkUpdate[7]{};
+        const bool beforeQuery = gk::GetModelBonePositions(instance, queriedBones, 7, beforeLinkUpdate) == 0;
+        const bool resetKeptLink = gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        const bool resetStateKeptLink = currentState && currentState->links.Count() == 1 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12 && currentState->chains.Count() == 2;
+        const bool updateKeptLink = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        currentState = ReadSecondaryState(instance);
+        const bool updateStateKeptLink = currentState && currentState->links.Count() == 1 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12 && currentState->chains.Count() == 2;
+        const bool afterQuery = gk::GetModelBonePositions(instance, queriedBones, 7, afterLinkUpdate) == 0;
+        ReportLinkStage(beforeQuery && resetKeptLink && resetStateKeptLink && updateKeptLink && updateStateKeptLink && afterQuery && memcmp(beforeLinkUpdate, afterLinkUpdate, sizeof(beforeLinkUpdate)) == 0, "reset and zero-delta update keep links and leave the no-collider pose unchanged");
+
+        gk::FModelSecondaryMotionLink invalidLink = { 2, 5, 0.1f };
+        gk::FModelSecondaryMotionLink tooManyLinks[1025]{};
+        for (uint32_t index = 0; index < 1025; ++index)
+        {
+            tooManyLinks[index] = { 2, 4, 0.1f };
+        }
+        gk::FModelSecondaryMotionLink duplicateLinks[2] = { { 2, 4, 0.1f }, { 4, 2, 0.2f } };
+        gk::FModelSecondaryMotionLink sameChainLink = { 2, 2, 0.1f };
+        gk::FModelSecondaryMotionLink fixedRootLink = { 1, 4, 0.1f };
+        gk::FModelSecondaryMotionLink invalidRadiusLink = { 2, 4, std::numeric_limits<float>::quiet_NaN() };
+        const auto RejectWithoutReplacingLink = [&](const gk::FModelSecondaryMotionLink* candidate, uint32_t count, uint32_t iterations)
+        {
+            const bool rejected = gk::SetModelSecondaryMotionLinks(instance, candidate, count, iterations) == -1;
+            const auto* preserved = ReadSecondaryState(instance);
+            return rejected && preserved && preserved->chains.Count() == 2 && preserved->links.Count() == 1 && preserved->links.At(0).firstBone == 2 && preserved->links.At(0).secondBone == 4 && preserved->links.At(0).radius == 0.125f && preserved->linkIterations == 12;
+        };
+        const gk::FModelSecondaryMotionLink validLink = { 2, 4, 0.125f };
+        const bool invalidsAtomic = RejectWithoutReplacingLink(nullptr, 1, 8) && RejectWithoutReplacingLink(tooManyLinks, 1025, 8) && RejectWithoutReplacingLink(&invalidLink, 1, 8) && RejectWithoutReplacingLink(duplicateLinks, 2, 8) && RejectWithoutReplacingLink(&sameChainLink, 1, 8) && RejectWithoutReplacingLink(&fixedRootLink, 1, 8) && RejectWithoutReplacingLink(&invalidRadiusLink, 1, 8) && RejectWithoutReplacingLink(&validLink, 1, 0) && RejectWithoutReplacingLink(&validLink, 1, 33);
+        ReportLinkStage(invalidsAtomic, "invalid count, iterations, endpoints, duplicate pair, or radius preserve current state");
+
+        const uint32_t replacementMissingEndpoint[2] = { 1, 5 };
+        const bool missingEndpointRejected = gk::SetModelSecondaryMotionChain(instance, replacementMissingEndpoint, 2, settings) == -1;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(missingEndpointRejected && currentState && currentState->chains.Count() == 2 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->linkIterations == 12, "failed same-root chain replacement keeps referenced link state");
+        const uint32_t shortenedFirstChain[1] = { 1 };
+        const bool shortenedChainRejected = gk::SetModelSecondaryMotionChain(instance, shortenedFirstChain, 1, settings) == -1;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(shortenedChainRejected && currentState && currentState->chains.Count() == 2 && currentState->chains.At(0)->bones.Count() == 2 && currentState->links.Count() == 1 && currentState->links.At(0).firstBone == 2 && currentState->links.At(0).secondBone == 4 && currentState->linkIterations == 12, "same-root chain shortening cannot remove a referenced free bone");
+
+        gk::FModelSecondaryMotionCollider linkCollider{};
+        linkCollider.bone = 0;
+        linkCollider.start = { 1.5f, 0.5f, 0.0f };
+        linkCollider.end = linkCollider.start;
+        linkCollider.radius = 0.15f;
+        const gk::FModelSecondaryMotionLink contactLink = { 2, 4, 0.02f };
+        bool contactReady = gk::SetModelSecondaryMotionColliders(instance, &linkCollider, 1, 0.005f) == 0 && gk::SetModelSecondaryMotionLinks(instance, &contactLink, 1, 32) == 0;
+        gk::Vec3 contactReference[7]{};
+        const uint32_t allBones[7] = { 0, 1, 2, 3, 4, 5, 6 };
+        contactReady = gk::GetModelBonePositions(instance, allBones, 7, contactReference) == 0 && contactReady;
+        const auto Distance3 = [](gk::Vec3 first, gk::Vec3 second)
+        {
+            const double x = static_cast<double>(first.x) - second.x;
+            const double y = static_cast<double>(first.y) - second.y;
+            const double z = static_cast<double>(first.z) - second.z;
+            return sqrt(x * x + y * y + z * z);
+        };
+        const auto Dot3 = [](gk::Vec3 first, gk::Vec3 second) { return static_cast<double>(first.x) * second.x + static_cast<double>(first.y) * second.y + static_cast<double>(first.z) * second.z; };
+        const auto LinkAndChainConstraintsHold = [&](const gk::Vec3* positions)
+        {
+            auto* state = ReadSecondaryState(instance);
+            if (!state || state->links.Count() != 1 || state->previousCollisionShapes.Count() != 1)
+            {
+                return false;
+            }
+            const gk::Vec3 bodyCenter = state->previousCollisionShapes.At(0).start;
+            const gk::Vec3 linkFirst = positions[2];
+            const gk::Vec3 linkSecond = positions[4];
+            const gk::Vec3 linkAxis{ linkSecond.x - linkFirst.x, linkSecond.y - linkFirst.y, linkSecond.z - linkFirst.z };
+            const gk::Vec3 centerOffset{ bodyCenter.x - linkFirst.x, bodyCenter.y - linkFirst.y, bodyCenter.z - linkFirst.z };
+            const double axisLengthSquared = Dot3(linkAxis, linkAxis);
+            const double amount = axisLengthSquared > 0.0 ? fmax(0.0, fmin(1.0, Dot3(centerOffset, linkAxis) / axisLengthSquared)) : 0.0;
+            const gk::Vec3 closest{ linkFirst.x + static_cast<float>(amount) * linkAxis.x, linkFirst.y + static_cast<float>(amount) * linkAxis.y, linkFirst.z + static_cast<float>(amount) * linkAxis.z };
+            const double bodyDistance = Distance3(bodyCenter, closest);
+            const double requiredDistance = state->previousCollisionShapes.At(0).radius + state->links.At(0).radius;
+            if (bodyDistance + 0.001 < requiredDistance || !NearVector(positions[1], contactReference[1]) || !NearVector(positions[3], contactReference[3]))
+            {
+                return false;
+            }
+            for (uint32_t chainIndex = 0; chainIndex < 2; ++chainIndex)
+            {
+                const uint32_t rootBone = chainIndex == 0 ? 1u : 3u;
+                const uint32_t freeBone = chainIndex == 0 ? 2u : 4u;
+                const gk::Vec3 targetAxis{ contactReference[freeBone].x - contactReference[rootBone].x, contactReference[freeBone].y - contactReference[rootBone].y, contactReference[freeBone].z - contactReference[rootBone].z };
+                const gk::Vec3 solvedAxis{ positions[freeBone].x - positions[rootBone].x, positions[freeBone].y - positions[rootBone].y, positions[freeBone].z - positions[rootBone].z };
+                const double targetLength = Distance3(contactReference[rootBone], contactReference[freeBone]);
+                const double solvedLength = Distance3(positions[rootBone], positions[freeBone]);
+                if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot3(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.002)
+                {
+                    return false;
+                }
+            }
+            for (uint32_t chainIndex = 0; chainIndex < state->chains.Count(); ++chainIndex)
+            {
+                const auto* chain = state->chains.At(chainIndex);
+                if (!chain)
+                {
+                    return false;
+                }
+                for (uint32_t pointIndex = 0; pointIndex < chain->simulation.points.Count(); ++pointIndex)
+                {
+                    const auto& point = chain->simulation.points.At(pointIndex);
+                    if (!isfinite(point.position.x) || !isfinite(point.position.y) || !isfinite(point.position.z) || !isfinite(point.velocity.x) || !isfinite(point.velocity.y) || !isfinite(point.velocity.z))
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        gk::Vec3 solvedPositions[7]{};
+        for (uint32_t iteration = 0; iteration < 3 && contactReady; ++iteration)
+        {
+            contactReady = gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && gk::GetModelBonePositions(instance, allBones, 7, solvedPositions) == 0 && LinkAndChainConstraintsHold(solvedPositions);
+        }
+        ReportLinkStage(contactReady, "body sphere pushes the free-bone link clear while preserving roots, lengths, angles, and finite velocity");
+
+        struct FFailedLinkUpdateSnapshot
+        {
+            struct FChain
+            {
+                std::vector<uint32_t> bones;
+                std::vector<gk::model::animation::FModelSecondaryMotionPoint> points;
+                std::vector<gk::Vec3> previousTargets;
+                std::vector<gk::model::animation::FModelBoneTransform> transforms;
+                gk::FModelSecondaryMotionSettings settings{};
+                float collisionRadius = 0.0f;
+            };
+            std::vector<FChain> chains;
+            std::vector<gk::model::animation::FModelSecondaryMotionCollisionShape> previousShapes;
+            std::vector<gk::FModelSecondaryMotionLink> links;
+            std::vector<gk::FModelSecondaryMotionCollider> colliders;
+            std::vector<gk::model::animation::FModelBoneTransform> cachedTransforms;
+            const gk::model::FModelSecondaryMotionState* state = nullptr;
+            gk::model::FModelPoseCache* cache = nullptr;
+            uint64_t poseRevision = 0;
+            uint64_t cacheRevision = 0;
+            float colliderMargin = 0.0f;
+        } failedUpdateSnapshot;
+        const gk::FModelSecondaryMotionLink infeasibleLink = { 2, 4, 10.0f };
+        bool failedUpdateSnapshotReady = gk::SetModelSecondaryMotionLinks(instance, &infeasibleLink, 1, 12) == 0;
+        auto* failedUpdateTransform = gk::detail::FindModelTransform(instance);
+        auto* failedUpdatePlayback = failedUpdateTransform ? failedUpdateTransform->playback : nullptr;
+        const auto* stateBeforeFailedLinkUpdate = ReadSecondaryState(instance);
+        failedUpdateSnapshotReady = failedUpdateSnapshotReady && failedUpdatePlayback && stateBeforeFailedLinkUpdate && stateBeforeFailedLinkUpdate->chains.Count() == 2 && stateBeforeFailedLinkUpdate->links.Count() == 1 && failedUpdatePlayback->basePoseCache;
+        if (failedUpdateSnapshotReady)
+        {
+            failedUpdateSnapshot.state = stateBeforeFailedLinkUpdate;
+            failedUpdateSnapshot.cache = failedUpdatePlayback->basePoseCache;
+            failedUpdateSnapshot.poseRevision = failedUpdatePlayback->poseRevision;
+            failedUpdateSnapshot.cacheRevision = failedUpdatePlayback->basePoseCache->revision;
+            failedUpdateSnapshot.colliderMargin = stateBeforeFailedLinkUpdate->colliderMargin;
+            failedUpdateSnapshot.chains.reserve(stateBeforeFailedLinkUpdate->chains.Count());
+            for (uint32_t chainIndex = 0; chainIndex < stateBeforeFailedLinkUpdate->chains.Count(); ++chainIndex)
+            {
+                const auto* chain = stateBeforeFailedLinkUpdate->chains.At(chainIndex);
+                if (!chain)
+                {
+                    failedUpdateSnapshotReady = false;
+                    break;
+                }
+                FFailedLinkUpdateSnapshot::FChain copy{};
+                if (chain->bones.Count() > 0)
+                {
+                    copy.bones.assign(chain->bones.Data(), chain->bones.Data() + chain->bones.Count());
+                }
+                if (chain->simulation.points.Count() > 0)
+                {
+                    copy.points.assign(chain->simulation.points.Data(), chain->simulation.points.Data() + chain->simulation.points.Count());
+                }
+                if (chain->simulation.previousTargets.Count() > 0)
+                {
+                    copy.previousTargets.assign(chain->simulation.previousTargets.Data(), chain->simulation.previousTargets.Data() + chain->simulation.previousTargets.Count());
+                }
+                if (chain->transforms.Count() > 0)
+                {
+                    copy.transforms.assign(chain->transforms.Data(), chain->transforms.Data() + chain->transforms.Count());
+                }
+                copy.settings = chain->settings;
+                copy.collisionRadius = chain->collisionRadius;
+                failedUpdateSnapshot.chains.push_back(copy);
+            }
+            if (stateBeforeFailedLinkUpdate->previousCollisionShapes.Count() > 0)
+            {
+                failedUpdateSnapshot.previousShapes.assign(stateBeforeFailedLinkUpdate->previousCollisionShapes.Data(), stateBeforeFailedLinkUpdate->previousCollisionShapes.Data() + stateBeforeFailedLinkUpdate->previousCollisionShapes.Count());
+            }
+            if (stateBeforeFailedLinkUpdate->links.Count() > 0)
+            {
+                failedUpdateSnapshot.links.assign(stateBeforeFailedLinkUpdate->links.Data(), stateBeforeFailedLinkUpdate->links.Data() + stateBeforeFailedLinkUpdate->links.Count());
+            }
+            if (stateBeforeFailedLinkUpdate->colliders.Count() > 0)
+            {
+                failedUpdateSnapshot.colliders.assign(stateBeforeFailedLinkUpdate->colliders.Data(), stateBeforeFailedLinkUpdate->colliders.Data() + stateBeforeFailedLinkUpdate->colliders.Count());
+            }
+            if (failedUpdatePlayback->basePoseCache->pose.localTransforms.Count() > 0)
+            {
+                failedUpdateSnapshot.cachedTransforms.assign(failedUpdatePlayback->basePoseCache->pose.localTransforms.Data(), failedUpdatePlayback->basePoseCache->pose.localTransforms.Data() + failedUpdatePlayback->basePoseCache->pose.localTransforms.Count());
+            }
+        }
+        gk::Vec3 fkBeforeFailedLinkUpdate[7]{};
+        failedUpdateSnapshotReady = failedUpdateSnapshotReady && gk::GetModelBonePositions(instance, allBones, 7, fkBeforeFailedLinkUpdate) == 0;
+        const int infeasibleUpdateResult = failedUpdateSnapshotReady ? gk::UpdateModelSecondaryMotion(instance, 0.0) : 0;
+        const auto* stateAfterFailedLinkUpdate = ReadSecondaryState(instance);
+        auto* transformAfterFailedLinkUpdate = gk::detail::FindModelTransform(instance);
+        auto* playbackAfterFailedLinkUpdate = transformAfterFailedLinkUpdate ? transformAfterFailedLinkUpdate->playback : nullptr;
+        bool failedUpdateValuesPreserved = failedUpdateSnapshotReady && infeasibleUpdateResult == -1 && gk::GetLastErrorMessage()[0] != '\0' && stateAfterFailedLinkUpdate == failedUpdateSnapshot.state && playbackAfterFailedLinkUpdate && playbackAfterFailedLinkUpdate->basePoseCache == failedUpdateSnapshot.cache && playbackAfterFailedLinkUpdate->poseRevision == failedUpdateSnapshot.poseRevision && failedUpdateSnapshot.cache->revision == failedUpdateSnapshot.cacheRevision && stateAfterFailedLinkUpdate->colliderMargin == failedUpdateSnapshot.colliderMargin && stateAfterFailedLinkUpdate->chains.Count() == failedUpdateSnapshot.chains.size() && stateAfterFailedLinkUpdate->previousCollisionShapes.Count() == failedUpdateSnapshot.previousShapes.size() && stateAfterFailedLinkUpdate->links.Count() == failedUpdateSnapshot.links.size() && stateAfterFailedLinkUpdate->colliders.Count() == failedUpdateSnapshot.colliders.size();
+        for (uint32_t chainIndex = 0; chainIndex < stateAfterFailedLinkUpdate->chains.Count() && failedUpdateValuesPreserved; ++chainIndex)
+        {
+            const auto* chain = stateAfterFailedLinkUpdate->chains.At(chainIndex);
+            const auto& saved = failedUpdateSnapshot.chains[chainIndex];
+            failedUpdateValuesPreserved = chain && chain->bones.Count() == saved.bones.size() && chain->simulation.points.Count() == saved.points.size() && chain->simulation.previousTargets.Count() == saved.previousTargets.size() && chain->transforms.Count() == saved.transforms.size() && chain->collisionRadius == saved.collisionRadius && memcmp(&chain->settings, &saved.settings, sizeof(saved.settings)) == 0 && memcmp(chain->bones.Data(), saved.bones.data(), saved.bones.size() * sizeof(uint32_t)) == 0 && memcmp(chain->simulation.points.Data(), saved.points.data(), saved.points.size() * sizeof(saved.points[0])) == 0 && memcmp(chain->simulation.previousTargets.Data(), saved.previousTargets.data(), saved.previousTargets.size() * sizeof(saved.previousTargets[0])) == 0 && memcmp(chain->transforms.Data(), saved.transforms.data(), saved.transforms.size() * sizeof(saved.transforms[0])) == 0;
+        }
+        if (failedUpdateValuesPreserved)
+        {
+            failedUpdateValuesPreserved = memcmp(stateAfterFailedLinkUpdate->previousCollisionShapes.Data(), failedUpdateSnapshot.previousShapes.data(), failedUpdateSnapshot.previousShapes.size() * sizeof(failedUpdateSnapshot.previousShapes[0])) == 0 && memcmp(stateAfterFailedLinkUpdate->links.Data(), failedUpdateSnapshot.links.data(), failedUpdateSnapshot.links.size() * sizeof(failedUpdateSnapshot.links[0])) == 0 && memcmp(stateAfterFailedLinkUpdate->colliders.Data(), failedUpdateSnapshot.colliders.data(), failedUpdateSnapshot.colliders.size() * sizeof(failedUpdateSnapshot.colliders[0])) == 0 && memcmp(failedUpdateSnapshot.cache->pose.localTransforms.Data(), failedUpdateSnapshot.cachedTransforms.data(), failedUpdateSnapshot.cachedTransforms.size() * sizeof(failedUpdateSnapshot.cachedTransforms[0])) == 0;
+        }
+        gk::Vec3 fkAfterFailedLinkUpdate[7]{};
+        failedUpdateValuesPreserved = failedUpdateValuesPreserved && gk::GetModelBonePositions(instance, allBones, 7, fkAfterFailedLinkUpdate) == 0 && memcmp(fkBeforeFailedLinkUpdate, fkAfterFailedLinkUpdate, sizeof(fkBeforeFailedLinkUpdate)) == 0;
+        ReportLinkStage(failedUpdateValuesPreserved, "infeasible finite link update reports failure and preserves state, chains, pose cache, and FK pose atomically");
+        const bool restoredContactLinkAfterFailure = gk::SetModelSecondaryMotionLinks(instance, &contactLink, 1, 32) == 0 && gk::ResetModelSecondaryMotion(instance) == 0;
+        ReportLinkStage(restoredContactLinkAfterFailure, "feasible link settings can be restored after an atomic failed update");
+
+        const bool retainedLinkIterations = gk::SetModelSecondaryMotionLinks(instance, &contactLink, 1, 32) == 0 && gk::ResetModelSecondaryMotion(instance) == 0;
+        const bool positiveDeltaUpdate = retainedLinkIterations && gk::UpdateModelSecondaryMotion(instance, 1.0 / 60.0) == 0 && gk::GetModelBonePositions(instance, allBones, 7, solvedPositions) == 0 && LinkAndChainConstraintsHold(solvedPositions);
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(positiveDeltaUpdate && currentState && currentState->links.Count() == 1 && currentState->links.At(0).radius == contactLink.radius && currentState->linkIterations == 32, "positive-delta link update preserves the contact-solving budget and resolves FK span contact");
+
+        const auto AllSimulationVelocitiesZero = [&](const gk::model::FModelSecondaryMotionState* state)
+        {
+            if (!state || state->links.Count() != 1 || state->linkIterations != 32 || state->chains.Count() != 2)
+            {
+                return false;
+            }
+            for (uint32_t chainIndex = 0; chainIndex < state->chains.Count(); ++chainIndex)
+            {
+                const auto* chain = state->chains.At(chainIndex);
+                if (!chain)
+                {
+                    return false;
+                }
+                for (uint32_t pointIndex = 0; pointIndex < chain->simulation.points.Count(); ++pointIndex)
+                {
+                    const auto& point = chain->simulation.points.At(pointIndex);
+                    if (!isfinite(point.position.x) || !isfinite(point.position.y) || !isfinite(point.position.z) || !isfinite(point.velocity.x) || !isfinite(point.velocity.y) || !isfinite(point.velocity.z) || fabsf(point.velocity.x) > 1.0e-6f || fabsf(point.velocity.y) > 1.0e-6f || fabsf(point.velocity.z) > 1.0e-6f)
+                    {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        };
+        const bool hitchUpdate = positiveDeltaUpdate && gk::UpdateModelSecondaryMotion(instance, 0.3) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(hitchUpdate && AllSimulationVelocitiesZero(currentState), "hitch reset zeros every link-connected simulation velocity");
+
+        const bool teleportBaseReady = gk::PlayModelAnimation(instance, 0, false) == 0 && gk::UpdateModelAnimation(instance, 0.0) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        gk::Vec3 teleportBasePosition{};
+        const bool readTeleportBase = teleportBaseReady && gk::GetModelBonePosition(instance, 5, teleportBasePosition) == 0;
+        const bool teleportAnimationReady = readTeleportBase && gk::PlayModelAnimation(instance, 1, false) == 0 && gk::UpdateModelAnimation(instance, 0.0) == 0;
+        gk::Vec3 teleportPosePosition{};
+        const bool readTeleportPose = teleportAnimationReady && gk::GetModelBonePosition(instance, 5, teleportPosePosition) == 0;
+        const double teleportDistance = readTeleportPose ? Distance3(teleportBasePosition, teleportPosePosition) : 0.0;
+        const bool teleportUpdate = teleportDistance > settings.teleportDistance && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(teleportUpdate && AllSimulationVelocitiesZero(currentState), "animated root teleport beyond threshold zeros connected simulation velocities");
+        const bool restoreBaseClip = gk::PlayModelAnimation(instance, 0, false) == 0 && gk::UpdateModelAnimation(instance, 0.0) == 0;
+
+        const bool contactCleared = gk::SetModelSecondaryMotionLinks(instance, nullptr, 0) == 0 && gk::SetModelSecondaryMotionColliders(instance, nullptr, 0) == 0 && gk::ResetModelSecondaryMotion(instance) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(restoreBaseClip && contactCleared && currentState && currentState->links.Count() == 0 && currentState->colliders.Count() == 0 && currentState->chains.Count() == 2, "body-link contact fixture clears temporary link and body settings after restoring base clip");
+        const bool restoredMainLink = gk::SetModelSecondaryMotionLinks(instance, &validLink, 1, 12) == 0;
+        ReportLinkStage(restoredMainLink, "restore the link lifecycle settings after body integration");
+
+        const auto linkInstance = gk::CreateModelInstance(model);
+        const gk::FModelSecondaryMotionLink independentLink = { 2, 4, 0.35f };
+        bool instanceIndependent = linkInstance.IsValid() && gk::SetModelSecondaryMotionChain(linkInstance, firstChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChain(linkInstance, secondChain, 2, settings) == 0;
+        auto* independentState = linkInstance.IsValid() ? ReadSecondaryState(linkInstance) : nullptr;
+        instanceIndependent = instanceIndependent && independentState && independentState->links.Count() == 0;
+        instanceIndependent = instanceIndependent && gk::SetModelSecondaryMotionLinks(linkInstance, &independentLink, 1, 5) == 0;
+        independentState = linkInstance.IsValid() ? ReadSecondaryState(linkInstance) : nullptr;
+        currentState = ReadSecondaryState(instance);
+        instanceIndependent = instanceIndependent && independentState && independentState->links.Count() == 1 && independentState->links.At(0).radius == 0.35f && independentState->linkIterations == 5 && currentState && currentState->links.Count() == 1 && currentState->links.At(0).radius == 0.125f && currentState->linkIterations == 12;
+        if (linkInstance.IsValid())
+        {
+            instanceIndependent = gk::DeleteModel(linkInstance) == 0 && instanceIndependent;
+        }
+        ReportLinkStage(instanceIndependent, "link settings belong to their model instance");
+
+        const bool clearedLinks = gk::SetModelSecondaryMotionLinks(instance, nullptr, 0) == 0;
+        currentState = ReadSecondaryState(instance);
+        ReportLinkStage(clearedLinks && currentState && currentState->chains.Count() == 2 && currentState->links.Count() == 0, "zero count clears links while retaining both chains");
+        const bool republishedLinks = gk::SetModelSecondaryMotionLinks(instance, &independentLink, 1, 7) == 0;
+        const bool clearedMotion = gk::ClearModelSecondaryMotion(instance) == 0;
+        ReportLinkStage(republishedLinks && clearedMotion && ReadSecondaryState(instance) == nullptr, "clearing secondary motion releases chains and links together");
+        const bool restoredChains = gk::SetModelSecondaryMotionChain(instance, firstChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChain(instance, secondChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChainCollisionRadius(instance, firstChain[0], 0.05f) == 0 && gk::SetModelSecondaryMotionChainCollisionRadius(instance, secondChain[0], 0.15f) == 0;
+        ReportLinkStage(restoredChains, "restore the shared pose-budget chains after lifecycle checks");
+    }
     if (passed)
     {
         namespace fs = std::filesystem;
@@ -1334,12 +1680,12 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
         configuredFirstChain = ReadFirstChain();
         CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8, "legacy 10-number row preserves radius");
-        const char* invalidConfigs[4] = { "4 0.8 60 0 0.25 0 0 0 0 8 nan | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 -0.008 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 joint_b joint_c\n" };
-        for (uint32_t index = 0; index < 4; ++index)
+        const char* invalidConfigs[5] = { "4 0.8 60 0 0.25 0 0 0 0 8 nan | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 -0.008 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8.5 | joint_b joint_c\n" };
+        for (uint32_t index = 0; index < 5; ++index)
         {
             stagePassed = WriteConfig(invalidConfigs[index]) && !gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
             configuredFirstChain = ReadFirstChain();
-            const char* stage = index == 0 ? "NaN radius rejected atomically" : (index == 1 ? "negative radius rejected atomically" : (index == 2 ? "extra field rejected atomically" : "missing separator rejected atomically"));
+            const char* stage = index == 0 ? "NaN radius rejected atomically" : (index == 1 ? "negative radius rejected atomically" : (index == 2 ? "extra field rejected atomically" : (index == 3 ? "missing separator rejected atomically" : "fractional iterations rejected atomically")));
             CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, stage);
         }
         fs::remove_all(configDirectory);

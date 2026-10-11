@@ -56,7 +56,7 @@ void EmitDetailError(uint32_t frame, const char* message);
 /**
  * 選択したframeの侵入点と骨の寄与を記録する。
  */
-void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary);
+void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary);
 
 }
 
@@ -276,7 +276,7 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
         }
         else if (detailFrame == frame)
         {
-            EmitPointDetails(model, frame, *source, *geometry, selectedIds, reference, secondary);
+            EmitPointDetails(model, frame, *source, *geometry, selectedIds, matrices, reference, secondary);
         }
     }
     if (!matchesReference)
@@ -639,9 +639,71 @@ bool CollectPointWeights(const gk::model::AModelAnimationSource& source, const F
 }
 
 /**
+ * 指定boneのcluster変形位置をweight平均し、有限値なら返す。
+ */
+bool GetBoneTransformedCentroid(const FModelGpuSkinningGeometry& geometry, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, uint32_t positionId, uint32_t bone, double output[3])
+{
+    if (positionId >= geometry.positions.Count() || positionId >= geometry.influenceRanges.Count())
+    {
+        return false;
+    }
+    const auto& position = geometry.positions.At(positionId);
+    const auto& range = geometry.influenceRanges.At(positionId);
+    if (range.firstInfluence > geometry.influences.Count() || range.influenceCount > geometry.influences.Count() - range.firstInfluence)
+    {
+        return false;
+    }
+    output[0] = 0.0;
+    output[1] = 0.0;
+    output[2] = 0.0;
+    double totalWeight = 0.0;
+    for (uint32_t offset = 0; offset < range.influenceCount; ++offset)
+    {
+        const auto& influence = geometry.influences.At(range.firstInfluence + offset);
+        if (!isfinite(influence.weight) || influence.weight < 0.0 || influence.clusterIndex >= geometry.clusters.Count() || influence.clusterIndex >= matrices.Count())
+        {
+            return false;
+        }
+        if (!(influence.weight > 0.0) || geometry.clusters.At(influence.clusterIndex).nodeIndex != bone)
+        {
+            continue;
+        }
+        const auto& matrix = matrices.At(influence.clusterIndex);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            const uint32_t row = axis * 4u;
+            const double transformed = matrix.value[row] * position.value[0] + matrix.value[row + 1u] * position.value[1] + matrix.value[row + 2u] * position.value[2] + matrix.value[row + 3u];
+            output[axis] += transformed * influence.weight;
+            if (!isfinite(transformed) || !isfinite(output[axis]))
+            {
+                return false;
+            }
+        }
+        totalWeight += influence.weight;
+        if (!isfinite(totalWeight))
+        {
+            return false;
+        }
+    }
+    if (!(totalWeight > 0.0))
+    {
+        return false;
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        output[axis] /= totalWeight;
+        if (!isfinite(output[axis]))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * 対象frameの侵入位置を最大32個に絞り、寄与weightと身体・骨球形状を出力する。
  */
-void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary)
+void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary)
 {
     if (!secondary || secondary->previousCollisionShapes.Count() != secondary->colliders.Count())
     {
@@ -789,7 +851,7 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
         }
         fprintf(stderr, ",\"deepestShape\":{\"shapeIndex\":%u,\"bone\":%u,\"boneName\":", detail.shapeIndex, collider.bone);
         EmitJsonString(shapeBoneName);
-        fprintf(stderr, ",\"kind\":\"%s\",\"radius\":%.9g,\"distance\":%.17g,\"depth\":%.17g},\"weights\":{\"sum\":%.17g,\"skirtRoot\":%.17g,\"skirtChild\":%.17g,\"bodyShapeAncestor\":%.17g,\"other\":%.17g,\"rootShare\":%.9g,\"childShare\":%.9g,\"bodyShapeAncestorShare\":%.9g,\"otherShare\":%.9g},\"topInfluences\":[", shape.start.x == shape.end.x && shape.start.y == shape.end.y && shape.start.z == shape.end.z ? "sphere" : "capsule", shape.radius, detail.distance, detail.depth, totalWeight, rootWeight, childWeight, bodyWeight, otherWeight, totalWeight > 0.0 ? rootWeight / totalWeight : 0.0, totalWeight > 0.0 ? childWeight / totalWeight : 0.0, totalWeight > 0.0 ? bodyWeight / totalWeight : 0.0, totalWeight > 0.0 ? otherWeight / totalWeight : 0.0);
+        fprintf(stderr, ",\"kind\":\"%s\",\"start\":[%.17g,%.17g,%.17g],\"end\":[%.17g,%.17g,%.17g],\"radius\":%.9g,\"distance\":%.17g,\"depth\":%.17g},\"weights\":{\"sum\":%.17g,\"skirtRoot\":%.17g,\"skirtChild\":%.17g,\"bodyShapeAncestor\":%.17g,\"other\":%.17g,\"rootShare\":%.9g,\"childShare\":%.9g,\"bodyShapeAncestorShare\":%.9g,\"otherShare\":%.9g},\"topInfluences\":[", shape.start.x == shape.end.x && shape.start.y == shape.end.y && shape.start.z == shape.end.z ? "sphere" : "capsule", shape.start.x, shape.start.y, shape.start.z, shape.end.x, shape.end.y, shape.end.z, shape.radius, detail.distance, detail.depth, totalWeight, rootWeight, childWeight, bodyWeight, otherWeight, totalWeight > 0.0 ? rootWeight / totalWeight : 0.0, totalWeight > 0.0 ? childWeight / totalWeight : 0.0, totalWeight > 0.0 ? bodyWeight / totalWeight : 0.0, totalWeight > 0.0 ? otherWeight / totalWeight : 0.0);
 
         FDiagnosticBoneWeight topInfluences[4]{};
         uint32_t topInfluenceCount = 0;
@@ -826,9 +888,19 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
             const uint32_t bone = topInfluences[index].bone;
             const uint32_t role = GetSkirtChainBoneRole(source, *secondary, bone);
             const char* roleName = role == 1 ? "skirtRoot" : (role == 2 ? "skirtChild" : (IsBodyShapeBone(source, *secondary, bone) ? "bodyShapeAncestor" : "other"));
+            double transformedPosition[3]{};
+            const bool hasTransformedPosition = GetBoneTransformedCentroid(geometry, matrices, detail.positionId, bone, transformedPosition);
             fprintf(stderr, "{\"bone\":%u,\"name\":", bone);
             EmitJsonString(source.BoneName(bone));
-            fprintf(stderr, ",\"weight\":%.17g,\"group\":\"%s\"}", topInfluences[index].weight, roleName);
+            fprintf(stderr, ",\"weight\":%.17g,\"group\":\"%s\",\"transformedPosition\":", topInfluences[index].weight, roleName);
+            if (hasTransformedPosition)
+            {
+                fprintf(stderr, "[%.17g,%.17g,%.17g]}", transformedPosition[0], transformedPosition[1], transformedPosition[2]);
+            }
+            else
+            {
+                fprintf(stderr, "null}");
+            }
         }
         fprintf(stderr, "],\"skirtBoneSpheres\":[");
         bool firstSphere = true;
@@ -856,9 +928,12 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
                         fputc(',', stderr);
                     }
                     firstSphere = false;
+                    const double centerX = debugShape.start.x;
+                    const double centerY = debugShape.start.y;
+                    const double centerZ = debugShape.start.z;
                     fprintf(stderr, "{\"bone\":%u,\"name\":", debugShape.bone);
                     EmitJsonString(source.BoneName(debugShape.bone));
-                    fprintf(stderr, ",\"weight\":%.17g,\"radius\":%.9g,\"distance\":%.17g,\"clearance\":%.17g}", boneWeight.weight, debugShape.radius, sphereDistance, sphereDistance - debugShape.radius);
+                    fprintf(stderr, ",\"weight\":%.17g,\"center\":[%.17g,%.17g,%.17g],\"radius\":%.9g,\"distance\":%.17g,\"clearance\":%.17g}", boneWeight.weight, centerX, centerY, centerZ, debugShape.radius, sphereDistance, sphereDistance - debugShape.radius);
                     break;
                 }
             }

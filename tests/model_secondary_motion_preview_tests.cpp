@@ -89,6 +89,40 @@ bool TestCollisionDebugFlagContracts()
 }
 
 /**
+ * --secondary-linksの省略・path・重複とmaterials値を確認する。
+ */
+bool TestSecondaryLinkPathContracts()
+{
+    char* absentArguments[] = { "viewer", "scene.fbx", "1", "0", "0", "0", "--materials", "--secondary-links", nullptr };
+    int absentCount = static_cast<int>(sizeof(absentArguments) / sizeof(absentArguments[0])) - 1;
+    const int originalAbsentCount = absentCount;
+    const char* path = "unchanged";
+    const bool absentParsed = gk::examples::ParseSecondaryLinkOptions(absentCount, absentArguments, path);
+    if (!Require(absentParsed && path == nullptr && absentCount == originalAbsentCount && strcmp(absentArguments[7], "--secondary-links") == 0 && absentArguments[absentCount] == nullptr, "materials value matching the link flag stays a value"))
+        return false;
+
+    char* selectedArguments[] = { "viewer", "scene.fbx", "1", "0", "0", "0", "--secondary-links", "links.txt", "--secondary-colliders", "body.txt", "--materials", "materials.txt", nullptr };
+    int selectedCount = static_cast<int>(sizeof(selectedArguments) / sizeof(selectedArguments[0])) - 1;
+    path = nullptr;
+    if (!Require(gk::examples::ParseSecondaryLinkOptions(selectedCount, selectedArguments, path) && path && strcmp(path, "links.txt") == 0 && selectedCount == 10 && strcmp(selectedArguments[6], "--secondary-colliders") == 0 && strcmp(selectedArguments[7], "body.txt") == 0 && strcmp(selectedArguments[8], "--materials") == 0 && strcmp(selectedArguments[9], "materials.txt") == 0 && selectedArguments[selectedCount] == nullptr, "link path is removed while collider and material arguments remain"))
+        return false;
+
+    char* missingPathArguments[] = { "viewer", "scene.fbx", "1", "0", "0", "0", "--secondary-links", nullptr };
+    int missingPathCount = static_cast<int>(sizeof(missingPathArguments) / sizeof(missingPathArguments[0])) - 1;
+    path = "unchanged";
+    if (!Require(!gk::examples::ParseSecondaryLinkOptions(missingPathCount, missingPathArguments, path) && path && strcmp(path, "unchanged") == 0 && missingPathCount == 7 && strcmp(missingPathArguments[6], "--secondary-links") == 0 && missingPathArguments[missingPathCount] == nullptr, "missing link path is rejected without changing arguments or output"))
+        return false;
+
+    char* duplicateArguments[] = { "viewer", "scene.fbx", "1", "0", "0", "0", "--secondary-links", "first.txt", "--materials", "materials.txt", "--secondary-links", "second.txt", nullptr };
+    char* const originalDuplicateArguments[] = { duplicateArguments[0], duplicateArguments[1], duplicateArguments[2], duplicateArguments[3], duplicateArguments[4], duplicateArguments[5], duplicateArguments[6], duplicateArguments[7], duplicateArguments[8], duplicateArguments[9], duplicateArguments[10], duplicateArguments[11], nullptr };
+    int duplicateCount = static_cast<int>(sizeof(duplicateArguments) / sizeof(duplicateArguments[0])) - 1;
+    const int originalDuplicateCount = duplicateCount;
+    path = "unchanged";
+    const bool duplicateRejected = !gk::examples::ParseSecondaryLinkOptions(duplicateCount, duplicateArguments, path);
+    return Require(duplicateRejected, "duplicate link paths are rejected") && Require(duplicateCount == originalDuplicateCount && path && strcmp(path, "unchanged") == 0 && memcmp(duplicateArguments, originalDuplicateArguments, sizeof(originalDuplicateArguments)) == 0, "duplicate rejection preserves argv and path output");
+}
+
+/**
  * 重複flagは引数列と出力状態を変えずに拒否する。
  */
 bool TestDuplicateFlagIsAtomic()
@@ -109,5 +143,5 @@ bool TestDuplicateFlagIsAtomic()
  */
 bool RunSecondaryMotionPreviewContracts()
 {
-    return TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts();
+    return TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts() && TestSecondaryLinkPathContracts();
 }

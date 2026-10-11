@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <limits>
+#include <string.h>
 
 namespace
 {
@@ -47,6 +48,124 @@ double Dot(const gk::FVector3d& first, const gk::FVector3d& second)
 bool IsFinite(const gk::FVector3d& value)
 {
     return isfinite(value.value[0]) && isfinite(value.value[1]) && isfinite(value.value[2]);
+}
+
+gk::FVector3d Point(double x, double y, double z);
+
+/**
+ * 2本の線分間の最短距離を独立した内積式で計算する。
+ */
+double SegmentDistance(const gk::FVector3d& firstStart, const gk::FVector3d& firstEnd, const gk::FVector3d& secondStart, const gk::FVector3d& secondEnd)
+{
+    const gk::FVector3d u = Point(firstEnd.value[0] - firstStart.value[0], firstEnd.value[1] - firstStart.value[1], firstEnd.value[2] - firstStart.value[2]);
+    const gk::FVector3d v = Point(secondEnd.value[0] - secondStart.value[0], secondEnd.value[1] - secondStart.value[1], secondEnd.value[2] - secondStart.value[2]);
+    const gk::FVector3d w = Point(firstStart.value[0] - secondStart.value[0], firstStart.value[1] - secondStart.value[1], firstStart.value[2] - secondStart.value[2]);
+    const double a = Dot(u, u);
+    const double b = Dot(u, v);
+    const double c = Dot(v, v);
+    const double d = Dot(u, w);
+    const double e = Dot(v, w);
+    if (a < 1.0e-20 && c < 1.0e-20)
+    {
+        return Distance(firstStart, secondStart);
+    }
+    if (a < 1.0e-20)
+    {
+        const double t = fmax(0.0, fmin(1.0, e / c));
+        const gk::FVector3d difference = Point(firstStart.value[0] - (secondStart.value[0] + t * v.value[0]), firstStart.value[1] - (secondStart.value[1] + t * v.value[1]), firstStart.value[2] - (secondStart.value[2] + t * v.value[2]));
+        return sqrt(Dot(difference, difference));
+    }
+    if (c < 1.0e-20)
+    {
+        const double s = fmax(0.0, fmin(1.0, -d / a));
+        const gk::FVector3d difference = Point(firstStart.value[0] + s * u.value[0] - secondStart.value[0], firstStart.value[1] + s * u.value[1] - secondStart.value[1], firstStart.value[2] + s * u.value[2] - secondStart.value[2]);
+        return sqrt(Dot(difference, difference));
+    }
+    const double denominator = a * c - b * b;
+    double sNumerator = 0.0;
+    double sDenominator = denominator;
+    double tNumerator = 0.0;
+    double tDenominator = denominator;
+    if (denominator < 1.0e-20)
+    {
+        sNumerator = 0.0;
+        sDenominator = 1.0;
+        tNumerator = e;
+        tDenominator = c;
+    }
+    else
+    {
+        sNumerator = b * e - c * d;
+        tNumerator = a * e - b * d;
+        if (sNumerator < 0.0)
+        {
+            sNumerator = 0.0;
+            tNumerator = e;
+            tDenominator = c;
+        }
+        else if (sNumerator > sDenominator)
+        {
+            sNumerator = sDenominator;
+            tNumerator = e + b;
+            tDenominator = c;
+        }
+    }
+    if (tNumerator < 0.0)
+    {
+        tNumerator = 0.0;
+        if (-d < 0.0)
+        {
+            sNumerator = 0.0;
+        }
+        else if (-d > a)
+        {
+            sNumerator = sDenominator;
+        }
+        else
+        {
+            sNumerator = -d;
+            sDenominator = a;
+        }
+    }
+    else if (tNumerator > tDenominator)
+    {
+        tNumerator = tDenominator;
+        if (-d + b < 0.0)
+        {
+            sNumerator = 0.0;
+        }
+        else if (-d + b > a)
+        {
+            sNumerator = sDenominator;
+        }
+        else
+        {
+            sNumerator = -d + b;
+            sDenominator = a;
+        }
+    }
+    const double s = fabs(sNumerator) < 1.0e-20 ? 0.0 : sNumerator / sDenominator;
+    const double t = fabs(tNumerator) < 1.0e-20 ? 0.0 : tNumerator / tDenominator;
+    const gk::FVector3d difference = Point(w.value[0] + s * u.value[0] - t * v.value[0], w.value[1] + s * u.value[1] - t * v.value[1], w.value[2] + s * u.value[2] - t * v.value[2]);
+    return sqrt(Dot(difference, difference));
+}
+
+/**
+ * 任意形状軸と自由線分の距離を調べ、必要半径を保つか返す。
+ */
+bool IsFreeSegmentClear(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float pointRadius, const gk::FVector3d& first, const gk::FVector3d& second)
+{
+    for (uint32_t index = 0; index < shapeCount; ++index)
+    {
+        const gk::FVector3d axisStart = Point(shapes[index].start.x, shapes[index].start.y, shapes[index].start.z);
+        const gk::FVector3d axisEnd = Point(shapes[index].end.x, shapes[index].end.y, shapes[index].end.z);
+        const double distance = SegmentDistance(first, second, axisStart, axisEnd);
+        if (!isfinite(distance) || distance + 2.0e-6 < static_cast<double>(shapes[index].radius) + pointRadius)
+        {
+            return false;
+        }
+    }
+    return true;
 }
 
 /**
@@ -887,6 +1006,135 @@ bool TestExpandCollisionShapesForPointRadius()
 }
 
 /**
+ * 自由な線分の両端を押し出し、球・カプセル軸との距離を保つ。
+ */
+bool TestFreeSegmentSphereAndCapsuleContacts()
+{
+    const FModelSecondaryMotionCollisionShape sphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.5f);
+    const FModelSecondaryMotionCollisionShape capsule = Shape({ 0.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 0.4f);
+    const FModelSecondaryMotionCollisionShape shapes[3] = { sphere, capsule, capsule };
+    for (uint32_t shapeIndex = 0; shapeIndex < 3; ++shapeIndex)
+    {
+        const FModelSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
+        const gk::FVector3d referenceFirst = shapeIndex == 2 ? Point(-0.2, 1.05, 0.0) : Point(-0.2, 0.0, 0.0);
+        const gk::FVector3d referenceSecond = shapeIndex == 2 ? Point(0.2, 1.05, 0.0) : Point(0.2, 0.0, 0.0);
+        gk::FVector3d first = referenceFirst;
+        gk::FVector3d second = referenceSecond;
+        gk::String error;
+        if (!ProjectSecondaryMotionFreeSegmentContacts(&shape, 1, 0.1f, referenceFirst, referenceSecond, first, second, error))
+            return Fail(error.CStr());
+        if (!IsFinite(first) || !IsFinite(second) || Distance(first, referenceFirst) < 0.01 || Distance(second, referenceSecond) < 0.01)
+            return Fail("free-segment contact did not move both endpoints from the overlap");
+        if (!IsFreeSegmentClear(&shape, 1, 0.1f, first, second) || !CheckSecondaryMotionFreeSegmentContacts(&shape, 1, 0.1f, first, second, error))
+            return Fail("free-segment contact left the sphere or capsule axis penetrating");
+    }
+    return true;
+}
+
+/**
+ * 複数shape、球端部、接触端点、零長線分を決定的に処理する。
+ */
+bool TestFreeSegmentMultipleShapesAndDegenerateCases()
+{
+    const FModelSecondaryMotionCollisionShape shapes[2] = { Shape({ -0.75f, 0.0f, 0.0f }, { -0.75f, 0.0f, 0.0f }, 0.25f), Shape({ 0.75f, 0.0f, 0.0f }, { 0.75f, 0.0f, 0.0f }, 0.25f) };
+    const gk::FVector3d referenceFirst = Point(-2.0, 0.0, 0.0);
+    const gk::FVector3d referenceSecond = Point(2.0, 0.0, 0.0);
+    gk::FVector3d first = referenceFirst;
+    gk::FVector3d second = referenceSecond;
+    gk::String error;
+    if (!ProjectSecondaryMotionFreeSegmentContacts(shapes, 2, 0.1f, referenceFirst, referenceSecond, first, second, error))
+        return Fail(error.CStr());
+    if (!IsFreeSegmentClear(shapes, 2, 0.1f, first, second) || !CheckSecondaryMotionFreeSegmentContacts(shapes, 2, 0.1f, first, second, error))
+        return Fail("multiple free-segment contacts left one of the colliders penetrating");
+
+    const FModelSecondaryMotionCollisionShape endpointSphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f);
+    const gk::FVector3d touchingFirst = Point(1.0, 0.0, 0.0);
+    const gk::FVector3d touchingSecond = Point(2.0, 0.0, 0.0);
+    first = touchingFirst;
+    second = touchingSecond;
+    if (!ProjectSecondaryMotionFreeSegmentContacts(&endpointSphere, 1, 0.0f, touchingFirst, touchingSecond, first, second, error) || memcmp(&first, &touchingFirst, sizeof(first)) != 0 || memcmp(&second, &touchingSecond, sizeof(second)) != 0)
+        return Fail("an exactly touching endpoint was rejected or moved");
+    if (!CheckSecondaryMotionFreeSegmentContacts(&endpointSphere, 1, 0.0f, first, second, error))
+        return Fail("an exactly touching free segment was rejected by the independent check");
+
+    const gk::FVector3d center = Point(0.0, 0.0, 0.0);
+    gk::FVector3d firstResult = center;
+    gk::FVector3d secondResult = center;
+    gk::FVector3d repeatedFirst = center;
+    gk::FVector3d repeatedSecond = center;
+    if (!ProjectSecondaryMotionFreeSegmentContacts(&endpointSphere, 1, 0.1f, center, center, firstResult, secondResult, error) || !ProjectSecondaryMotionFreeSegmentContacts(&endpointSphere, 1, 0.1f, center, center, repeatedFirst, repeatedSecond, error))
+        return Fail(error.CStr());
+    if (memcmp(&firstResult, &repeatedFirst, sizeof(firstResult)) != 0 || memcmp(&secondResult, &repeatedSecond, sizeof(secondResult)) != 0 || !IsFreeSegmentClear(&endpointSphere, 1, 0.1f, firstResult, secondResult))
+        return Fail("zero-length free-segment fallback was not deterministic or clear");
+    return true;
+}
+
+/**
+ * shapeなしなら座標を保ち、不正入力は両端をatomicに保持する。
+ */
+bool TestFreeSegmentValidationAndAtomicity()
+{
+    const gk::FVector3d referenceFirst = Point(2.0, 3.0, 4.0);
+    const gk::FVector3d referenceSecond = Point(5.0, 6.0, 7.0);
+    gk::FVector3d first = referenceFirst;
+    gk::FVector3d second = referenceSecond;
+    gk::String error;
+    if (!ProjectSecondaryMotionFreeSegmentContacts(nullptr, 0, 0.0f, referenceFirst, referenceSecond, first, second, error) || memcmp(&first, &referenceFirst, sizeof(first)) != 0 || memcmp(&second, &referenceSecond, sizeof(second)) != 0 || !CheckSecondaryMotionFreeSegmentContacts(nullptr, 0, 0.0f, first, second, error))
+        return Fail("empty free-segment contact set changed positions or failed");
+
+    const FModelSecondaryMotionCollisionShape valid = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    const FModelSecondaryMotionCollisionShape invalid = Shape({ nan, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f);
+    FModelSecondaryMotionCollisionShape tooMany[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+        tooMany[index] = valid;
+    const gk::FVector3d nonFinite = Point(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0);
+    const gk::FVector3d hugeFirst = Point(std::numeric_limits<double>::max(), 0.0, 0.0);
+    const gk::FVector3d hugeSecond = Point(-std::numeric_limits<double>::max(), 0.0, 0.0);
+    const double quarterDoubleMax = std::numeric_limits<double>::max() * 0.25;
+    const gk::FVector3d finiteDifferenceFirst = Point(-quarterDoubleMax, 0.0, 0.0);
+    const gk::FVector3d finiteDifferenceSecond = Point(quarterDoubleMax, 0.0, 0.0);
+    first = referenceFirst;
+    second = referenceSecond;
+    const FModelSecondaryMotionCollisionShape* invalidShapes[5] = { nullptr, &invalid, tooMany, &valid, &valid };
+    const uint32_t invalidCounts[5] = { 1, 1, 65, 1, 1 };
+    const float invalidRadii[5] = { 0.0f, 0.0f, 0.0f, -0.1f, nan };
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        if (ProjectSecondaryMotionFreeSegmentContacts(invalidShapes[index], invalidCounts[index], invalidRadii[index], referenceFirst, referenceSecond, first, second, error) || error.Empty() || memcmp(&first, &referenceFirst, sizeof(first)) != 0 || memcmp(&second, &referenceSecond, sizeof(second)) != 0)
+            return Fail("invalid free-segment shape input was accepted or changed endpoints");
+    }
+    if (ProjectSecondaryMotionFreeSegmentContacts(&valid, 1, 0.1f, nonFinite, referenceSecond, first, second, error) || error.Empty() || memcmp(&first, &referenceFirst, sizeof(first)) != 0 || memcmp(&second, &referenceSecond, sizeof(second)) != 0)
+        return Fail("non-finite free-segment endpoint was accepted or changed output");
+    if (ProjectSecondaryMotionFreeSegmentContacts(&valid, 1, 0.1f, hugeFirst, hugeSecond, first, second, error) || error.Empty() || memcmp(&first, &referenceFirst, sizeof(first)) != 0 || memcmp(&second, &referenceSecond, sizeof(second)) != 0)
+        return Fail("overflowing free-segment coordinates were accepted or changed output");
+    if (ProjectSecondaryMotionFreeSegmentContacts(&valid, 1, 0.1f, finiteDifferenceFirst, finiteDifferenceSecond, first, second, error) || error.Empty() || memcmp(&first, &referenceFirst, sizeof(first)) != 0 || memcmp(&second, &referenceSecond, sizeof(second)) != 0)
+        return Fail("finite free-segment length with overflowing dot products was accepted or changed output");
+    if (ProjectSecondaryMotionFreeSegmentContacts(&valid, 1, 0.1f, referenceFirst, referenceSecond, first, first, error) || error.Empty() || memcmp(&first, &referenceFirst, sizeof(first)) != 0)
+        return Fail("aliased free-segment endpoints were accepted or changed output");
+    const float largestFloat = std::numeric_limits<float>::max();
+    const float nearBoundary = largestFloat * 0.75f;
+    const FModelSecondaryMotionCollisionShape boundarySphere = Shape({ nearBoundary, 0.0f, 0.0f }, { nearBoundary, 0.0f, 0.0f }, nearBoundary);
+    const gk::FVector3d insideBoundarySphere = Point(nearBoundary, 0.0, 0.0);
+    const gk::FVector3d outwardReference = Point(largestFloat, 0.0, 0.0);
+    gk::FVector3d boundaryFirst = insideBoundarySphere;
+    gk::FVector3d boundarySecond = insideBoundarySphere;
+    if (ProjectSecondaryMotionFreeSegmentContacts(&boundarySphere, 1, 0.0f, outwardReference, outwardReference, boundaryFirst, boundarySecond, error) || error.Empty() || memcmp(&boundaryFirst, &insideBoundarySphere, sizeof(boundaryFirst)) != 0 || memcmp(&boundarySecond, &insideBoundarySphere, sizeof(boundarySecond)) != 0)
+    {
+        return Fail("float-range projection overflow was accepted or changed endpoints");
+    }
+    if (CheckSecondaryMotionFreeSegmentContacts(&valid, 1, -0.1f, referenceFirst, referenceSecond, error) || error.Empty())
+        return Fail("negative free-segment radius passed validation");
+    if (CheckSecondaryMotionFreeSegmentContacts(&valid, 1, nan, referenceFirst, referenceSecond, error) || error.Empty())
+        return Fail("non-finite free-segment radius passed validation");
+    if (CheckSecondaryMotionFreeSegmentContacts(nullptr, 1, 0.1f, referenceFirst, referenceSecond, error) || error.Empty())
+        return Fail("null free-segment shape passed validation");
+    if (CheckSecondaryMotionFreeSegmentContacts(&valid, 1, 0.1f, nonFinite, referenceSecond, error) || error.Empty())
+        return Fail("non-finite free-segment endpoint passed validation");
+    return true;
+}
+
+/**
  * float保存後にも固定長と角度coneを保つか、崩れる配置をatomicに拒否する。
  */
 bool TestFloatRoundingPreservesLengthAndAngle()
@@ -920,8 +1168,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

@@ -68,6 +68,14 @@ START 12のスカート球は、実モデルの幅の中央値.0378 model unit�
 
 capture専用DLLの区間計測は固定delta1/60、初期20frame除外後100sampleで、solver2.708335→1.974252ms、全Update3.327076→2.575593msでした。captureは通常表示と時間刻み・検証条件が異なり、FPSの代用にはしません。計測コードは通常DLL/SDKに入りません。Debug/Release480frameのGPU位置・法線がvalid、保存24姿勢は旧版と両構成でbyte一致しました。スカートの侵入率は変わらず、見た目の残件も保っています。
 
+## スカート鎖の間を結ぶ接触線分
+
+START14では既存.038骨球・8身体形状へ、自由bone間の半径.038接触線分10本を加えます。両端を身体から押し出し、既存の骨長・角度・鎖接触を再確認するため、更新時間が増えます。頂点補正とdebug表示は速度計測でOFFです。
+
+通常可視Release、1280×720、VSyncなし、標準効果、YUMEKA＋Silly Dancing/Capoeira blend＋右腕IK＋13鎖、3000frame/warmup300を同batchで完走しました。接続OFF207.058FPS、p95 5.378ms、secondary1.551ms、輪状ON177.136FPS、p95 6.869ms、Draw .397/Present2.232/IK .508/secondary2.450msです。形状の条件が違うため速度最適化の比較ではありません。300FPSは未達です。ログはsecondary-links-{off,ring}-benchmark.log。
+
+loop120frameで最大侵入深さ.030013→.020639、平均侵入点16.517→15.833と限定的に改善しましたが、面の埋まりは残ります。自由bone原点間の接触を支える機能で、リンク長固定や布全体の非貫通は保証しません。debug表示付き30frameの起動確認はFPS判定に含めません。
+
 ## 再計測
 
 ビルド済みReleaseの実行ファイルをPowerShellから起動します。次の例はローカル検証用素材を使用し、素材自体はリポジトリやSDKへ含めません。

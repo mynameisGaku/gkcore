@@ -228,3 +228,11 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 検証用captureへ`GKCORE_VERIFY_SKIN_POINTS=Skirt`と`GKCORE_SKIN_POINT_DETAIL_FRAME=81`を指定すると、そのframeで最大32件の侵入点を深さ順に出します。`gkcore_model_skin_point_detail`が件数と参照元、`gkcore_model_skin_point`がmesh所属、身体shape、weight内訳と対応する骨球を記録します。`bodyShapeAncestor`はshape取付boneとその骨格祖先へのweightで、身体meshに対応するweight分類ではありません。元の参照一致検査は全frameで続き、詳細診断の失敗は別のJSONへ出します。通常DLL/SDKにはこのtoolやtest exportを含めません。
 
 点位置は補正前のsparse skin、sphere位置は現在の描画FK、身体は直近Updateのshape snapshotです。頂点補正はOFFの状態で調べます。今回のloop frame81では30点が侵入し、最深は`Yumeka_Cos_Skirt`のposition31877/local28、UpperLeg_L capsuleへ深さ.03001297でした。Skirt_3_L.002/Skirt_4_L.002へ約68%/32%で、腰などのweightはありません。対応sphereからはそれぞれ.03696/.09170離れています。これは小球が実skin面を覆いきれないcaseで、骨の接触成立だけから布の非侵入を導けません。記録は`build/native-validation/secondary-skin-detail-frame81.json`です。
+
+## 複数鎖を結ぶ接触線分
+
+検証用の侵入点JSONへ、skirt骨球の中心、各weightの変換後寄与位置、最深body shapeの端点を追加しました。frame81の最深点は骨原点間線分から.052388 model unit離れ、半径.038の外です。skin寄与位置2点も身体形状内で、約68%/32%の合成位置を誤差3.154e-9で再構成しました。骨球だけで布面の非貫通を保証できない根拠です。
+
+別鎖の自由bone原点を半径付き接触線分で結び、単一接続/10本輪状接続を0秒・3.35秒開始、Debug/Release各120frameで確認しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0。合計960GPU frameがCPU位置/法線参照と一致し、構成間48画像がbyte一致。接続OFFの240frameも成功し、旧実装24画像がbyte一致しました。輪状接続のloop最大侵入深さは.030013→.020639、平均点数16.517→15.833で、侵入は残ります。
+
+拡大画像はbuild/native-validation/secondary-links-quality-{none,ring,debug}.png、切抜きは同名-crop.pngです。2560×1920・3.35秒開始・frame81を接続なし/輪状/形状表示で比較し、PNG保存後のpixel一致を確認しました。後ろ側や他motion、skin面全体の品質を合格とする結果ではありません。生のPPMは保存一致を記録後に片づけます。詳細はsecondary-links-image-comparison.json、secondary-links-off-image-comparison.json、bone-link-coverage-analysis.jsonです。

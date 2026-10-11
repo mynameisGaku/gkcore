@@ -12,6 +12,10 @@
 
 鎖ごとの`SetModelSecondaryMotionChainCollisionRadius(model, firstBone, radius)`は、各boneと仮想末端を覆う球の半径をmodel空間で設定します。既定は`0`で、従来の細い節・線分接触を保ちます。指定した半径は身体形状の半径に加えて判定し、鎖を同じ先頭boneで登録し直したときと`ResetModelSecondaryMotion`の後も保持されます。setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMotion`から半径を使います。無効な先頭boneや負値・非有限値は失敗し、前の設定を保ちます。`ClearModelSecondaryMotion`で鎖とともに解放されます。
 
+複数の鎖の自由boneを線分で結ぶには、`SetModelSecondaryMotionLinks`へ`FModelSecondaryMotionLink`配列を渡します。各端点は別々に登録した鎖の自由boneで、固定rootや仮想末端は指定できません。最大1024本、半径はmodel空間の有限な0以上、反復数は1〜32です。端点の順序を反転した重複も拒否します。既定の反復数は32で、`nullptr, 0`は接続線分だけを解除し、鎖や身体形状は保持します。`ResetModelSecondaryMotion`と鎖の再登録後も接続線分と反復数を保持し、次の明示更新で接触を解きます。
+
+複数鎖の接触制約を同時に解けない場合、`UpdateModelSecondaryMotion`は`-1`を返し、直前に確定した全鎖の物理状態と姿勢を保ちます。`GetLastErrorMessage()`で失敗理由を確認してください。接続線分は骨長や角度制約と両立しない設定では成立しません。
+
 `GetModelSecondaryMotionDebugShapes`は公開値型`gk::FModelSecondaryMotionDebugShape`で、現在の姿勢に対応する接触形状をmodel空間で返します。`nullptr, 0`は必要な個数を返し、配列が足りない場合や無効なinstanceでは失敗して出力を保ちます。描画用の色分けでは、身体形状を青、自由に動く節を橙色、固定rootを白、仮想末端を灰色で表示します。身体球の半径には`SetModelSecondaryMotionColliders`のmarginが含まれ、鎖の球半径は上記のsetter値です。照会はanimationと物理状態を進めません。
 
 身体形状の中に固定rootがある場合、その形状との最初の節間線分は接触判定から除外します。次の自由節の位置は引き続き検査します。鎖の球による接触は骨の位置を身体から離すもので、skin weightによる頂点位置や布の面全体は補正しません。複数boneのblendとmesh幅があるため、骨が離れていてもmeshが身体へ埋まることがあります。
@@ -75,6 +79,8 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 身体接触には`--secondary-colliders <config-file>`を併用します。各設定行は端点6成分、半径、`|`、取付bone名の順です。bone名はモデルから検索され、節の余白`0.005` model unitが半径へ加わります。[従来の頂点接触用鎖設定](../samples/config/yumeka-secondary-contact-motion.txt)は髪・尻尾の3鎖を8回、スカート10鎖を32回反復し、節球は使いません。[骨の小球と身体カプセル用設定](../samples/config/yumeka-bone-contact-motion.txt)では髪・尻尾の節半径が`0.003`、スカートが`0.038` model unitです。骨の小球設定は[脚へ合わせて拡げた8個の身体形状](../samples/config/yumeka-bone-colliders.txt)、頂点接触の設定は[従来の身体形状](../samples/config/yumeka-secondary-colliders.txt)を使います。スカート鎖はどちらも32回反復します。
 
+鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。このoptionには`--secondary-colliders`が必要です。各行は`半径 | firstBone secondBone`で、半径はmodel空間です。設定ファイルは[スカート接続線分](../samples/config/yumeka-secondary-links.txt)を参照してください。接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
+
 ```powershell
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-bone-contact-motion.txt --secondary-colliders yumeka-bone-colliders.txt --collision-debug
 ```
@@ -95,6 +101,8 @@ model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-ble
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend <motion-a> <motion-b> --secondary-motion character-secondary-motion.txt
 ```
 
+YUMEKAのSTART14では、節球・脚の身体形状に加え、スカート10本を輪状に結ぶ接続線分を設定します。線分半径は`0.038` model unit、制約反復数は32です。実機のDebugとReleaseで0秒・3.35秒を各120frameずつ描画し、480frameすべてが有効で、24組の画像がbyte単位で一致しました。接続線分ありでは平均侵入頂点数が16.517から15.833、最大侵入深度が0.03001から0.02064へ下がりましたが、侵入は残ります。一本だけの接続は480frame完走したものの、開始時の最大侵入深度が0.03020で輪状設定より大きく、採用していません。半径`0.055`はframe 76で制約を解けず失敗したため使いません。これらの結果は[接続線分比較記録](../build/native-validation/secondary-links-trial-comparison.json)と[Debug/Release画像比較](../build/native-validation/secondary-links-image-comparison.json)に記録しています。
+
 ## 対応範囲と未対応
 
 この機能は、書き換え可能なbone姿勢を持つGLB / FBXへ適用します。OBJ連番など、boneを持たないanimationには適用できません。ばね、減衰、重力、風、bone長、基準方向からの最大曲げ角と、身体球・カプセルとの接触を扱います。
@@ -103,4 +111,4 @@ YUMEKAの骨球設定では、計測したスカート幅の中央値`0.0378` mo
 
 頂点接触は、対応するzero-morph FBXの個々の変形点を補正する任意の機能です。骨球の設定では無効です。どちらも布の面全体の接触を扱わないため、衣服全体が身体へ埋まらないことは保証しません。実モデルの比較結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
-身体の球・カプセルとの離散接触を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、隣接するスカート鎖どうしの制約、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。
+身体の球・カプセルと、登録した鎖の自由bone間の離散接触を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。

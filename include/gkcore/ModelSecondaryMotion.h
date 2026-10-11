@@ -12,6 +12,7 @@ struct FModelSecondaryMotionCollider;
 #include <gkcore/FModelSecondaryMotionSettings.h>
 #include <gkcore/FModelSecondaryMotionCollider.h>
 #include <gkcore/FModelSecondaryMotionDebugShape.h>
+#include <gkcore/FModelSecondaryMotionLink.h>
 
 /**
  * アニメーションの後に、髪や衣服のボーンへ揺れを加えるAPI。
@@ -63,6 +64,13 @@ GKCORE_API int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle model, b
  * 失敗時は以前の設定を保つ。固定rootの意図した身体との重なりは解かない。
  */
 GKCORE_API int SetModelSecondaryMotionChainCollisionRadius(ModelHandle model, uint32_t firstBone, float radius);
+/**
+ * 別の鎖の自由boneを結ぶ接触補助をコピーして全置換する。最大1024本。
+ * 同じbone対や固定rootは指定できない。iterationsは1から32、count=0で解除する。
+ * 次のUpdateで骨長・曲げ角と交互に解き、未収束なら前回の揺れ状態を保って失敗する。
+ * 辺長保持、自己衝突、布面全体や更新間の連続接触を扱う機能ではない。
+ */
+GKCORE_API int SetModelSecondaryMotionLinks(ModelHandle model, const FModelSecondaryMotionLink* links, uint32_t count, uint32_t iterations = 32);
 /**
  * 身体と揺れものの接触形状を、現在の描画姿勢のmodel空間値へ複製する。
  * nullptr,0で必要な個数を返す。十分なcapacityなら書き込んだ個数を返す。
