@@ -604,6 +604,8 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
     }
     // 身体形状は更新中に変わらないため、鎖の節半径ごとに前処理を共有する。
     animation::FModelSecondaryMotionStepShapeCache chainShapeCache(shapes, shapeCount);
+    // このUpdateで複数回呼ぶ鎖solverのscratch容量を共有する。
+    animation::FModelSecondaryMotionSolverWorkspace solverWorkspace;
     // 前の点との差ではなく、既存Stepへ加えた接触補正だけを速度へ戻す。
     Array<Vec3> beforePositions;
     Array<uint32_t> offsets;
@@ -746,7 +748,7 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
 #if defined(GKCORE_TESTING)
             ++secondaryMotionLinkChainConstraintCount;
 #endif
-            const bool restored = distanceChains.At(chain) ? animation::RestoreSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error) : animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, entry.simulation, error);
+            const bool restored = distanceChains.At(chain) ? animation::RestoreSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error) : animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error);
             if (!restored)
             {
                 return false;

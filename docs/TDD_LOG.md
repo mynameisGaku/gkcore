@@ -1542,3 +1542,20 @@ Runtime SDK58ファイルがallowlistに一致し、追加APIを参照した外�
 ゲーム構築用359ファイルをprepare_game_repository.pyから生成し、tests・開発記録・私有assetを除外した独立treeでRuntimeと5sampleのReleaseビルドに成功しました。Visual Studio18/v142、platform x64,version=10.0.22621.0を明示し、固定Forge/DXCと現在のshader artifactを使用。インストールSDK58ファイルがallowlistに一致し、game tree由来DLLの外部consumer GPU Init→Present→Shutdownも成功。記録はconstraint-game-{export,configure,build,install,consumer-run}.log、constraint-game-manifest.json、constraint-sdk-manifest.jsonです。START CheckOnly、formatter、BOM/CRLF、diff checkと関連package/no-STL検査を確認しました。画像は画素一致を確認して最新Release PNGへ保存し、重複Debug/PPM48個、旧game検証build3個、使い終えたexport stagingとPython cacheを削除しました。現在のNative/CPU/game build、元asset、成功/失敗ログと再現deltaを保持します。削除対象の生成物確認はconstraint-cleanup.jsonへ記録しました。
 
 devの修正5ee9067と、ゲーム構築用mainの61bcbccを通常pushしました。両checkoutはcleanです。mainにtests・開発記録・私有assetを含めていません。再現した停止の修正と、この区切りの公開を完了しました。
+
+
+## 鎖復元用の作業配列を1回の更新内で再利用
+
+距離と接触を解く間に繰り返すゼロ時間復元で、位置・速度・旧位置・step目標・基準線分の5配列を毎回確保していたため、既存foundation Arrayの容量だけを共有しました。FModelSecondaryMotionSolverWorkspaceはConstrain内のlocal ownerで、Core入口で毎回Clearし、従来と同じReserve/Append・演算順で内容を構築します。1つのworkspaceを別の鎖へ直列に渡します。更新間・別threadへ保持しません。candidate stateの2配列は従来通り別に作り、成功時のみstateへ移します。目標・settings・current状態・shape viewの検証、参照方向と長さの再計算、接触と最終FK検査は省きません。旧APIはlocal領域を使い、public API/ABIは変更しません。
+
+REDはworkspace overloadを旧Coreへ委譲するstubで取得し、warm時3allocation予算が不足する失敗を固定しました（solver-workspace-red-test.log）。1領域で別状態の3→5→3点を処理して旧raw経路の全位置・速度・previousTargetsとbyte一致を確認。非zero速度と負のゼロを保持します。warm0〜2allocationは失敗と状態保持、3で成功。cold0〜12allocationも失敗・retry・成功を覆います。Stringとbody shapeは注入前に準備しています。入力NaN、状態NaN速度、不正prepared view、実際のsphere接触、角度5度の接触不能後の同領域retryも確認しました。初期テストの+0期待と重複lambda宣言はテスト側の誤りとして直し、-0保持とraw byte比較を維持しています。
+
+独立read-only監査では、scope内の直列使用、failure時candidate未commit、全配列Countの再構築とstale値の排除を確認しました。ゼロ長再起動の内部再入は、共有領域を再構築後にouterが即returnするため、以前のscratchを読み直しません。並行/任意再入共有をサポートする型ではありません。型layoutは旧基準線分のdouble[3]+doubleを保ちました。
+
+最終CPU MSVC19.51/SDK28000.0でDebug60/60（6.99秒）、Release60/60（5.00秒）成功。追加の実接触/retryケースは両config focused検査で成功しています。NativeはWin11 build26200、RTX4070 SUPER driver617.42、MSVC19.29/v142/SDK22621.0。YUMEKAとSilly Dancing/Capoeira、blend+右腕IK、13鎖・身体8形状・接続10本・距離10組、頂点補正OFFを使用し、固定delta1/60の0秒/3.35秒開始をDebug/Release各120frame、計480frame実行しました。GPU位置/法線とSkirt1314点参照が全frame有効、全Skirt記録と保存24画像が前版と一致し、Debug/Release24組も一致。参照計算の平均start349.2/loop350.8は保持しています。布面侵入も保持しており、品質改善とは扱いません。
+
+通常可視Release1280×720、VSyncなし、標準効果、debug/頂点補正OFFの3000frame/warmup300を前後とも完走。145.974→153.213FPS、secondary3.331→3.260msです。ただしDraw .512→.383/Present2.439→2.314msも変化したため、FPS差の全てを今回の効果とは扱いません。固定deltaのcapture別batchではsolver start4.035067→4.519662ms、loop4.488191→4.930774msで速度改善を確認できていません。同じv142 Releaseプロセスの3点・遠方capsule・1万復元×8batchの交互計測はfresh1.16655µs/shared1.08369µsでした。局所のallocation削減効果と実モデル全体のFPSを分けて扱います。300FPSは未達です。
+
+実機のcommand/envは前節と同じmodel/motion/config/解像度で、GPU確認はGKCORE_VERIFY_GPU_SKINNING=1、SKIN_POINTS=Skirt、TEST_WINDOW_VISIBLE=0、ANIMATION_FRAMES=120、START_SECONDS=0/3.35、STEP_SECONDS=1/60、CAPTURE_START_FRAME=108、CAPTURE_FRAMES=12。通常benchmarkはBENCHMARK_FRAMES=3000/WARMUP=300のみ指定しています。記録はsolver-workspace-{red,green,final-debug,final-release,contact-debug,contact-release}-test.log、solver-workspace-{before,after}-benchmark.log、solver-workspace-probe-results.log、solver-workspace-{Release,Debug}-{start,loop}.log、solver-workspace-image-comparison.jsonです。旧停止の611 delta再生も確認し、実装の単なる宣言やカウンタだけで完了扱いしません。
+
+611 delta再生はDebug/Release双方がcompleted=trueで完走。ゲーム構築用362ファイルの独立treeからRuntimeと5sampleのRelease buildが成功し、install SDK58ファイルがallowlistと一致、game treeのDLLを用いた外部consumer GPU Init→Present→Shutdownも成功しました。START CheckOnly、関連package/no-STL検査、formatter/BOM/CRLF/diffを確認。記録はsolver-workspace-replay-{Release,Debug}.log、solver-workspace-game-{export,build,install,consumer-run}.logとgame/SDK manifestです。最新Release PNGへ画素一致で変換し、PPM/重複Debug48画像、一時probeソース/build、使い終えたexport stagingとPython cacheを片づけました。probeの再現用ソース本文と削除前hashはsolver-workspace-cleanup.jsonへ保存し、元asset・現build・再現delta・検証ログを保持します。

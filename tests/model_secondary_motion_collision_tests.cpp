@@ -1908,6 +1908,181 @@ bool TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews()
 }
 
 /**
+ * ゼロ時間restoreでscratch容量を鎖間再利用し、旧経路と状態をbyte単位で一致させる。
+ */
+bool TestPreparedSolverWorkspaceReuseAndAtomicity()
+{
+    const FModelSecondaryMotionCollisionShape farBody = Shape({ 100.0f, -10.0f, 0.0f }, { 100.0f, 10.0f, 0.0f }, 0.25f);
+    FModelSecondaryMotionStepShapeCache cache(&farBody, 1);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || view.count != 1)
+        return Fail("could not prepare the solver workspace test body");
+    const gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    const gk::Vec3 targetsThreeA[3] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 2.0f, 0.0f, 0.0f } };
+    const gk::Vec3 targetsFive[5] = { { 0.0f, 1.0f, 0.0f }, { 1.0f, 1.0f, 0.0f }, { 2.0f, 1.0f, 0.0f }, { 3.0f, 1.0f, 0.0f }, { 4.0f, 1.0f, 0.0f } };
+    const gk::Vec3 targetsThreeB[3] = { { 10.0f, -2.0f, 1.0f }, { 11.0f, -2.0f, 1.0f }, { 12.0f, -2.0f, 1.0f } };
+    const auto SameStateBytes = [](const FModelSecondaryMotionChainState& first, const FModelSecondaryMotionChainState& second) { return first.points.Count() == second.points.Count() && first.previousTargets.Count() == second.previousTargets.Count() && (!first.points.Count() || memcmp(first.points.Data(), second.points.Data(), static_cast<size_t>(first.points.Count()) * sizeof(FModelSecondaryMotionPoint)) == 0) && (!first.previousTargets.Count() || memcmp(first.previousTargets.Data(), second.previousTargets.Data(), static_cast<size_t>(first.previousTargets.Count()) * sizeof(gk::Vec3)) == 0); };
+    const auto Initialize = [&](const gk::Vec3* targets, uint32_t count, FModelSecondaryMotionChainState& state)
+    {
+        if (!ResetSecondaryMotionChain(targets, count, state, error))
+            return false;
+        for (uint32_t point = 1; point < count; ++point)
+        {
+            auto& velocity = state.points.At(point).velocity;
+            velocity.x = point == 1u ? -0.0f : -0.125f * point;
+            velocity.y = 1.25f * point;
+            velocity.z = point == 1u ? -0.0f : 0.375f;
+        }
+        return true;
+    };
+    const auto CompareRestoreToRaw = [&](const gk::Vec3* targets, uint32_t count, FModelSecondaryMotionSolverWorkspace& workspace)
+    {
+        FModelSecondaryMotionChainState workspaceState;
+        FModelSecondaryMotionChainState rawState;
+        if (!Initialize(targets, count, workspaceState) || !CopyState(workspaceState, rawState))
+            return false;
+        workspace.Clear();
+        if (!RestoreSecondaryMotionChainWithPreparedCollisions(targets, count, settings, view, workspace, workspaceState, error) || !StepSecondaryMotionChainWithCollisions(targets, count, settings, 0.0, &farBody, &farBody, 1, rawState, error))
+            return false;
+        if (!SameStateBytes(workspaceState, rawState))
+            return false;
+        const float negativeZero = -0.0f;
+        return memcmp(&workspaceState.points.At(1).velocity.x, &negativeZero, sizeof(float)) == 0 && workspaceState.points.At(1).velocity.y == 1.25f && memcmp(&workspaceState.points.At(1).velocity.z, &negativeZero, sizeof(float)) == 0;
+    };
+
+    FModelSecondaryMotionSolverWorkspace sharedWorkspace;
+    if (!CompareRestoreToRaw(targetsThreeA, 3, sharedWorkspace) || !CompareRestoreToRaw(targetsFive, 5, sharedWorkspace) || !CompareRestoreToRaw(targetsThreeB, 3, sharedWorkspace))
+        return Fail("cold-to-warm workspace reuse at counts 3, 5, 3 changed bytes or velocity values");
+
+    const FModelSecondaryMotionCollisionShape contactSphere = Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.27f);
+    FModelSecondaryMotionStepShapeCache contactCache(&contactSphere, 1);
+    FModelSecondaryMotionStepShapes contactView{};
+    const gk::Vec3 contactTargets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    gk::FModelSecondaryMotionSettings feasibleContactSettings = MakeQuietSettings();
+    if (!contactCache.Get(0.0f, contactView, error) || !contactView.count)
+        return Fail("could not prepare the workspace collision-retry sphere");
+    FModelSecondaryMotionChainState preparedContactState;
+    FModelSecondaryMotionChainState rawContactState;
+    if (!ResetSecondaryMotionChain(contactTargets, 2, preparedContactState, error) || !ResetSecondaryMotionChain(contactTargets, 2, rawContactState, error) || !RestoreSecondaryMotionChainWithPreparedCollisions(contactTargets, 2, feasibleContactSettings, contactView, sharedWorkspace, preparedContactState, error) || !StepSecondaryMotionChainWithCollisions(contactTargets, 2, feasibleContactSettings, 0.0, &contactSphere, &contactSphere, 1, rawContactState, error))
+        return Fail("workspace restore and raw zero-delta solver did not resolve a feasible sphere contact");
+    if (!SameStateBytes(preparedContactState, rawContactState))
+        return Fail("workspace sphere-contact result differed bytewise from the raw zero-delta result");
+    const gk::FVector3d contactFirst = ToDouble(preparedContactState.points.At(0).position);
+    const gk::FVector3d contactSecond = ToDouble(preparedContactState.points.At(1).position);
+    if (!IsFreeSegmentClear(&contactSphere, 1, 0.0f, contactFirst, contactSecond))
+        return Fail("workspace sphere-contact result left the free span penetrating");
+
+    FModelSecondaryMotionChainState infeasibleContactState;
+    FModelSecondaryMotionChainState infeasibleContactSnapshot;
+    gk::FModelSecondaryMotionSettings infeasibleContactSettings = feasibleContactSettings;
+    infeasibleContactSettings.maxAngleDegrees = 5.0f;
+    if (!ResetSecondaryMotionChain(contactTargets, 2, infeasibleContactState, error) || !CopyState(infeasibleContactState, infeasibleContactSnapshot))
+        return Fail("could not snapshot the infeasible workspace contact state");
+    if (RestoreSecondaryMotionChainWithPreparedCollisions(contactTargets, 2, infeasibleContactSettings, contactView, sharedWorkspace, infeasibleContactState, error) || error.Empty() || !SameStateBytes(infeasibleContactState, infeasibleContactSnapshot))
+        return Fail("infeasible workspace sphere contact changed state or lacked a diagnostic");
+    FModelSecondaryMotionChainState retriedContactState;
+    if (!CopyState(infeasibleContactSnapshot, retriedContactState) || !RestoreSecondaryMotionChainWithPreparedCollisions(contactTargets, 2, feasibleContactSettings, contactView, sharedWorkspace, retriedContactState, error) || !SameStateBytes(retriedContactState, rawContactState) || !IsFreeSegmentClear(&contactSphere, 1, 0.0f, ToDouble(retriedContactState.points.At(0).position), ToDouble(retriedContactState.points.At(1).position)))
+        return Fail("the same workspace could not retry with feasible sphere-contact settings");
+
+    FModelSecondaryMotionChainState initial;
+    if (!Initialize(targetsFive, 5, initial))
+        return Fail("could not initialize workspace allocation sweep state");
+    initial.points.At(1).position.y += 0.3f;
+    FModelSecondaryMotionChainState rawExpected;
+    if (!CopyState(initial, rawExpected) || !StepSecondaryMotionChainWithCollisions(targetsFive, 5, settings, 0.0, &farBody, &farBody, 1, rawExpected, error))
+        return Fail("could not create the raw reference result for workspace allocation sweeps");
+    const auto RetryAndCompare = [&](FModelSecondaryMotionSolverWorkspace& workspace, FModelSecondaryMotionChainState& state) { return RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, view, workspace, state, error) && SameStateBytes(state, rawExpected); };
+
+    bool coldObservedFailure = false;
+    bool coldReachedSuccess = false;
+    for (uint32_t allowedAllocations = 0; allowedAllocations <= 12; ++allowedAllocations)
+    {
+        FModelSecondaryMotionSolverWorkspace coldWorkspace;
+        FModelSecondaryMotionChainState candidate;
+        FModelSecondaryMotionChainState snapshot;
+        if (!CopyState(initial, candidate) || !CopyState(candidate, snapshot) || !error.Assign("preallocated diagnostic for cold solver workspace failure injection"))
+            return Fail("could not initialize a cold workspace failure attempt");
+        gk::SetAllocationFailureAfterForTesting(allowedAllocations);
+        const bool restored = RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, view, coldWorkspace, candidate, error);
+        gk::ResetAllocationFailureForTesting();
+        if (restored)
+        {
+            if (!error.Empty() || !SameStateBytes(candidate, rawExpected))
+                return Fail("cold workspace success changed the raw result or retained an error");
+            coldReachedSuccess = true;
+            break;
+        }
+        coldObservedFailure = true;
+        if (error.Empty() || !SameStateBytes(candidate, snapshot))
+            return Fail("cold workspace allocation failure changed chain state or lost its diagnostic");
+        if (!RetryAndCompare(coldWorkspace, candidate))
+            return Fail("cold workspace could not retry after an allocation failure");
+    }
+    if (!coldObservedFailure || !coldReachedSuccess)
+        return Fail("cold workspace allocation sweep did not cover failure and success");
+
+    FModelSecondaryMotionSolverWorkspace warmWorkspace;
+    FModelSecondaryMotionChainState warmed;
+    if (!CopyState(initial, warmed) || !RetryAndCompare(warmWorkspace, warmed))
+        return Fail("could not warm solver workspace before bounded allocation checks");
+    for (uint32_t allowedAllocations = 0; allowedAllocations <= 3; ++allowedAllocations)
+    {
+        FModelSecondaryMotionChainState candidate;
+        FModelSecondaryMotionChainState snapshot;
+        if (!CopyState(initial, candidate) || !CopyState(candidate, snapshot))
+            return Fail("could not copy the warm workspace failure state");
+        error.Assign("preallocated diagnostic for warm solver workspace failure injection");
+        gk::SetAllocationFailureAfterForTesting(allowedAllocations);
+        const bool restored = RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, view, warmWorkspace, candidate, error);
+        gk::ResetAllocationFailureForTesting();
+        if (allowedAllocations < 3)
+        {
+            if (restored || error.Empty() || !SameStateBytes(candidate, snapshot))
+                return Fail("warm workspace failure sweep did not preserve state below the three-allocation budget");
+            if (!RetryAndCompare(warmWorkspace, candidate))
+                return Fail("warm workspace could not retry after an injected allocation failure");
+        }
+        else if (!restored || !error.Empty() || !SameStateBytes(candidate, rawExpected))
+        {
+            return Fail("warm workspace did not finish with the candidate-state and raw-contact three-allocation budget");
+        }
+    }
+
+    FModelSecondaryMotionChainState invalidTargetState;
+    FModelSecondaryMotionChainState invalidTargetSnapshot;
+    if (!CopyState(initial, invalidTargetState) || !CopyState(invalidTargetState, invalidTargetSnapshot))
+        return Fail("could not snapshot invalid-target workspace case");
+    gk::Vec3 invalidTargets[5];
+    memcpy(invalidTargets, targetsFive, sizeof(invalidTargets));
+    invalidTargets[2].y = std::numeric_limits<float>::quiet_NaN();
+    if (RestoreSecondaryMotionChainWithPreparedCollisions(invalidTargets, 5, settings, view, warmWorkspace, invalidTargetState, error) || error.Empty() || !SameStateBytes(invalidTargetState, invalidTargetSnapshot) || !RetryAndCompare(warmWorkspace, invalidTargetState))
+        return Fail("invalid targets changed state or prevented a valid workspace retry");
+
+    FModelSecondaryMotionChainState invalidVelocityState;
+    FModelSecondaryMotionChainState invalidVelocitySnapshot;
+    if (!CopyState(initial, invalidVelocityState) || !CopyState(invalidVelocityState, invalidVelocitySnapshot))
+        return Fail("could not snapshot invalid-velocity workspace case");
+    invalidVelocityState.points.At(2).velocity.z = std::numeric_limits<float>::quiet_NaN();
+    invalidVelocitySnapshot.points.At(2).velocity.z = std::numeric_limits<float>::quiet_NaN();
+    if (RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, view, warmWorkspace, invalidVelocityState, error) || error.Empty() || !SameStateBytes(invalidVelocityState, invalidVelocitySnapshot))
+        return Fail("non-finite velocity was accepted or changed the old state");
+    invalidVelocityState.points.At(2).velocity.z = 0.375f;
+    if (!RetryAndCompare(warmWorkspace, invalidVelocityState))
+        return Fail("valid retry after repairing non-finite velocity failed");
+
+    FModelSecondaryMotionChainState invalidViewState;
+    FModelSecondaryMotionChainState invalidViewSnapshot;
+    if (!CopyState(initial, invalidViewState) || !CopyState(invalidViewState, invalidViewSnapshot))
+        return Fail("could not snapshot invalid-view workspace case");
+    FModelSecondaryMotionStepShapes invalidView = view;
+    invalidView.guarded = nullptr;
+    if (RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, invalidView, warmWorkspace, invalidViewState, error) || error.Empty() || !SameStateBytes(invalidViewState, invalidViewSnapshot) || !RetryAndCompare(warmWorkspace, invalidViewState))
+        return Fail("invalid prepared view changed state or prevented a valid workspace retry");
+    return true;
+}
+
+/**
  * 準備済み形状の投影が収束しない場合は参照方向を計算せずstateを保つ。
  */
 bool TestPreparedProjectionFailureSkipsReferenceWork()
@@ -2073,8 +2248,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {
