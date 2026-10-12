@@ -7,6 +7,9 @@
 #include "examples/support/FModelMotionView.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
 #include "examples/support/ModelSecondaryMotionDebugView.h"
+#if defined(GKCORE_MODEL_BENCHMARK)
+#include <ctype.h>
+#endif
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
@@ -223,6 +226,85 @@ int CompareMilliseconds(const void* left, const void* right)
     const double b = *static_cast<const double*>(right);
     return a < b ? -1 : (a > b ? 1 : 0);
 }
+
+/**
+ * 再生deltaファイルを起動前に全件検証して読み込む。
+ */
+bool ReadDeltaReplayFile(const char* path, uint32_t expectedCount, double* output)
+{
+    // 起動前に読み込む再生ファイル。
+    FILE* file = fopen(path, "rb");
+    if (!file)
+    {
+        fprintf(stderr, "could not open benchmark delta replay: %s\n", path);
+        return false;
+    }
+    // すべての行が正しく読み取れたかを示す。
+    bool passed = true;
+    // これまでに読み込んだframe数。
+    uint32_t count = 0;
+    // 1frame分の数値を読む行buffer。
+    char line[256]{};
+    // binary読取で消費したbyte数から、行内のNULを見落とさず検査する。
+    long previousOffset = 0;
+    while (fgets(line, sizeof(line), file))
+    {
+        const long currentOffset = ftell(file);
+        if (currentOffset < previousOffset || currentOffset < 0 || static_cast<unsigned long>(currentOffset - previousOffset) != strlen(line))
+        {
+            fprintf(stderr, "benchmark delta replay contains NUL or cannot report its position: %s\n", path);
+            passed = false;
+            break;
+        }
+        previousOffset = currentOffset;
+        if (count >= expectedCount)
+        {
+            fprintf(stderr, "benchmark delta replay has extra values: %s\n", path);
+            passed = false;
+            break;
+        }
+        // 改行を含む読み取り行の長さ。
+        const size_t lineLength = strlen(line);
+        if (lineLength > 0 && line[lineLength - 1] != '\n' && !feof(file))
+        {
+            fprintf(stderr, "benchmark delta replay line is too long: %s\n", path);
+            passed = false;
+            break;
+        }
+        errno = 0;
+        // 数値変換後の読み取り位置。
+        char* end = nullptr;
+        // このframeに適用するdelta。
+        const double value = strtod(line, &end);
+        // 空白だけの行では、読み取り位置を進める前に数値の有無を確定する。
+        const bool hasValue = end != line;
+        while (end && *end && isspace(static_cast<unsigned char>(*end)))
+            ++end;
+        if (errno == ERANGE || !hasValue || (end && *end) || !isfinite(value) || value < 0.0)
+        {
+            fprintf(stderr, "benchmark delta replay contains an invalid value at frame %u: %s\n", count, path);
+            passed = false;
+            break;
+        }
+        output[count++] = value;
+    }
+    if (ferror(file))
+    {
+        fprintf(stderr, "benchmark delta replay read failed: %s\n", path);
+        passed = false;
+    }
+    if (passed && count != expectedCount)
+    {
+        fprintf(stderr, "benchmark delta replay has %u values; expected %u: %s\n", count, expectedCount, path);
+        passed = false;
+    }
+    if (fclose(file) != 0)
+    {
+        fprintf(stderr, "benchmark delta replay close failed: %s\n", path);
+        passed = false;
+    }
+    return passed;
+}
 #endif
 
 }
@@ -265,6 +347,13 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --secondary-links option\n");
         return 2;
     }
+    // 任意の骨間距離設定のpath。
+    const char* secondaryDistancePath = nullptr;
+    if (!gk::examples::ParseSecondaryDistanceOptions(argc, argv, secondaryDistancePath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-distances option\n");
+        return 2;
+    }
     const char* secondaryMotionPath = nullptr;
     if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
     {
@@ -278,9 +367,9 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
-    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath))
+    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath))
     {
-        fprintf(stderr, "--secondary-colliders requires --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders\n");
+        fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders\n");
         return 2;
     }
     if (collisionDebug && !secondaryMotionPath)
@@ -290,7 +379,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--collision-debug]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--collision-debug]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -320,8 +409,50 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid viewer mode or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : mode);
         return 2;
     }
+#if defined(GKCORE_MODEL_BENCHMARK)
+    // 再生と記録に使う有限benchmarkのframe数。
+    uint32_t benchmarkFrames = 0;
+    // 平均値から除外するwarmup frame数。
+    uint32_t benchmarkWarmup = 0;
+    if (!ReadFrameCount("GKCORE_BENCHMARK_FRAMES", 300, 4096, false, benchmarkFrames) || !ReadFrameCount("GKCORE_BENCHMARK_WARMUP", 30, 4096, true, benchmarkWarmup))
+    {
+        fprintf(stderr, "GKCORE_BENCHMARK_FRAMES must be from 1 through 4096 and GKCORE_BENCHMARK_WARMUP from 0 through 4096\n");
+        return 2;
+    }
+    const uint32_t benchmarkTotalFrames = benchmarkWarmup + benchmarkFrames;
+    // 全frameのdeltaを再生または終了後の書き出し用に保持する。
+    double benchmarkReplayDeltas[8192]{};
+    // 再生deltaファイルのpath。
+    const char* benchmarkDeltaReplayPath = getenv("GKCORE_BENCHMARK_DELTA_REPLAY_PATH");
+    // 記録deltaファイルのpath。
+    const char* benchmarkDeltaTracePath = getenv("GKCORE_BENCHMARK_DELTA_TRACE_PATH");
+    if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0] && benchmarkDeltaTracePath && benchmarkDeltaTracePath[0])
+    {
+        fprintf(stderr, "benchmark delta replay and trace cannot be enabled together\n");
+        return 2;
+    }
+    if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0] && !ReadDeltaReplayFile(benchmarkDeltaReplayPath, benchmarkTotalFrames, benchmarkReplayDeltas))
+        return 2;
+    // 再生終了後にdeltaをまとめて書くfile。frame中は書き込みで時間を変えない。
+    FILE* benchmarkDeltaTraceFile = nullptr;
+    // bufferに保持したdelta行数。失敗した更新のdeltaも含む。
+    uint32_t benchmarkDeltaTraceCount = 0;
+    if (benchmarkDeltaTracePath && benchmarkDeltaTracePath[0])
+    {
+        benchmarkDeltaTraceFile = fopen(benchmarkDeltaTracePath, "w");
+        if (!benchmarkDeltaTraceFile)
+        {
+            fprintf(stderr, "could not open benchmark delta trace: %s\n", benchmarkDeltaTracePath);
+            return 2;
+        }
+    }
+#endif
     if (!Check(gk::SetWindowSize(1280, 720), "SetWindowSize") || !Check(gk::SetVSyncEnabled(false), "SetVSyncEnabled(false)") || !Check(gk::Init(), "Init"))
     {
+#if defined(GKCORE_MODEL_BENCHMARK)
+        if (benchmarkDeltaTraceFile)
+            fclose(benchmarkDeltaTraceFile);
+#endif
         gk::Shutdown();
         return 1;
     }
@@ -480,17 +611,6 @@ int main(int argc, char** argv)
     // 外部motion間blendを有効にしているかを示す。
     bool externalBlendEnabled = externalBlendMode;
 #if defined(GKCORE_MODEL_BENCHMARK)
-    // 環境変数から読んだ計測対象frame数。
-    uint32_t benchmarkFrames = 0;
-    // 平均と百分位から除外するwarmup frame数。
-    uint32_t benchmarkWarmup = 0;
-    if (!ReadFrameCount("GKCORE_BENCHMARK_FRAMES", 300, 4096, false, benchmarkFrames) || !ReadFrameCount("GKCORE_BENCHMARK_WARMUP", 30, 4096, true, benchmarkWarmup))
-    {
-        fprintf(stderr, "GKCORE_BENCHMARK_FRAMES must be from 1 through 4096 and GKCORE_BENCHMARK_WARMUP from 0 through 4096\n");
-        failed = true;
-    }
-    // warmupと計測を合わせた有限loopの上限。
-    const uint32_t benchmarkTotalFrames = benchmarkWarmup + benchmarkFrames;
     // 最大frame数分の計測値を固定配列へ記録する。
     double frameMilliseconds[4096]{};
     // DrawModel APIごとのCPU所要時間。
@@ -551,6 +671,10 @@ int main(int argc, char** argv)
     {
         failed = true;
     }
+    if (!failed && secondaryDistancePath && !gk::examples::ApplySecondaryDistancePreview(model, secondaryDistancePath))
+    {
+        failed = true;
+    }
     if (!failed && vertexContacts && !Check(gk::SetModelSecondaryMotionVertexContactsEnabled(model, true), "SetModelSecondaryMotionVertexContactsEnabled"))
     {
         failed = true;
@@ -571,10 +695,23 @@ int main(int argc, char** argv)
             failed = true;
             break;
         }
+#if defined(GKCORE_MODEL_BENCHMARK)
+        // 実時間または記録済みdeltaで更新する秒数。
+        double deltaSeconds = static_cast<double>(frameStart.QuadPart - previousFrameCounter.QuadPart) / static_cast<double>(timerFrequency.QuadPart);
+#else
         // 実時間に基づいて回転・animationを進める秒数。
         const double deltaSeconds = static_cast<double>(frameStart.QuadPart - previousFrameCounter.QuadPart) / static_cast<double>(timerFrequency.QuadPart);
+#endif
         previousFrameCounter = frameStart;
 #if defined(GKCORE_MODEL_BENCHMARK)
+        if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0])
+            deltaSeconds = benchmarkReplayDeltas[benchmarkFrame];
+        if (!isfinite(deltaSeconds) || deltaSeconds < 0.0)
+        {
+            fprintf(stderr, "benchmark frame delta is invalid at frame %u\n", benchmarkFrame);
+            failed = true;
+            break;
+        }
         // 可視計測のrotateは、入力操作に依存せず実際に回転を更新する。
         if (strcmp(mode, "rotate") == 0)
         {
@@ -585,6 +722,13 @@ int main(int argc, char** argv)
         {
             break;
         }
+#if defined(GKCORE_MODEL_BENCHMARK)
+        if (benchmarkDeltaTraceFile)
+        {
+            benchmarkReplayDeltas[benchmarkDeltaTraceCount] = deltaSeconds;
+            ++benchmarkDeltaTraceCount;
+        }
+#endif
         if (gk::IsKeyDown(gk::Key::ArrowLeft))
         {
             rotationY -= static_cast<float>(2.1 * deltaSeconds);
@@ -817,6 +961,43 @@ int main(int argc, char** argv)
 #endif
     }
 #if defined(GKCORE_MODEL_BENCHMARK)
+    // 動作を測り終えてから書き出し、記録のための待ち時間を次のdeltaへ混ぜない。
+    const bool benchmarkHasTrace = benchmarkDeltaTraceFile != nullptr;
+    bool benchmarkTraceWritten = true;
+    if (benchmarkDeltaTraceFile)
+    {
+        for (uint32_t index = 0; index < benchmarkDeltaTraceCount; ++index)
+        {
+            if (fprintf(benchmarkDeltaTraceFile, "%.17g\n", benchmarkReplayDeltas[index]) < 0)
+            {
+                benchmarkTraceWritten = false;
+                break;
+            }
+        }
+        if (fflush(benchmarkDeltaTraceFile) != 0)
+        {
+            benchmarkTraceWritten = false;
+        }
+        if (fclose(benchmarkDeltaTraceFile) != 0)
+        {
+            benchmarkTraceWritten = false;
+        }
+        benchmarkDeltaTraceFile = nullptr;
+        if (!benchmarkTraceWritten)
+        {
+            fprintf(stderr, "benchmark delta trace write failed: %s\n", benchmarkDeltaTracePath);
+            failed = true;
+        }
+    }
+    if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0])
+    {
+        fprintf(stdout, "{\"deltaReplay\":true,\"framesRequested\":%u,\"warmupFrames\":%u,\"framesCompleted\":%u,\"nextFrameIndex\":%u,\"completed\":%s}\n", benchmarkFrames, benchmarkWarmup, benchmarkFrame, benchmarkFrame, benchmarkFrame == benchmarkTotalFrames ? "true" : "false");
+    }
+    else if (benchmarkHasTrace)
+    {
+        fprintf(stdout, "{\"deltaTrace\":true,\"framesRequested\":%u,\"warmupFrames\":%u,\"deltasRecorded\":%u,\"completed\":%s,\"traceWritten\":%s}\n", benchmarkFrames, benchmarkWarmup, benchmarkDeltaTraceCount, benchmarkFrame == benchmarkTotalFrames ? "true" : "false", benchmarkTraceWritten ? "true" : "false");
+    }
+    else
     {
         // 実際に完了した計測frame数。途中終了では要求数より少ない。
         const uint32_t measuredFrames = benchmarkFrame > benchmarkWarmup ? (benchmarkFrame - benchmarkWarmup < benchmarkFrames ? benchmarkFrame - benchmarkWarmup : benchmarkFrames) : 0;

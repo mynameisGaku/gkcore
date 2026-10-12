@@ -1,4 +1,4 @@
-﻿# Runtime SDKの構成
+# Runtime SDKの構成
 
 SDKはゲームのビルドと実行に必要なファイルをまとめたものです。
 ゲームからは公開headerと`gkcore::gkcore`のCMake targetを使います。

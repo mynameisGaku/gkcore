@@ -38,14 +38,53 @@ setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMoti
 既定の反復数は32で、`nullptr, 0`は接続線分だけを解除し、鎖や身体形状は保持します。
 `ResetModelSecondaryMotion`と鎖の再登録後も接続線分と反復数を保持し、次の明示更新で接触を解きます。
 
+複数鎖の自由bone間の距離を保つには、`SetModelSecondaryMotionDistanceConstraints`へ`FModelSecondaryMotionDistanceConstraint`配列を渡します。
+各端点は別々に登録した鎖の自由boneで、最大1024組です。
+固定root・同じ鎖のbone・順序を反転した重複ペアは指定できません。
+`restDistance=0`は登録時の基準姿勢を測って距離として固定します。
+この基準姿勢は揺れを加える前のclip・blend・IK反映後の位置です。
+animationで毎frame基準距離を測り直す機能ではありません。
+正の`restDistance`はmodel空間の距離を直接指定します。
+`compliance=0`は距離を保ち、正の値は伸び縮みを許します。
+値が大きいほど柔らかく、両端は同じ動きやすさで補正します。
+
+距離は、柔らかさを時間刻みに合わせて扱うXPBDという位置補正で解きます。
+各Updateのframe末尾で連成処理を呼び、その制約反復内では補正の累計`lambda`を保持します。
+lambdaはUpdateごとに0へ戻します。
+時間刻み`h`は、0より大きく0.25秒未満のdeltaではそのdelta、deltaが0または0.25秒以上のhitchでは`1/120`秒です。
+検査する誤差は`abs(実距離 - 基準距離 - (compliance / h²) * lambda)`で、柔らかい設定では実距離そのものの伸びを拒否しません。
+候補は基準距離の0.05%、描画FKは0.1%を許容します。
+各鎖のsubstepと距離制約を同じ刻みで一緒に解く構成ではなく、更新頻度による動きの差は残ります。
+極端に短い距離や大きなfloat座標では必要な相対精度を保てず、更新が失敗する場合があります。
+
+距離制約は身体colliderがなくても使えます。
+骨の接触や最大角度と同時に満たせない場合、更新は失敗し、全鎖の直前の確定状態を保ちます。
+`ResetModelSecondaryMotion`は基準姿勢へ戻し、設定した距離制約は次のUpdateから再び適用されます。
+距離制約と接続線分は反復数を共有し、どちらかのsetterを最後に呼んだときの反復数が使われます。
+`nullptr, 0`は距離制約だけを解除します。
+
 複数鎖の接触制約を同時に解けない場合、`UpdateModelSecondaryMotion`は`-1`を返し、直前に確定した全鎖の物理状態と姿勢を保ちます。
 `GetLastErrorMessage()`で失敗理由を確認してください。
 接続線分は骨長や角度制約と両立しない設定では成立しません。
+
+接続候補では数値上の接触許容幅の半分だけを使い、残りを描画姿勢へ戻す際の丸め誤差に残します。
+この余白は布の厚みやmesh面の接触を表すものではありません。
+
+接続した鎖は初回の反復で長さ・角度・接触を検査します。
+後続の反復では、投影で位置が変わった鎖と、接触がまだ成立していない線分の両端鎖を補正します。
+位置が変わらず、接続も成立した鎖への再計算を省きます。
+
+反復の前半は通常の接触方向へ押し出します。
+後半まで接触が残るときは、親から子へ向かう骨方向と最大曲げ角を使い、骨の長さを戻す処理で消えにくい回転方向へ補正します。
+中心で交差してこの方向を定められない場合は、カプセル全体の外側へ向かう両側の移動を比較します。
+これらは候補の位置補正で、最終の骨長・曲げ角・接触・描画FKの検査を省きません。
+反復数や接触許容幅は増やしません。
 
 `GetModelSecondaryMotionDebugShapes`は公開値型`gk::FModelSecondaryMotionDebugShape`で、現在の姿勢に対応する接触形状をmodel空間で返します。
 `nullptr, 0`は必要な個数を返し、配列が足りない場合や無効なinstanceでは失敗して出力を保ちます。
 描画用の色分けでは、身体形状を青、自由に動く節を橙色、固定rootを白、仮想末端を灰色で表示します。
 身体球の半径には`SetModelSecondaryMotionColliders`のmarginが含まれ、鎖の球半径は上記のsetter値です。
+距離制約は半径0の接続線として、現在のbone原点間を表示します。
 照会はanimationと物理状態を進めません。
 
 身体形状の中に固定rootがある場合、その形状との最初の節間線分は接触判定から除外します。
@@ -166,6 +205,17 @@ bone名はモデルから検索され、節の余白`0.005` model unitが半径�
 各行は`半径 | firstBone secondBone`で、半径はmodel空間です。
 設定ファイルはスカート接続線分を参照してください。
 接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
+
+骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。
+このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。
+各行は`restDistance compliance | firstBone secondBone`です。
+YUMEKAの10本の距離設定は登録時の距離を使い、complianceは`0.001`です。
+START15は試験設定です。
+loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。
+実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。
+その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。
+同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。
+これは布面の非貫通や全設定の収束を保証するものではありません。
 
 ```powershell
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-bone-contact-motion.txt --secondary-colliders yumeka-bone-colliders.txt --collision-debug

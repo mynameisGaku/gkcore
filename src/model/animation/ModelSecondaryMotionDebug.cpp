@@ -33,7 +33,7 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         return detail::SetError("secondary motion debug requires a skeletal source");
     }
     // 必要数を先に検査して、容量不足時は出力を触らない。
-    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count();
+    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count() + state->distanceConstraints.Count();
     for (uint32_t index = 0; index < state->chains.Count(); ++index)
     {
         const auto* chain = state->chains.At(index);
@@ -134,6 +134,25 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         if (!candidate.Append(shape))
         {
             return detail::SetError("secondary motion debug link allocation failed");
+        }
+    }
+    // 距離制約は厚みを持たない接続線として、現在の骨原点間を表示する。
+    for (uint32_t index = 0; index < state->distanceConstraints.Count(); ++index)
+    {
+        const auto& constraint = state->distanceConstraints.At(index);
+        if (constraint.firstBone >= skeleton.parents.Count() || constraint.secondBone >= skeleton.parents.Count())
+        {
+            return detail::SetError("secondary motion debug distance bone is out of range");
+        }
+        const float* first = matrices.Data() + static_cast<uint64_t>(constraint.firstBone) * 16u;
+        const float* second = matrices.Data() + static_cast<uint64_t>(constraint.secondBone) * 16u;
+        FModelSecondaryMotionDebugShape shape{};
+        shape.start = { first[12], first[13], first[14] };
+        shape.end = { second[12], second[13], second[14] };
+        shape.bone = constraint.firstBone;
+        if (!candidate.Append(shape))
+        {
+            return detail::SetError("secondary motion debug distance allocation failed");
         }
     }
     if (candidate.Count() > 0)

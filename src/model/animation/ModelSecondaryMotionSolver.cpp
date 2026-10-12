@@ -11,8 +11,22 @@ namespace gk::model::animation
 namespace
 {
 
+#if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
+// 鎖制約で目標方向と長さを計算した回数。
+uint64_t secondaryMotionReferenceCalculationCount = 0;
+#endif
+
 // 積分と接触が共通で使う倍精度座標。
 using FVector3 = gk::FVector3d;
+
+/**
+ * 1つのsubstep内で制約反復に再利用する目標線分。
+ */
+struct FSecondaryMotionReferenceSegment
+{
+    FVector3 direction; // 正規化済みの目標方向。
+    double length;      // 目標線分の長さ。
+};
 
 /**
  * 3成分を倍精度位置へ変換する。
@@ -207,7 +221,7 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 /**
  * 鎖を候補側で積分し、長さ・曲げ角・任意の身体接触を満たすときだけstateを更新する。
  */
-static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error)
+static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false)
 {
     error.Clear();
     if (!ValidateSettings(settings, delta) || !ValidateTargets(targets, count, error))
@@ -225,9 +239,17 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         error.Assign("secondary motion collider count exceeds 64");
         return false;
     }
+    if (zeroStepShapes)
+    {
+        if (delta != 0.0 || zeroStepShapes->count != shapeCount || zeroStepShapes->expanded != previousShapes || zeroStepShapes->expanded != currentShapes || (shapeCount > 0u && (!zeroStepShapes->guarded || !zeroStepShapes->prepared)) || (shapeCount == 0u && (zeroStepShapes->expanded || zeroStepShapes->guarded || zeroStepShapes->prepared)))
+        {
+            error.Assign("Secondary motion prepared shape view is invalid");
+            return false;
+        }
+    }
     // 接触なしでは既存の初期化結果と計算順をそのまま保つ。
     const bool initiallyEmpty = state.points.Count() == 0 && state.previousTargets.Count() == 0;
-    if (initiallyEmpty && shapeCount == 0)
+    if (initiallyEmpty && shapeCount == 0 && !forceConstraints)
     {
         return ResetSecondaryMotionChain(targets, count, state, error);
     }
@@ -260,7 +282,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         return false;
     }
     const bool resetMotion = initiallyEmpty || delta >= 0.25 || rootDisplacement > settings.teleportDistance;
-    if (resetMotion && shapeCount == 0)
+    if (resetMotion && shapeCount == 0 && !forceConstraints)
     {
         if (!ResetSecondaryMotionChain(targets, count, state, error))
             return false;
@@ -280,7 +302,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         error.Assign("Secondary motion state allocation failed");
         return false;
     }
-    if (delta == 0.0 && shapeCount == 0)
+    if (delta == 0.0 && shapeCount == 0 && !forceConstraints)
     {
         candidate.points.At(0).position = targets[0];
         candidate.points.At(0).velocity = {};
@@ -323,9 +345,12 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
     const FVector3 wind = ToDouble(settings.windAcceleration);
     // 接触形状もアニメーション目標と同じ小刻み更新の時刻で補間する。
     gk::Array<FModelSecondaryMotionCollisionShape> stepShapes;
-    if (!stepShapes.Reserve(shapeCount))
+    gk::Array<FSecondaryMotionReferenceSegment> referenceSegments;
+    // 同じsubstepの投影と接触検査で共有する、半径ガード付きの身体形状。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedStepShapes;
+    if ((!zeroStepShapes && !stepShapes.Reserve(shapeCount)) || !referenceSegments.Reserve(count - 1u))
     {
-        error.Assign("secondary motion collider allocation failed");
+        error.Assign("secondary motion constraint workspace allocation failed");
         return false;
     }
     for (uint32_t substep = 0; substep < substepCount; ++substep)
@@ -333,27 +358,30 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         const double weight = static_cast<double>(substep + 1u) / substepCount;
         for (uint32_t index = 0; index < count; ++index)
             stepTargets.At(index) = resetMotion ? ToDouble(targets[index]) : Interpolate(ToDouble(state.previousTargets.At(index)), ToDouble(targets[index]), weight);
-        stepShapes.Clear();
-        for (uint32_t shape = 0; shape < shapeCount; ++shape)
+        if (!zeroStepShapes)
         {
-            const auto& current = currentShapes[shape];
-            const auto& previous = integrateMotion ? previousShapes[shape] : current;
-            const auto start = Interpolate(ToDouble(previous.start), ToDouble(current.start), weight);
-            const auto end = Interpolate(ToDouble(previous.end), ToDouble(current.end), weight);
-            const double interpolatedRadius = previous.radius + (static_cast<double>(current.radius) - previous.radius) * weight;
-            // 接触許容幅を相殺する余白を計算中だけ加え、float回転へ戻す丸め差に備える。
-            const double guardedRadius = interpolatedRadius * 1.001;
-            if (!isfinite(guardedRadius) || guardedRadius > FLT_MAX)
+            stepShapes.Clear();
+            for (uint32_t shape = 0; shape < shapeCount; ++shape)
             {
-                error.Assign("Secondary motion collision radius exceeds the float range");
-                return false;
-            }
-            const float radius = static_cast<float>(guardedRadius);
-            const FModelSecondaryMotionCollisionShape interpolated{ { static_cast<float>(start.value[0]), static_cast<float>(start.value[1]), static_cast<float>(start.value[2]) }, { static_cast<float>(end.value[0]), static_cast<float>(end.value[1]), static_cast<float>(end.value[2]) }, radius };
-            if (!stepShapes.Append(interpolated))
-            {
-                error.Assign("secondary motion collider allocation failed");
-                return false;
+                const auto& current = currentShapes[shape];
+                const auto& previous = integrateMotion ? previousShapes[shape] : current;
+                const auto start = Interpolate(ToDouble(previous.start), ToDouble(current.start), weight);
+                const auto end = Interpolate(ToDouble(previous.end), ToDouble(current.end), weight);
+                const double interpolatedRadius = previous.radius + (static_cast<double>(current.radius) - previous.radius) * weight;
+                // 接触許容幅を相殺する余白を計算中だけ加え、float回転へ戻す丸め差に備える。
+                const double guardedRadius = interpolatedRadius * 1.001;
+                if (!isfinite(guardedRadius) || guardedRadius > FLT_MAX)
+                {
+                    error.Assign("Secondary motion collision radius exceeds the float range");
+                    return false;
+                }
+                const float radius = static_cast<float>(guardedRadius);
+                const FModelSecondaryMotionCollisionShape interpolated{ { static_cast<float>(start.value[0]), static_cast<float>(start.value[1]), static_cast<float>(start.value[2]) }, { static_cast<float>(end.value[0]), static_cast<float>(end.value[1]), static_cast<float>(end.value[2]) }, radius };
+                if (!stepShapes.Append(interpolated))
+                {
+                    error.Assign("secondary motion collider allocation failed");
+                    return false;
+                }
             }
         }
         for (uint32_t index = 0; index < count; ++index)
@@ -372,38 +400,67 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         }
         // 許容誤差なしの検査が通った位置は、通常許容幅による直後の再検査を省く。
         bool contactsClear = false;
+        referenceSegments.Clear();
+        if (shapeCount > 0 && !zeroStepShapes && !PrepareSecondaryMotionCollisionShapes(stepShapes.Data(), shapeCount, preparedStepShapes, error))
+        {
+            return false;
+        }
+        // 長さ復元前の方向補正に使うshape配列を選ぶ。
+        const FModelSecondaryMotionCollisionShape* avoidShapes = zeroStepShapes ? zeroStepShapes->guarded : stepShapes.Data();
+        // 接触投影と検査に使う準備済み配列を選ぶ。
+        const FPreparedSecondaryMotionCollisionShape* contactShapes = zeroStepShapes ? zeroStepShapes->prepared : preparedStepShapes.Data();
         for (uint32_t pass = 0; pass < settings.constraintIterations; ++pass)
         {
-            if (shapeCount > 0 && !ProjectSecondaryMotionContacts(stepShapes.Data(), shapeCount, stepTargets.Data(), count, positions, error))
+            if (shapeCount > 0 && !ProjectPreparedSecondaryMotionContacts(contactShapes, shapeCount, stepTargets.Data(), count, positions, error))
             {
                 return false;
             }
             positions.At(0) = stepTargets.At(0);
             for (uint32_t index = 1; index < count; ++index)
             {
-                const FVector3 animatedSegment = Subtract(stepTargets.At(index), stepTargets.At(index - 1));
-                const double segmentLength = Length(animatedSegment);
-                FVector3 referenceDirection = animatedSegment;
-                if (segmentLength == 0.0)
+                FVector3 referenceDirection = {};
+                double segmentLength = 0.0;
+                if (pass == 0)
                 {
-                    // 目標が反転して中間方向を定められないときは、現在の姿勢へ安全に戻す。
-                    if (shapeCount == 0)
+                    const FVector3 animatedSegment = Subtract(stepTargets.At(index), stepTargets.At(index - 1));
+#if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
+                    ++secondaryMotionReferenceCalculationCount;
+#endif
+                    segmentLength = Length(animatedSegment);
+                    referenceDirection = animatedSegment;
+                    if (segmentLength == 0.0)
                     {
-                        return ResetSecondaryMotionChain(targets, count, state, error);
+                        // 目標が反転して中間方向を定められないときは、現在の姿勢へ安全に戻す。
+                        if (shapeCount == 0)
+                        {
+                            return ResetSecondaryMotionChain(targets, count, state, error);
+                        }
+                        FModelSecondaryMotionChainState restarted;
+                        if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error, zeroStepShapes))
+                        {
+                            return false;
+                        }
+                        state.points.MoveFrom(restarted.points);
+                        state.previousTargets.MoveFrom(restarted.previousTargets);
+                        return true;
                     }
-                    FModelSecondaryMotionChainState restarted;
-                    if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error))
+                    if (!(segmentLength > 0.0) || !isfinite(segmentLength) || segmentLength > FLT_MAX || !Normalize(referenceDirection))
                     {
+                        error.Assign("Secondary motion interpolated segment length is invalid");
                         return false;
                     }
-                    state.points.MoveFrom(restarted.points);
-                    state.previousTargets.MoveFrom(restarted.previousTargets);
-                    return true;
+                    const FSecondaryMotionReferenceSegment reference{ referenceDirection, segmentLength };
+                    if (!referenceSegments.Append(reference))
+                    {
+                        error.Assign("secondary motion reference cache allocation failed");
+                        return false;
+                    }
                 }
-                if (!(segmentLength > 0.0) || !isfinite(segmentLength) || segmentLength > FLT_MAX || !Normalize(referenceDirection))
+                else
                 {
-                    error.Assign("Secondary motion interpolated segment length is invalid");
-                    return false;
+                    const FSecondaryMotionReferenceSegment& reference = referenceSegments.At(index - 1u);
+                    referenceDirection = reference.direction;
+                    segmentLength = reference.length;
                 }
                 FVector3 direction = Subtract(positions.At(index), positions.At(index - 1));
                 if (!Normalize(direction))
@@ -411,7 +468,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 // 押し出しを長さへ戻して再侵入する停滞を避け、固定長の方向を解く。
                 for (uint32_t shape = 0; shape < shapeCount; ++shape)
                 {
-                    if (!AvoidSecondaryMotionCollisionSegment(stepShapes.At(shape), positions.At(index - 1), segmentLength, index == 1, direction, error))
+                    if (!AvoidSecondaryMotionCollisionSegment(avoidShapes[shape], positions.At(index - 1), segmentLength, index == 1, direction, error))
                     {
                         return false;
                     }
@@ -422,13 +479,13 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                     positions.At(index).value[axis] = positions.At(index - 1).value[axis] + direction.value[axis] * segmentLength;
             }
             // 骨長と曲げ角を戻した後も接触が解けていれば、残りの反復は不要。
-            if (shapeCount > 0 && CheckSecondaryMotionContacts(stepShapes.Data(), shapeCount, positions.Data(), count, error, 0.0))
+            if (shapeCount > 0 && CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error, 0.0))
             {
                 contactsClear = true;
                 break;
             }
         }
-        if (shapeCount > 0 && !contactsClear && !CheckSecondaryMotionContacts(stepShapes.Data(), shapeCount, positions.Data(), count, error))
+        if (shapeCount > 0 && !contactsClear && !CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error))
         {
             return false;
         }
@@ -456,7 +513,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
             return false;
         }
     }
-    if (shapeCount > 0)
+    if (shapeCount > 0 || forceConstraints)
     {
         // 保存後のfloat座標でも接触が成立することを確認してから状態を確定する。
         for (uint32_t index = 0; index < count; ++index)
@@ -477,7 +534,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 return false;
             }
         }
-        if (!CheckSecondaryMotionContacts(currentShapes, shapeCount, positions.Data(), count, error))
+        if (shapeCount > 0 && !CheckSecondaryMotionContacts(currentShapes, shapeCount, positions.Data(), count, error))
         {
             return false;
         }
@@ -492,6 +549,18 @@ bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk:
 {
     return StepSecondaryMotionChainCore(targets, count, settings, delta, nullptr, nullptr, 0, state, error);
 }
+
+#if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
+void ResetSecondaryMotionReferenceCalculationCount()
+{
+    secondaryMotionReferenceCalculationCount = 0;
+}
+
+uint64_t GetSecondaryMotionReferenceCalculationCount()
+{
+    return secondaryMotionReferenceCalculationCount;
+}
+#endif
 
 bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius)
 {
@@ -519,6 +588,16 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
         return false;
     }
     return StepSecondaryMotionChainCore(targets, count, settings, delta, expandedPreviousShapes.Data(), expandedCurrentShapes.Data(), shapeCount, state, error);
+}
+
+bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes);
+}
+
+bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes, true);
 }
 
 }
