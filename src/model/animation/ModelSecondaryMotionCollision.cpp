@@ -7,6 +7,7 @@
 #include <math.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 namespace gk::model::animation
 {
@@ -789,7 +790,10 @@ bool ExpandSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionSh
     return true;
 }
 
-static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondaryMotionCollisionShape* preparedShapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& candidate, gk::String& error)
+/**
+ * 候補位置の接触を解き、全検査成功後だけ出力へ確定する。
+ */
+static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondaryMotionCollisionShape* preparedShapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& candidate, gk::String& error, bool retainCandidateCapacity = false)
 {
     // 動かないrootの形状内判定を一度だけ保持する。
     bool rootInsideByShape[kMaximumCollisionShapes] = {};
@@ -890,7 +894,16 @@ static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondar
             return false;
         }
     }
-    positions.MoveFrom(candidate);
+    if (retainCandidateCapacity)
+    {
+        // 検査済み候補を値だけ確定し、次の反復用bufferを残す。
+        memcpy(positions.Data(), candidate.Data(), static_cast<size_t>(pointCount) * sizeof(gk::FVector3d));
+        candidate.Clear();
+    }
+    else
+    {
+        positions.MoveFrom(candidate);
+    }
     error.Clear();
     return true;
 }
@@ -975,6 +988,69 @@ bool ProjectPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollis
         return false;
     }
     return ProjectPreparedSecondaryMotionContactsKernel(shapes, shapeCount, referenceTargets, pointCount, positions, candidate, error);
+}
+
+bool ProjectPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& candidate, gk::String& error)
+{
+    error.Clear();
+    if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
+    {
+        error.Assign("Secondary motion prepared collision shape count is invalid");
+        return false;
+    }
+    if (!ValidatePositions(positions.Data(), positions.Count(), error) || positions.Count() != pointCount)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion collision point count does not match its positions");
+        return false;
+    }
+    if (shapeCount == 0)
+        return true;
+    if (!referenceTargets)
+    {
+        error.Assign("Secondary motion collision references are missing");
+        return false;
+    }
+    if (&positions == &candidate)
+    {
+        error.Assign("Secondary motion collision candidate cannot alias its positions array");
+        return false;
+    }
+    // candidate全容量と参照位置の重なりを、終端加算なしで要素数から調べる。
+    // 参照位置配列の先頭address。
+    const uintptr_t referenceAddress = reinterpret_cast<uintptr_t>(referenceTargets);
+    // 再利用候補bufferの先頭address。
+    const uintptr_t candidateAddress = reinterpret_cast<uintptr_t>(candidate.Data());
+    // 候補bufferと参照位置の重なり状態。
+    bool overlapsCandidate = false;
+    if (candidate.Data() && candidate.Capacity() > 0)
+    {
+        if (referenceAddress <= candidateAddress)
+            overlapsCandidate = (candidateAddress - referenceAddress) / sizeof(gk::FVector3d) < pointCount;
+        else
+            overlapsCandidate = (referenceAddress - candidateAddress) / sizeof(gk::FVector3d) < candidate.Capacity();
+    }
+    if (overlapsCandidate)
+    {
+        error.Assign("Secondary motion collision references overlap the candidate array");
+        return false;
+    }
+    // fallbackに使う全目標位置が有限値か調べる。
+    for (uint32_t index = 0; index < pointCount; ++index)
+    {
+        if (!IsFinite(referenceTargets[index]))
+        {
+            error.Assign("Secondary motion collision reference is non-finite");
+            return false;
+        }
+    }
+    candidate.Clear();
+    if (!candidate.AppendRange(positions.Data(), pointCount))
+    {
+        error.Assign("Secondary motion collision workspace allocation failed");
+        return false;
+    }
+    return ProjectPreparedSecondaryMotionContactsKernel(shapes, shapeCount, referenceTargets, pointCount, positions, candidate, error, true);
 }
 
 bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)

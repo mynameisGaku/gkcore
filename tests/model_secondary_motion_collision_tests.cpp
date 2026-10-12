@@ -1777,6 +1777,161 @@ bool TestPreparedPointContactsReuseAndRootException()
 }
 
 /**
+ * 別所有のprojection候補を3→5→3点で再利用し、失敗後も正しい結果へ戻れる。
+ */
+bool TestPreparedPointContactsCallerScratchReuseAndAtomicity()
+{
+    const FModelSecondaryMotionCollisionShape farSphere = Shape({ 100.0f, 100.0f, 100.0f }, { 100.0f, 100.0f, 100.0f }, 0.5f);
+    const FModelSecondaryMotionCollisionShape contactShapes[2] = { Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.5f), Shape({ 0.0f, -0.2f, 0.0f }, { 0.0f, 0.2f, 0.0f }, 0.25f) };
+    const FModelSecondaryMotionCollisionShape blockingShapes[2] = { Shape({ -0.5f, 0.0f, 0.0f }, { -0.5f, 0.0f, 0.0f }, 0.8f), Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.8f) };
+    const gk::FVector3d targetsThreeA[3] = { Point(-0.0, 0.0, -0.0), Point(3.0, 0.0, 0.0), Point(4.0, 1.0, -0.0) };
+    const gk::FVector3d targetsFive[5] = { Point(0.0, 1.0, 0.0), Point(1.0, 1.0, 0.0), Point(2.0, 1.0, 0.0), Point(3.0, 1.0, 0.0), Point(4.0, 1.0, 0.0) };
+    const gk::FVector3d targetsThreeB[3] = { Point(10.0, -2.0, 1.0), Point(11.0, -2.0, 1.0), Point(12.0, -2.0, 1.0) };
+    const gk::FVector3d contactTargets[2] = { Point(0.0, 0.0, 0.0), Point(0.0, 0.1, 0.0) };
+    const gk::FVector3d blockedTargets[2] = { Point(0.0, 0.0, 0.0), Point(0.1, 0.0, 0.0) };
+    const auto SameBytes = [](const gk::Array<gk::FVector3d>& first, const gk::Array<gk::FVector3d>& second) { return first.Count() == second.Count() && (!first.Count() || memcmp(first.Data(), second.Data(), static_cast<size_t>(first.Count()) * sizeof(gk::FVector3d)) == 0); };
+    const auto Prepare = [](const FModelSecondaryMotionCollisionShape* shapes, uint32_t count, gk::Array<FPreparedSecondaryMotionCollisionShape>& prepared, gk::String& error) { return PrepareSecondaryMotionCollisionShapes(shapes, count, prepared, error) && prepared.Count() == count; };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedFar;
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedContact;
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedBlocking;
+    gk::String error;
+    if (!Prepare(&farSphere, 1, preparedFar, error) || !Prepare(contactShapes, 2, preparedContact, error) || !Prepare(blockingShapes, 2, preparedBlocking, error))
+        return Fail("could not prepare projection scratch fixtures");
+
+    gk::Array<gk::FVector3d> sharedScratch;
+    const auto CompareProjection = [&](const FPreparedSecondaryMotionCollisionShape* prepared, uint32_t shapeCount, const FModelSecondaryMotionCollisionShape* rawShapes, const gk::FVector3d* references, uint32_t count, bool aliasReferences, bool expectContact)
+    {
+        gk::Array<gk::FVector3d> scratchPositions;
+        gk::Array<gk::FVector3d> oldPreparedPositions;
+        gk::Array<gk::FVector3d> rawPositions;
+        if (!scratchPositions.AppendRange(references, count) || !oldPreparedPositions.AppendRange(references, count) || !rawPositions.AppendRange(references, count))
+            return false;
+        const gk::FVector3d* scratchReferences = aliasReferences ? scratchPositions.Data() : references;
+        if (!ProjectPreparedSecondaryMotionContacts(prepared, shapeCount, scratchReferences, count, scratchPositions, sharedScratch, error) || !ProjectPreparedSecondaryMotionContacts(prepared, shapeCount, references, count, oldPreparedPositions, error) || !ProjectSecondaryMotionContacts(rawShapes, shapeCount, references, count, rawPositions, error))
+            return false;
+        if (!SameBytes(scratchPositions, oldPreparedPositions) || !SameBytes(scratchPositions, rawPositions))
+            return false;
+        if (expectContact && (!IsPointChainClearWithRootException(rawShapes, shapeCount, scratchPositions.Data(), count) || memcmp(scratchPositions.Data(), references, static_cast<size_t>(count) * sizeof(gk::FVector3d)) == 0))
+            return false;
+        return true;
+    };
+
+    if (!CompareProjection(preparedFar.Data(), preparedFar.Count(), &farSphere, targetsThreeA, 3, false, false) || sharedScratch.Data() == nullptr || sharedScratch.Capacity() < 3 || memcmp(sharedScratch.Data(), targetsThreeA, sizeof(targetsThreeA)) != 0)
+        return Fail("cold caller scratch did not match the old projection path at three points");
+    if (!CompareProjection(preparedFar.Data(), preparedFar.Count(), &farSphere, targetsFive, 5, false, false))
+        return Fail("caller scratch did not grow from three to five points with byte-identical output");
+    if (!CompareProjection(preparedFar.Data(), preparedFar.Count(), &farSphere, targetsThreeB, 3, true, false))
+        return Fail("caller scratch did not shrink from five to three points or accept references aliased to positions");
+    if (memcmp(sharedScratch.Data(), targetsThreeB, sizeof(targetsThreeB)) != 0)
+        return Fail("far projection did not preserve distinct targets and signed-zero bytes");
+    if (!CompareProjection(preparedContact.Data(), preparedContact.Count(), contactShapes, contactTargets, 2, false, true))
+        return Fail("scratch projection differed from raw results for sphere and capsule contacts");
+
+    gk::Array<gk::FVector3d> warmPositions;
+    gk::Array<gk::FVector3d> warmExpected;
+    if (!warmPositions.AppendRange(targetsFive, 5) || !warmExpected.AppendRange(targetsFive, 5) || !ProjectPreparedSecondaryMotionContacts(preparedFar.Data(), preparedFar.Count(), targetsFive, 5, warmExpected, error))
+        return Fail("could not prepare the warm zero-allocation projection result");
+    error.Assign("preallocated diagnostic for warm projection scratch");
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool warmSucceeded = ProjectPreparedSecondaryMotionContacts(preparedFar.Data(), preparedFar.Count(), targetsFive, 5, warmPositions, sharedScratch, error);
+    gk::ResetAllocationFailureForTesting();
+    if (!warmSucceeded || !error.Empty() || !SameBytes(warmPositions, warmExpected))
+        return Fail("warmed caller scratch allocated or changed the projection result with allocation budget zero");
+
+    gk::Array<gk::FVector3d> coldScratch;
+    gk::Array<gk::FVector3d> coldPositions;
+    gk::Array<gk::FVector3d> coldSnapshot;
+    if (!coldPositions.AppendRange(contactTargets, 2) || !coldSnapshot.AppendRange(contactTargets, 2))
+        return Fail("could not initialize cold projection scratch allocation fixture");
+    error.Assign("preallocated diagnostic for cold projection scratch, keeping space for the longer allocation failure message");
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool coldSucceeded = ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), contactTargets, 2, coldPositions, coldScratch, error);
+    gk::ResetAllocationFailureForTesting();
+    if (coldSucceeded || error.Empty() || !SameBytes(coldPositions, coldSnapshot) || coldScratch.Count() != 0)
+        return Fail("cold projection scratch did not fail atomically when its first reservation was denied");
+    if (!ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), contactTargets, 2, coldPositions, coldScratch, error) || !error.Empty() || !IsPointChainClearWithRootException(contactShapes, 2, coldPositions.Data(), 2))
+        return Fail("cold projection scratch could not retry and resolve contact after allocation failure");
+
+    gk::Array<gk::FVector3d> blockedPositions;
+    gk::Array<gk::FVector3d> blockedSnapshot;
+    if (!blockedPositions.AppendRange(blockedTargets, 2) || !blockedSnapshot.AppendRange(blockedTargets, 2))
+        return Fail("could not initialize nonconvergent projection scratch fixture");
+    gk::Array<gk::FVector3d> oldBlockedPositions;
+    gk::String oldBlockedError;
+    if (!oldBlockedPositions.AppendRange(blockedTargets, 2) || ProjectPreparedSecondaryMotionContacts(preparedBlocking.Data(), preparedBlocking.Count(), blockedTargets, 2, oldBlockedPositions, oldBlockedError) || oldBlockedError.Empty() || !SameBytes(oldBlockedPositions, blockedSnapshot))
+        return Fail("the old prepared path did not reject the nonconvergent projection fixture atomically");
+    if (ProjectPreparedSecondaryMotionContacts(preparedBlocking.Data(), preparedBlocking.Count(), blockedTargets, 2, blockedPositions, sharedScratch, error) || error.Empty() || !SameBytes(blockedPositions, blockedSnapshot))
+        return Fail("a blocked span changed positions or omitted its projection failure diagnostic");
+    if (strcmp(error.CStr(), oldBlockedError.CStr()) != 0)
+        return Fail("shared projection changed the old nonconvergence diagnostic");
+    if (!ProjectPreparedSecondaryMotionContacts(preparedFar.Data(), preparedFar.Count(), blockedTargets, 2, blockedPositions, sharedScratch, error) || !error.Empty() || !SameBytes(blockedPositions, blockedSnapshot))
+        return Fail("the same caller scratch failed to retry after an infeasible projection");
+
+    gk::Array<gk::FVector3d> aliasPositions;
+    gk::Array<gk::FVector3d> aliasSnapshot;
+    if (!aliasPositions.AppendRange(contactTargets, 2) || !aliasSnapshot.AppendRange(contactTargets, 2))
+        return Fail("could not initialize projection scratch object-alias fixture");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), contactTargets, 2, aliasPositions, aliasPositions, error) || error.Empty() || !SameBytes(aliasPositions, aliasSnapshot))
+        return Fail("projection scratch aliased with positions was accepted or changed output bytes");
+
+    gk::Array<gk::FVector3d> overlapScratch;
+    gk::Array<gk::FVector3d> overlapSnapshot;
+    gk::Array<gk::FVector3d> overlapPositions;
+    gk::Array<gk::FVector3d> overlapPositionsSnapshot;
+    if (!overlapScratch.AppendRange(contactTargets, 2) || !CopyPositions(overlapScratch, overlapSnapshot) || !overlapPositions.AppendRange(contactTargets, 2) || !CopyPositions(overlapPositions, overlapPositionsSnapshot))
+        return Fail("could not initialize reference/scratch overlap fixture");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), overlapScratch.Data(), 2, overlapPositions, overlapScratch, error) || error.Empty() || !SameBytes(overlapScratch, overlapSnapshot) || !SameBytes(overlapPositions, overlapPositionsSnapshot))
+        return Fail("reference targets overlapping scratch storage were accepted or changed either array");
+
+    gk::Array<gk::FVector3d> unusedCapacityScratch;
+    gk::Array<gk::FVector3d> unusedCapacityPositions;
+    gk::FVector3d unusedCapacityValues[8] = { Point(10.0, 0.0, 0.0), Point(11.0, 0.0, 0.0), Point(12.0, 0.0, 0.0), Point(13.0, 0.0, 0.0), contactTargets[0], contactTargets[1], Point(16.0, 0.0, 0.0), Point(17.0, 0.0, 0.0) };
+    if (!unusedCapacityScratch.AppendRange(unusedCapacityValues, 8) || !unusedCapacityPositions.AppendRange(contactTargets, 2))
+        return Fail("could not initialize unused-capacity reference overlap fixture");
+    unusedCapacityScratch.Clear();
+    if (unusedCapacityScratch.Count() != 0 || unusedCapacityScratch.Capacity() < 8 || ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), unusedCapacityScratch.Data() + 4, 2, unusedCapacityPositions, unusedCapacityScratch, error) || error.Empty() || unusedCapacityScratch.Count() != 0 || memcmp(unusedCapacityScratch.Data(), unusedCapacityValues, sizeof(unusedCapacityValues)) != 0 || unusedCapacityPositions.Count() != 2 || memcmp(unusedCapacityPositions.Data(), contactTargets, sizeof(contactTargets)) != 0)
+        return Fail("references overlapping unused caller-scratch capacity were accepted or changed either array");
+
+    gk::Array<gk::FVector3d> invalidPositions;
+    gk::Array<gk::FVector3d> invalidSnapshot;
+    if (!invalidPositions.AppendRange(contactTargets, 2) || !CopyPositions(invalidPositions, invalidSnapshot))
+        return Fail("could not initialize invalid-reference projection fixture");
+    const gk::FVector3d invalidReferences[2] = { contactTargets[0], Point(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0) };
+    FPreparedSecondaryMotionCollisionShape excessive[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+        excessive[index] = preparedContact.At(0);
+    if (ProjectPreparedSecondaryMotionContacts(nullptr, 1, contactTargets, 2, invalidPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPositions, invalidSnapshot))
+        return Fail("null prepared shapes changed positions or lacked a diagnostic");
+    if (ProjectPreparedSecondaryMotionContacts(excessive, 65, contactTargets, 2, invalidPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPositions, invalidSnapshot))
+        return Fail("excessive prepared shape count changed positions or lacked a diagnostic");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), nullptr, 2, invalidPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPositions, invalidSnapshot))
+        return Fail("null references changed positions or lacked a diagnostic");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), invalidReferences, 2, invalidPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPositions, invalidSnapshot))
+        return Fail("non-finite reference changed positions or lacked a diagnostic");
+    gk::Array<gk::FVector3d> invalidPointPositions;
+    gk::Array<gk::FVector3d> invalidPointSnapshot;
+    const gk::FVector3d nonFinitePoints[2] = { contactTargets[0], Point(0.0, std::numeric_limits<double>::infinity(), 0.0) };
+    if (!invalidPointPositions.AppendRange(nonFinitePoints, 2) || !CopyPositions(invalidPointPositions, invalidPointSnapshot))
+        return Fail("could not initialize non-finite caller-scratch positions");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), contactTargets, 2, invalidPointPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPointPositions, invalidPointSnapshot))
+        return Fail("non-finite positions changed output or lacked a diagnostic");
+    if (ProjectPreparedSecondaryMotionContacts(preparedContact.Data(), preparedContact.Count(), contactTargets, 1, invalidPositions, sharedScratch, error) || error.Empty() || !SameBytes(invalidPositions, invalidSnapshot))
+        return Fail("mismatched point count changed positions or lacked a diagnostic");
+
+    gk::Array<gk::FVector3d> emptyPositions;
+    if (!emptyPositions.AppendRange(targetsThreeA, 3))
+        return Fail("could not initialize zero-shape no-op positions");
+    const gk::FVector3d emptySnapshot[3] = { emptyPositions.At(0), emptyPositions.At(1), emptyPositions.At(2) };
+    error.Assign("preallocated diagnostic for zero-shape projection");
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool emptySucceeded = ProjectPreparedSecondaryMotionContacts(nullptr, 0, nullptr, 3, emptyPositions, emptyPositions, error);
+    gk::ResetAllocationFailureForTesting();
+    if (!emptySucceeded || !error.Empty() || memcmp(emptyPositions.Data(), emptySnapshot, sizeof(emptySnapshot)) != 0)
+        return Fail("zero-shape aliased projection was not an allocation-free no-op");
+    return true;
+}
+
+/**
  * 準備済み点接触APIの空shape、不正引数、別名、失敗時の保持を確かめる。
  */
 bool TestPreparedPointContactsValidationAndAtomicity()
@@ -2161,7 +2316,7 @@ bool TestPreparedSolverWorkspaceReuseAndAtomicity()
     FModelSecondaryMotionChainState warmed;
     if (!CopyState(initial, warmed) || !RetryAndCompare(warmWorkspace, warmed))
         return Fail("could not warm solver workspace before bounded allocation checks");
-    for (uint32_t allowedAllocations = 0; allowedAllocations <= 3; ++allowedAllocations)
+    for (uint32_t allowedAllocations = 0; allowedAllocations <= 2; ++allowedAllocations)
     {
         FModelSecondaryMotionChainState candidate;
         FModelSecondaryMotionChainState snapshot;
@@ -2171,16 +2326,16 @@ bool TestPreparedSolverWorkspaceReuseAndAtomicity()
         gk::SetAllocationFailureAfterForTesting(allowedAllocations);
         const bool restored = RestoreSecondaryMotionChainWithPreparedCollisions(targetsFive, 5, settings, view, warmWorkspace, candidate, error);
         gk::ResetAllocationFailureForTesting();
-        if (allowedAllocations < 3)
+        if (allowedAllocations < 2)
         {
             if (restored || error.Empty() || !SameStateBytes(candidate, snapshot))
-                return Fail("warm workspace failure sweep did not preserve state below the three-allocation budget");
+                return Fail("warm workspace failure sweep did not preserve state below the two-allocation budget");
             if (!RetryAndCompare(warmWorkspace, candidate))
                 return Fail("warm workspace could not retry after an injected allocation failure");
         }
         else if (!restored || !error.Empty() || !SameStateBytes(candidate, rawExpected))
         {
-            return Fail("warm workspace did not finish with the candidate-state and raw-contact three-allocation budget");
+            return Fail("warm workspace did not finish with the candidate-state two-allocation budget");
         }
     }
 
@@ -2383,8 +2538,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestPreparedSegmentAvoidanceMatchesRaw, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "prepared segment avoidance", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestPreparedSegmentAvoidanceMatchesRaw, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsCallerScratchReuseAndAtomicity, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "prepared segment avoidance", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact caller scratch", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {
