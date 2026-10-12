@@ -399,8 +399,6 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         {
             return false;
         }
-        // 長さ復元前の方向補正に使うshape配列を選ぶ。
-        const FModelSecondaryMotionCollisionShape* avoidShapes = zeroStepShapes ? zeroStepShapes->guarded : stepShapes.Data();
         // 接触投影と検査に使う準備済み配列を選ぶ。
         const FPreparedSecondaryMotionCollisionShape* contactShapes = zeroStepShapes ? zeroStepShapes->prepared : preparedStepShapes.Data();
         for (uint32_t pass = 0; pass < settings.constraintIterations; ++pass)
@@ -462,7 +460,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 // 押し出しを長さへ戻して再侵入する停滞を避け、固定長の方向を解く。
                 for (uint32_t shape = 0; shape < shapeCount; ++shape)
                 {
-                    if (!AvoidSecondaryMotionCollisionSegment(avoidShapes[shape], positions.At(index - 1), segmentLength, index == 1, direction, error))
+                    if (!AvoidPreparedSecondaryMotionCollisionSegment(contactShapes[shape], positions.At(index - 1), segmentLength, index == 1, direction, error))
                     {
                         return false;
                     }

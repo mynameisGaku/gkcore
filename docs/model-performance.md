@@ -163,3 +163,9 @@ START15の試験設定では13鎖・身体8形状・接触線分10本に、基�
 通常可視Release1280×720、標準効果、VSyncなし、YUMEKA2motion blend+右腕IK+13鎖+身体8形状+接触線分10本+距離10組、debug表示/頂点補正OFF、3000frame/warmup300を前後とも完走しました。145.974→153.213FPS、secondary3.331→3.260msです。Draw .512→.383/Present2.439→2.314msにも差があるため、全体FPSの差を作業配列共有だけの効果とは断定しません。300FPSは未達です。
 
 同プロセスのv142 Releaseでraw/prepared処理と同じゼロ時間復元をfresh領域/共有領域で交互に各10000回・8batch測ると、fresh平均1.16655µs、shared1.08369µsでした。遠方カプセルと3点の限定した計測で、実モデル全体の性能へ換算しません。固定deltaの別batch比較ではsolverがstart4.035→4.520ms、loop4.488→4.931msと遅く見える結果もあり、captureの速度改善は確認できていません。全480frameのSkirt参照JSONと保存画像は前版と一致しています。次は繰り返しの接触計算とbody形状・基準値の準備費用を測ります。
+
+## prepared Avoid形状の共有
+
+鎖の方向回避では、同じguard済み接触形状の軸、軸長の二乗、桁あふれを避けて求める軸長、nextafterで外向きに広げた境界をshape準備時に作り、反復中に再利用します。通常の半径範囲も別に保持します。親位置・方向・長さの検査、毎回変わる最近点とcone計算、root内の最初の節の例外、接触投影後のraw/FK検査は維持します。接触投影専用のraw wrapperは追加の軸長計算やnextafterを行いません。鎖更新で完全なprepared shapeを作る場合は形状ごとに軸長と外向き境界も準備します。内部prepared値は144 byteから200 byteになります。この変更に公開APIやABIの追加はありません。
+
+Windows 11 build 26200、RTX 4070 SUPER、v142 / MSVC 19.29、Windows SDK 10.0.22621.0のReleaseで、1280×720・VSyncなし・標準効果・YUMEKAの2motion blend・右腕IK・13鎖・身体8形状・接続10本・距離10組、debug表示/頂点補正OFFの3000frame/warmup300を前後とも完走しました。152.809→157.854FPS、揺れ更新3.269→2.885msです。後のp95は7.436ms、Draw .392→.450ms、Present 2.313→2.426ms、IK .512→.518msでした。全体FPSの差をこの変更だけの効果とは断定せず、300FPSも未達です。固定delta1/60の開始0秒・3.35秒からDebug/Release各120frame、計480frameのGPU位置・法線とSkirt1,314点の検査が有効で、全Skirt記録と保存24組の画像が変更前と一致しました。最初の20frameを除くsolver平均は開始区間4.040→3.438ms、loop4.478→3.847msで、参照計算回数も変わりません。以前停止した611 deltaの再生はDebug/Releaseで完走しました。布面侵入は開始区間平均16.008点・最大深さ.017313、loop平均15.483点・最大深さ.023409のまま残り、品質改善とは扱いません。

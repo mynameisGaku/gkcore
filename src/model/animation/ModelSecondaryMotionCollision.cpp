@@ -154,7 +154,7 @@ double ContactTolerance(double radius)
 /**
  * 検証済み形状の軸と判定値を1回だけ計算する。
  */
-FPreparedSecondaryMotionCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisionShape& shape)
+FPreparedSecondaryMotionCollisionShape PrepareCollisionShape(const FModelSecondaryMotionCollisionShape& shape, bool prepareAvoidance = false)
 {
     // この呼出し中に再利用する形状値。
     FPreparedSecondaryMotionCollisionShape prepared = {};
@@ -169,6 +169,17 @@ FPreparedSecondaryMotionCollisionShape PrepareCollisionShape(const FModelSeconda
         // 半径を含む旧判定範囲を保存する。
         prepared.boundsLow[axis] = fmin(prepared.start.value[axis], prepared.end.value[axis]) - prepared.radius;
         prepared.boundsHigh[axis] = fmax(prepared.start.value[axis], prepared.end.value[axis]) + prepared.radius;
+        if (prepareAvoidance)
+        {
+            // 保守的判定の境界を1 ULP外へ広げる。
+            prepared.conservativeBoundsLow[axis] = nextafter(prepared.boundsLow[axis], -HUGE_VAL);
+            prepared.conservativeBoundsHigh[axis] = nextafter(prepared.boundsHigh[axis], HUGE_VAL);
+        }
+    }
+    if (prepareAvoidance)
+    {
+        // 回避計算では成分を縮めて桁あふれを避ける軸長も再利用する。
+        prepared.axisLength = Length(prepared.axis);
     }
 #if defined(GKCORE_TESTING)
     ++secondaryMotionCollisionPrepareCount;
@@ -245,6 +256,23 @@ bool IsOutsideExpandedBoundsConservative(const gk::FVector3d& first, const gk::F
         const double shapeLow = nextafter(fmin(start[axis], end[axis]) - radius, -HUGE_VAL);
         const double shapeHigh = nextafter(fmax(start[axis], end[axis]) + radius, HUGE_VAL);
         if (segmentHigh < shapeLow || segmentLow > shapeHigh)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * 準備済みの保守的境界を使い、丸めで接触を見逃さない範囲を調べる。
+ */
+bool IsOutsideExpandedBoundsConservative(const gk::FVector3d& first, const gk::FVector3d& second, const FPreparedSecondaryMotionCollisionShape& shape)
+{
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        const double segmentLow = fmin(first.value[axis], second.value[axis]);
+        const double segmentHigh = fmax(first.value[axis], second.value[axis]);
+        if (segmentHigh < shape.conservativeBoundsLow[axis] || segmentLow > shape.conservativeBoundsHigh[axis])
         {
             return true;
         }
@@ -971,11 +999,14 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
     return CheckPreparedContacts(preparedShapes, shapeCount, positions, pointCount, error, toleranceFraction);
 }
 
-bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error)
+/**
+ * 元形状または準備済み形状から固定長の骨方向を回避させ、失敗時は方向を保つ。
+ */
+static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotionCollisionShape* rawShape, const FPreparedSecondaryMotionCollisionShape* preparedShape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error)
 {
     error.Clear();
     // 形状、始点、長さ、現在方向を検証する。
-    if (!ValidateSecondaryMotionCollisionShapes(&shape, 1, error) || !IsFinite(parent) || !isfinite(length) || !(length > 0.0) || !IsFinite(direction))
+    if ((rawShape && !ValidateSecondaryMotionCollisionShapes(rawShape, 1, error)) || (!rawShape && !preparedShape) || !IsFinite(parent) || !isfinite(length) || !(length > 0.0) || !IsFinite(direction))
     {
         if (error.Empty())
             error.Assign("Secondary motion collision segment input is invalid");
@@ -991,17 +1022,18 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     if (fabs(parent.value[0]) <= FLT_MAX && fabs(parent.value[1]) <= FLT_MAX && fabs(parent.value[2]) <= FLT_MAX && length <= FLT_MAX)
     {
         const gk::FVector3d boundedEnd = Add(parent, Multiply(candidateDirection, length));
-        if (IsFinite(boundedEnd) && IsOutsideExpandedBoundsConservative(parent, boundedEnd, shape))
+        const bool outside = IsFinite(boundedEnd) && (rawShape ? IsOutsideExpandedBoundsConservative(parent, boundedEnd, *rawShape) : IsOutsideExpandedBoundsConservative(parent, boundedEnd, *preparedShape));
+        if (outside)
         {
             direction = candidateDirection;
             return true;
         }
     }
     // 親からカプセル軸への最近点で、親が形状内か調べる。
-    const gk::FVector3d parentClosest = ClosestPointOnAxis(parent, shape);
+    const gk::FVector3d parentClosest = preparedShape ? ClosestPointOnPreparedAxis(parent, *preparedShape) : ClosestPointOnAxis(parent, *rawShape);
     const double parentDistance = Length(Subtract(parent, parentClosest));
-    const double radius = shape.radius;
-    const double tolerance = ContactTolerance(radius);
+    const double radius = preparedShape ? preparedShape->radius : rawShape->radius;
+    const double tolerance = preparedShape ? preparedShape->tolerance : ContactTolerance(radius);
     const bool parentInside = parentDistance < radius - tolerance;
     if (parentInside && !firstSegment)
     {
@@ -1022,7 +1054,7 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     gk::FVector3d closest = {};
     if (endpointOnly)
     {
-        closest = ClosestPointOnAxis(currentEnd, shape);
+        closest = preparedShape ? ClosestPointOnPreparedAxis(currentEnd, *preparedShape) : ClosestPointOnAxis(currentEnd, *rawShape);
         if (Length(Subtract(currentEnd, closest)) >= radius - tolerance)
         {
             direction = candidateDirection;
@@ -1031,7 +1063,8 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     }
     else
     {
-        if (IsOutsideExpandedBounds(parent, currentEnd, shape))
+        const bool outside = preparedShape ? IsOutsideExpandedBounds(parent, currentEnd, *preparedShape) : IsOutsideExpandedBounds(parent, currentEnd, *rawShape);
+        if (outside)
         {
             direction = candidateDirection;
             return true;
@@ -1040,7 +1073,14 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
         double spanAmount = 0.0;
         double axisAmount = 0.0;
         gk::FVector3d spanPoint = {};
-        ClosestSegmentPair(parent, currentEnd, ToDouble(shape.start), ToDouble(shape.end), spanAmount, axisAmount, spanPoint, closest);
+        if (preparedShape)
+        {
+            ClosestSegmentPairWithAxis(parent, currentEnd, preparedShape->start, preparedShape->axis, preparedShape->axisLengthSquared, spanAmount, axisAmount, spanPoint, closest);
+        }
+        else
+        {
+            ClosestSegmentPair(parent, currentEnd, ToDouble(rawShape->start), ToDouble(rawShape->end), spanAmount, axisAmount, spanPoint, closest);
+        }
         (void)spanAmount;
         if (Length(Subtract(spanPoint, closest)) >= radius - tolerance)
         {
@@ -1049,13 +1089,13 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
         }
         // 軸の途中への侵入は、軸に直交する平面内の円筒coneで先に解く。
         // collider軸とその長さ。
-        const gk::FVector3d shapeAxis = Subtract(ToDouble(shape.end), ToDouble(shape.start));
-        const double shapeAxisLength = Length(shapeAxis);
+        const gk::FVector3d shapeAxis = preparedShape ? preparedShape->axis : Subtract(ToDouble(rawShape->end), ToDouble(rawShape->start));
+        const double shapeAxisLength = preparedShape ? preparedShape->axisLength : Length(shapeAxis);
         if (axisAmount > 0.0 && axisAmount < 1.0 && shapeAxisLength > 0.0 && isfinite(shapeAxisLength))
         {
             // 軸の単位方向と親位置の軸直交成分。
             const gk::FVector3d axisUnit = Multiply(shapeAxis, 1.0 / shapeAxisLength);
-            const gk::FVector3d parentOffset = Subtract(parent, ToDouble(shape.start));
+            const gk::FVector3d parentOffset = preparedShape ? Subtract(parent, preparedShape->start) : Subtract(parent, ToDouble(rawShape->start));
             const gk::FVector3d parentRadial = Subtract(parentOffset, Multiply(axisUnit, Dot(parentOffset, axisUnit)));
             // 親から無限軸までの半径方向距離。
             const double radialDistance = Length(parentRadial);
@@ -1196,6 +1236,16 @@ bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionSh
     direction = candidateDirection;
     error.Clear();
     return true;
+}
+
+bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error)
+{
+    return AvoidSecondaryMotionCollisionSegmentCore(&shape, nullptr, parent, length, firstSegment, direction, error);
+}
+
+bool AvoidPreparedSecondaryMotionCollisionSegment(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error)
+{
+    return AvoidSecondaryMotionCollisionSegmentCore(nullptr, &shape, parent, length, firstSegment, direction, error);
 }
 
 bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
@@ -1616,7 +1666,7 @@ bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionS
     }
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
-        const FPreparedSecondaryMotionCollisionShape prepared = PrepareCollisionShape(shapes[shapeIndex]);
+        const FPreparedSecondaryMotionCollisionShape prepared = PrepareCollisionShape(shapes[shapeIndex], true);
         if (!candidate.Append(prepared))
         {
             error.Assign("Secondary motion prepared collision shape allocation failed");

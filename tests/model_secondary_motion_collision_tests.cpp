@@ -488,6 +488,130 @@ bool TestCollisionSegmentBoundsFastPath()
 }
 
 /**
+ * 準備済み形状の方向回避が旧経路と一致し、軸情報を再計算しない。
+ */
+bool TestPreparedSegmentAvoidanceMatchesRaw()
+{
+    /**
+     * 元形状と準備済み形状へ同じ回避入力を与える検査条件。
+     */
+    struct FAvoidanceCase
+    {
+        // 再利用する身体形状。
+        FModelSecondaryMotionCollisionShape shape;
+        // 固定する親の位置。
+        gk::FVector3d parent;
+        // 骨の長さ。
+        double length;
+        // rootから最初の骨かどうか。
+        bool firstSegment;
+        // 各経路へ渡す初期方向。
+        gk::FVector3d direction;
+        // 同じ形状を続けて使う回数。
+        uint32_t repetitions;
+    };
+    const float largest = std::numeric_limits<float>::max();
+    const FAvoidanceCase cases[] = { { Shape({ 0.0f, -2.0f, 0.0f }, { 0.0f, 2.0f, 0.0f }, 0.2f), Point(0.3, 0.0, 0.0), Distance(Point(0.3, 0.0, 0.0), Point(-0.3, -1.0, 0.0)), false, Point(-0.6 / Distance(Point(0.3, 0.0, 0.0), Point(-0.3, -1.0, 0.0)), -1.0 / Distance(Point(0.3, 0.0, 0.0), Point(-0.3, -1.0, 0.0)), 0.0), 8 }, { Shape({ 0.0f, -0.4f, 0.0f }, { 0.0f, 0.4f, 0.0f }, 0.2f), Point(0.3, 0.3, 0.0), 0.8, false, Point(-1.0, 0.0, 0.0), 4 }, { Shape({ 0.1f, -0.2f, 0.3f }, { -0.45f, 2.5f, 0.84f }, 0.2f), Point(0.3, 0.0, 0.0), 1.0, false, Point(-0.7, 0.5, 0.2), 4 }, { Shape({ 1.0e-38f, -1.0e-38f, 2.0e-38f }, { 1.0e-38f, 0.0f, 2.0e-38f }, 1.0e-39f), Point(1.3e-38, -5.0e-39, 2.0e-38), 1.0e-38, false, Point(-1.0, 0.0, 0.0), 2 }, { Shape({ 1.0e-38f, -1.0e-38f, 2.0e-38f }, { 1.0e-38f, -1.0e-38f, 2.0e-38f }, 1.0e-39f), Point(1.3e-38, -1.0e-38, 2.0e-38), 1.0e-38, false, Point(-1.0, 0.0, 0.0), 2 }, { Shape({ 0.3f, 0.0f, 0.0f }, { 0.3f, 0.0f, 0.0f }, 0.5f), Point(0.0, 0.0, 0.0), 0.5, true, Point(1.0, 0.0, 0.0), 2 }, { Shape({ 0.3f, 0.0f, 0.0f }, { 0.3f, 0.0f, 0.0f }, 0.5f), Point(0.0, 0.0, 0.0), 0.5, false, Point(1.0, 0.0, 0.0), 2 }, { Shape({ 4.0f, 0.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, 0.5f), Point(0.0, 0.0, 0.0), 2.0, false, Point(-0.0, 1.0, -0.0), 1 }, { Shape({ 0.750000059604644775390625f, 2.6f, 0.0f }, { 0.750000059604644775390625f, 2.6f, 0.0f }, 0.75f), Point(0.0, 0.0, 0.0), 2.0, false, Point(0.0, 1.0, 0.0), 1 }, { Shape({ 0.75f, 2.6f, 0.0f }, { 0.75f, 2.6f, 0.0f }, 0.75f), Point(0.0, 0.0, 0.0), 2.0, false, Point(0.0, 1.0, 0.0), 1 }, { Shape({ largest, 0.0f, 0.0f }, { largest, 0.0f, 0.0f }, largest), Point(0.0, 0.0, 0.0), 2.0, false, Point(0.0, 1.0, 0.0), 1 } };
+    gk::String error;
+    bool observedExactQuery = false;
+    for (uint32_t caseIndex = 0; caseIndex < sizeof(cases) / sizeof(cases[0]); ++caseIndex)
+    {
+        gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+        if (!PrepareSecondaryMotionCollisionShapes(&cases[caseIndex].shape, 1, prepared, error) || prepared.Count() != 1)
+            return Fail("could not prepare a raw/prepared avoidance comparison shape");
+        const FPreparedSecondaryMotionCollisionShape& value = prepared.At(0);
+        const double axis[3] = { static_cast<double>(cases[caseIndex].shape.end.x) - cases[caseIndex].shape.start.x, static_cast<double>(cases[caseIndex].shape.end.y) - cases[caseIndex].shape.start.y, static_cast<double>(cases[caseIndex].shape.end.z) - cases[caseIndex].shape.start.z };
+        const double axisLength = sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
+        const double axisLengthTolerance = axisLength > 0.0 ? axisLength * 1.0e-15 : 0.0;
+        const double axisLengthSquared = axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2];
+        if (value.axis.value[0] != axis[0] || value.axis.value[1] != axis[1] || value.axis.value[2] != axis[2] || value.axisLengthSquared != axisLengthSquared || fabs(value.axisLength - axisLength) > axisLengthTolerance)
+            return Fail("prepared axis or scale-safe axis length differed from its independent calculation");
+        if (caseIndex == 3 && (!(axisLength > 0.0) || !(value.axisLength > 0.0) || value.axisLengthSquared <= 0.0))
+            return Fail("tiny nonzero capsule axis was lost while preparing its direction length");
+        if (caseIndex == 4 && (axisLength != 0.0 || value.axisLengthSquared != 0.0 || value.axisLength != 0.0))
+            return Fail("tiny-coordinate zero-axis sphere was not kept on the sphere calculation path");
+        const double starts[3] = { cases[caseIndex].shape.start.x, cases[caseIndex].shape.start.y, cases[caseIndex].shape.start.z };
+        const double ends[3] = { cases[caseIndex].shape.end.x, cases[caseIndex].shape.end.y, cases[caseIndex].shape.end.z };
+        for (uint32_t component = 0; component < 3; ++component)
+        {
+            const double low = fmin(starts[component], ends[component]) - cases[caseIndex].shape.radius;
+            const double high = fmax(starts[component], ends[component]) + cases[caseIndex].shape.radius;
+            if (value.boundsLow[component] != low || value.boundsHigh[component] != high || value.conservativeBoundsLow[component] != nextafter(low, -HUGE_VAL) || value.conservativeBoundsHigh[component] != nextafter(high, HUGE_VAL))
+                return Fail("prepared bounds did not preserve the plain range and one-ULP outward conservative range");
+        }
+
+        gk::FVector3d rawDirection = cases[caseIndex].direction;
+        gk::FVector3d preparedDirection = cases[caseIndex].direction;
+        ResetSecondaryMotionCollisionAxisQueryCount();
+        ResetSecondaryMotionCollisionPrepareCount();
+        bool rawSucceeded = true;
+        for (uint32_t repetition = 0; repetition < cases[caseIndex].repetitions; ++repetition)
+        {
+            rawSucceeded = AvoidSecondaryMotionCollisionSegment(cases[caseIndex].shape, cases[caseIndex].parent, cases[caseIndex].length, cases[caseIndex].firstSegment, rawDirection, error);
+            if (!rawSucceeded)
+                break;
+        }
+        const bool rawErrorEmpty = error.Empty();
+        const uint64_t rawQueries = GetSecondaryMotionCollisionAxisQueryCount();
+        const uint64_t rawPreparations = GetSecondaryMotionCollisionPrepareCount();
+        ResetSecondaryMotionCollisionAxisQueryCount();
+        ResetSecondaryMotionCollisionPrepareCount();
+        bool preparedSucceeded = true;
+        for (uint32_t repetition = 0; repetition < cases[caseIndex].repetitions; ++repetition)
+        {
+            preparedSucceeded = AvoidPreparedSecondaryMotionCollisionSegment(value, cases[caseIndex].parent, cases[caseIndex].length, cases[caseIndex].firstSegment, preparedDirection, error);
+            if (!preparedSucceeded)
+                break;
+        }
+        const bool preparedErrorEmpty = error.Empty();
+        const uint64_t preparedQueries = GetSecondaryMotionCollisionAxisQueryCount();
+        if (rawSucceeded != preparedSucceeded || rawErrorEmpty != preparedErrorEmpty || memcmp(&rawDirection, &preparedDirection, sizeof(rawDirection)) != 0 || rawQueries != preparedQueries || GetSecondaryMotionCollisionPrepareCount() != 0)
+            return Fail("raw and prepared avoidance differed in result, direction, exact queries, or repeated preparation");
+        if (rawQueries > 0 && rawPreparations == 0)
+            return Fail("raw exact geometry path did not account for its shape preparation");
+        if (!rawSucceeded)
+            continue;
+        observedExactQuery = observedExactQuery || rawQueries > 0;
+        if (caseIndex == 5)
+        {
+            const gk::FVector3d endpoint = Point(cases[caseIndex].parent.value[0] + preparedDirection.value[0] * cases[caseIndex].length, cases[caseIndex].parent.value[1] + preparedDirection.value[1] * cases[caseIndex].length, cases[caseIndex].parent.value[2] + preparedDirection.value[2] * cases[caseIndex].length);
+            if (Distance(endpoint, Point(0.3, 0.0, 0.0)) < 0.5 * (1.0 - 1.0e-3))
+                return Fail("first-span root-inside exception left its free endpoint inside the sphere");
+        }
+        if (caseIndex == 6 && memcmp(&preparedDirection, &cases[caseIndex].direction, sizeof(preparedDirection)) != 0)
+            return Fail("non-first segment with an inside parent did not defer its direction unchanged");
+        if (caseIndex == 7 && (!signbit(preparedDirection.value[0]) || !signbit(preparedDirection.value[2])))
+            return Fail("prepared far-path normalization did not preserve signed-zero components");
+        if (caseIndex == 8 && rawQueries != 0)
+            return Fail("one-ULP separated prepared bounds performed an unnecessary exact query");
+        if (caseIndex == 9 && rawQueries == 0)
+            return Fail("touching expanded bounds skipped the independent exact geometry query");
+    }
+    if (!observedExactQuery)
+        return Fail("all raw/prepared avoidance cases skipped exact geometry queries");
+
+    const FModelSecondaryMotionCollisionShape nearSphere = Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.2f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedNearSphere;
+    if (!PrepareSecondaryMotionCollisionShapes(&nearSphere, 1, preparedNearSphere, error) || preparedNearSphere.Count() != 1)
+        return Fail("could not prepare the near-sphere invalid-input fixture");
+    const gk::FVector3d invalidParents[] = { Point(0.0, 0.0, 0.0), Point(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0), Point(std::numeric_limits<double>::max() * 0.75, 0.0, 0.0) };
+    const double invalidLengths[] = { 1.0, 1.0, std::numeric_limits<double>::max() * 0.5 };
+    const gk::FVector3d invalidDirections[] = { Point(0.0, 0.0, 0.0), Point(std::numeric_limits<double>::quiet_NaN(), 1.0, 0.0), Point(1.0, 0.0, 0.0) };
+    for (uint32_t invalidIndex = 0; invalidIndex < 3; ++invalidIndex)
+    {
+        gk::FVector3d rawDirection = invalidDirections[invalidIndex];
+        gk::FVector3d preparedDirection = invalidDirections[invalidIndex];
+        const gk::FVector3d originalDirection = invalidDirections[invalidIndex];
+        const bool rawSucceeded = AvoidSecondaryMotionCollisionSegment(nearSphere, invalidParents[invalidIndex], invalidLengths[invalidIndex], false, rawDirection, error);
+        const bool rawHasError = !error.Empty();
+        const bool preparedSucceeded = AvoidPreparedSecondaryMotionCollisionSegment(preparedNearSphere.At(0), invalidParents[invalidIndex], invalidLengths[invalidIndex], false, preparedDirection, error);
+        if (rawSucceeded || preparedSucceeded || !rawHasError || error.Empty() || memcmp(&rawDirection, &originalDirection, sizeof(rawDirection)) != 0 || memcmp(&preparedDirection, &originalDirection, sizeof(preparedDirection)) != 0)
+            return Fail("invalid direction, parent, or endpoint overflow changed a raw or prepared direction");
+    }
+    return true;
+}
+
+/**
  * 接触形状の軸は投影と再検査を通して形状ごとに一度だけ準備する。
  */
 bool TestShapePreparationBudget()
@@ -537,6 +661,17 @@ bool TestSolverPreparedShapeBudget()
         return Fail(error.CStr());
     if (GetSecondaryMotionCollisionPrepareCount() != 2 || !SameState(state, snapshot))
         return Fail("solver repeated substep shape preparation or changed the quiet pose");
+
+    const FModelSecondaryMotionCollisionShape nearSphere = Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.2f);
+    FModelSecondaryMotionChainState contactState;
+    if (!ResetSecondaryMotionChain(targets, 2, contactState, error))
+        return Fail("could not initialize the solver prepared-avoidance budget state");
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &nearSphere, &nearSphere, 1, contactState, error))
+        return Fail(error.CStr());
+    const gk::FVector3d contactPositions[2] = { ToDouble(contactState.points.At(0).position), ToDouble(contactState.points.At(1).position) };
+    if (GetSecondaryMotionCollisionPrepareCount() != 2 || !CheckSecondaryMotionContacts(&nearSphere, 1, contactPositions, 2, error))
+        return Fail("solver prepared avoidance repeated per-pass shape setup or left the near sphere contact unresolved");
     return true;
 }
 
@@ -2248,8 +2383,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestPreparedSegmentAvoidanceMatchesRaw, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "prepared segment avoidance", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

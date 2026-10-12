@@ -46,6 +46,11 @@ bool CheckSecondaryMotionContacts(const FModelSecondaryMotionCollisionShape* sha
 bool AvoidSecondaryMotionCollisionSegment(const FModelSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error);
 
 /**
+ * 形状準備関数が生成した値で節の方向を補正する。失敗時はdirectionを保つ。
+ */
+bool AvoidPreparedSecondaryMotionCollisionSegment(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& parent, double length, bool firstSegment, gk::FVector3d& direction, gk::String& error);
+
+/**
  * float範囲内の有限な端点を持つ自由線分を身体形状から押し出す。入力が不正か収束しない場合は両端を保つ。
  */
 bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
