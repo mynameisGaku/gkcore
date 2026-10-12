@@ -14,6 +14,11 @@ FModelSecondaryMotionStepShapeCache::FModelSecondaryMotionStepShapeCache(const F
 
 bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondaryMotionStepShapes& output, gk::String& error)
 {
+    return Get(pointRadius, ~static_cast<uint64_t>(0), output, error);
+}
+
+bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, uint64_t colliderMask, FModelSecondaryMotionStepShapes& output, gk::String& error)
+{
     error.Clear();
     if (!isfinite(pointRadius) || pointRadius < 0.0f || sourceShapeCount > 64u || (sourceShapeCount > 0u && !sourceShapes) || !ValidateSecondaryMotionCollisionShapes(sourceShapes, sourceShapeCount, error))
     {
@@ -21,52 +26,86 @@ bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondary
             error.Assign("Secondary motion step shape cache input is invalid");
         return false;
     }
-    if (sourceShapeCount == 0u)
+    // source countに存在するbitだけを残し、64個の場合はshiftを行わない。
+    const uint64_t validMask = sourceShapeCount == 64u ? ~static_cast<uint64_t>(0) : (sourceShapeCount == 0u ? 0u : (static_cast<uint64_t>(1) << sourceShapeCount) - 1u);
+    const uint64_t effectiveMask = colliderMask & validMask;
+    uint32_t selectedCount = 0;
+    for (uint32_t sourceIndex = 0; sourceIndex < sourceShapeCount; ++sourceIndex)
     {
-        // 空入力では参照先をすべてnullにする。
+        const uint64_t sourceBit = static_cast<uint64_t>(1) << sourceIndex;
+        if ((effectiveMask & sourceBit) != 0u)
+        {
+            ++selectedCount;
+        }
+    }
+    if (selectedCount == 0u)
+    {
+        // 全shapeを検証した後、空の選択結果を返す。
         FModelSecondaryMotionStepShapes empty{};
         output = empty;
         return true;
     }
     for (uint32_t groupIndex = 0; groupIndex < groups.Count(); ++groupIndex)
     {
-        if (groups.At(groupIndex).pointRadius == pointRadius)
+        const FGroup& group = groups.At(groupIndex);
+        if (group.pointRadius == pointRadius && group.colliderMask == effectiveMask && group.count == selectedCount)
         {
-            // 半径一致時は連結配列内の既存範囲を返す。
-            const uint32_t offset = groups.At(groupIndex).offset;
+            // 同じ半径と選択集合なら連結配列内の既存範囲を返す。
             FModelSecondaryMotionStepShapes cached{};
-            cached.expanded = expandedShapes.Data() + offset;
-            cached.guarded = guardedShapes.Data() + offset;
-            cached.prepared = preparedShapes.Data() + offset;
-            cached.count = sourceShapeCount;
+            cached.expanded = expandedShapes.Data() + group.offset;
+            cached.guarded = guardedShapes.Data() + group.offset;
+            cached.prepared = preparedShapes.Data() + group.offset;
+            cached.count = selectedCount;
             output = cached;
             return true;
         }
+    }
+
+    // 全shape選択では一時配列を作らず、部分選択だけsource順に詰め直す。
+    const FModelSecondaryMotionCollisionShape* selectedSourceShapes = sourceShapes;
+    gk::Array<FModelSecondaryMotionCollisionShape> selectedSourceCandidate;
+    if (selectedCount != sourceShapeCount)
+    {
+        if (!selectedSourceCandidate.Reserve(selectedCount))
+        {
+            error.Assign("Secondary motion selected shape allocation failed");
+            return false;
+        }
+        for (uint32_t sourceIndex = 0; sourceIndex < sourceShapeCount; ++sourceIndex)
+        {
+            const uint64_t sourceBit = static_cast<uint64_t>(1) << sourceIndex;
+            if ((effectiveMask & sourceBit) != 0u && !selectedSourceCandidate.Append(sourceShapes[sourceIndex]))
+            {
+                error.Assign("Secondary motion selected shape copy failed");
+                return false;
+            }
+        }
+        selectedSourceShapes = selectedSourceCandidate.Data();
     }
 
     // 節半径を足した元形状を一時配列へ作る。
     gk::Array<FModelSecondaryMotionCollisionShape> expandedCandidate;
     if (pointRadius == 0.0f)
     {
-        if (!expandedCandidate.Reserve(sourceShapeCount) || !expandedCandidate.AppendRange(sourceShapes, sourceShapeCount))
+        if (!expandedCandidate.Reserve(selectedCount) || !expandedCandidate.AppendRange(selectedSourceShapes, selectedCount))
         {
             error.Assign("Secondary motion step shape copy failed");
             return false;
         }
     }
-    else if (!ExpandSecondaryMotionCollisionShapes(sourceShapes, sourceShapeCount, pointRadius, expandedCandidate, error))
+    else if (!ExpandSecondaryMotionCollisionShapes(selectedSourceShapes, selectedCount, pointRadius, expandedCandidate, error))
     {
         return false;
     }
 
     // 接触許容幅を相殺するguard形状を一時配列へ作る。
     gk::Array<FModelSecondaryMotionCollisionShape> guardedCandidate;
-    if (!guardedCandidate.Reserve(sourceShapeCount))
+    if (!guardedCandidate.Reserve(selectedCount))
     {
         error.Assign("Secondary motion guarded shape allocation failed");
         return false;
     }
-    for (uint32_t shapeIndex = 0; shapeIndex < sourceShapeCount; ++shapeIndex)
+    for (uint32_t shapeIndex = 0; shapeIndex < selectedCount; ++shapeIndex)
     {
         // delta0のCoreと同じ補間式を使い、符号付きゼロの丸めも揃える。
         // guard形状の元になる拡張済みshape。
@@ -102,9 +141,16 @@ bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondary
 
     // 接触計算用の準備値を候補配列へ作る。
     gk::Array<FPreparedSecondaryMotionCollisionShape> preparedCandidate;
-    if (!PrepareSecondaryMotionCollisionShapes(guardedCandidate.Data(), sourceShapeCount, preparedCandidate, error))
+    if (!PrepareSecondaryMotionCollisionShapes(guardedCandidate.Data(), selectedCount, preparedCandidate, error))
     {
         return false;
+    }
+    for (uint32_t shapeIndex = 0; shapeIndex < selectedCount; ++shapeIndex)
+    {
+        const double rootRadius = expandedCandidate.At(shapeIndex).radius;
+        const double rootTolerance = fmax(rootRadius * 1.0e-3, rootRadius * DBL_EPSILON * 64.0);
+        preparedCandidate.At(shapeIndex).hasRootContactOverride = true;
+        preparedCandidate.At(shapeIndex).rootContactThreshold = rootRadius - rootTolerance;
     }
 
     // 既存配列末尾へ追加できる範囲とrollback位置を記録する。
@@ -112,12 +158,12 @@ bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondary
     const uint32_t oldGuardedCount = guardedShapes.Count();
     const uint32_t oldPreparedCount = preparedShapes.Count();
     const uint32_t oldGroupCount = groups.Count();
-    if (sourceShapeCount > UINT32_MAX - oldExpandedCount || sourceShapeCount > UINT32_MAX - oldGuardedCount || sourceShapeCount > UINT32_MAX - oldPreparedCount || oldGroupCount == UINT32_MAX)
+    if (selectedCount > UINT32_MAX - oldExpandedCount || selectedCount > UINT32_MAX - oldGuardedCount || selectedCount > UINT32_MAX - oldPreparedCount || oldGroupCount == UINT32_MAX)
     {
         error.Assign("Secondary motion step shape cache exceeds its capacity range");
         return false;
     }
-    if (!expandedShapes.Reserve(oldExpandedCount + sourceShapeCount) || !guardedShapes.Reserve(oldGuardedCount + sourceShapeCount) || !preparedShapes.Reserve(oldPreparedCount + sourceShapeCount) || !groups.Reserve(oldGroupCount + 1u))
+    if (!expandedShapes.Reserve(oldExpandedCount + selectedCount) || !guardedShapes.Reserve(oldGuardedCount + selectedCount) || !preparedShapes.Reserve(oldPreparedCount + selectedCount) || !groups.Reserve(oldGroupCount + 1u))
     {
         error.Assign("Secondary motion step shape cache allocation failed");
         return false;
@@ -125,8 +171,10 @@ bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondary
     // 形状範囲を全配列へ追加し、最後にgroupを公開する。
     FGroup group{};
     group.pointRadius = pointRadius;
+    group.colliderMask = effectiveMask;
+    group.count = selectedCount;
     group.offset = oldExpandedCount;
-    if (!expandedShapes.AppendRange(expandedCandidate.Data(), sourceShapeCount) || !guardedShapes.AppendRange(guardedCandidate.Data(), sourceShapeCount) || !preparedShapes.AppendRange(preparedCandidate.Data(), sourceShapeCount) || !groups.Append(group))
+    if (!expandedShapes.AppendRange(expandedCandidate.Data(), selectedCount) || !guardedShapes.AppendRange(guardedCandidate.Data(), selectedCount) || !preparedShapes.AppendRange(preparedCandidate.Data(), selectedCount) || !groups.Append(group))
     {
         while (expandedShapes.Count() > oldExpandedCount)
         {
@@ -152,7 +200,7 @@ bool FModelSecondaryMotionStepShapeCache::Get(float pointRadius, FModelSecondary
     cached.expanded = expandedShapes.Data() + oldExpandedCount;
     cached.guarded = guardedShapes.Data() + oldGuardedCount;
     cached.prepared = preparedShapes.Data() + oldPreparedCount;
-    cached.count = sourceShapeCount;
+    cached.count = selectedCount;
     output = cached;
     return true;
 }

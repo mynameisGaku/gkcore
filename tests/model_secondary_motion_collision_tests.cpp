@@ -3,11 +3,14 @@
 #include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/FModelSecondaryMotionStepShapeCache.h"
+#include "model/animation/ModelSecondaryMotionDirection.h"
+#include "model/animation/ModelSecondaryMotionChainContacts.h"
 
 #include "foundation/Array.h"
 #include "foundation/Memory.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <limits>
 #include <string.h>
@@ -741,6 +744,115 @@ bool TestRootInsideFirstSpanSolverEndpointOnly()
 }
 
 /**
+ * root内のfirst span例外はguard半径ではなく元の身体形状で判定する。
+ */
+bool TestGuardedRootInsideUsesOriginalShapeRule()
+{
+    const FModelSecondaryMotionCollisionShape rawSphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 1.0f);
+    FModelSecondaryMotionStepShapeCache cache(&rawSphere, 1);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || view.count != 1 || !view.prepared)
+        return Fail("could not prepare guarded root-exception sphere");
+    const double storedThreshold = static_cast<double>(view.expanded[0].radius) - fmax(static_cast<double>(view.expanded[0].radius) * 1.0e-3, static_cast<double>(view.expanded[0].radius) * std::numeric_limits<double>::epsilon() * 64.0);
+    if (!view.prepared[0].hasRootContactOverride || view.prepared[0].rootContactThreshold != storedThreshold || !(view.prepared[0].radius > view.expanded[0].radius))
+        return Fail("step cache did not preserve the pre-guard root threshold alongside the expanded shape");
+
+    const gk::FVector3d shallowRoot = Point(0.9995, 0.0, 0.0);
+    const double rawTolerance = static_cast<double>(rawSphere.radius) * 0.001;
+    const double guardedTolerance = view.prepared[0].tolerance;
+    const double shallowDistance = Distance(shallowRoot, Point(0.0, 0.0, 0.0));
+    if (!(shallowDistance >= static_cast<double>(rawSphere.radius) - rawTolerance) || !(shallowDistance < static_cast<double>(view.prepared[0].radius) - guardedTolerance))
+        return Fail("root-exception fixture did not straddle raw and guarded inside thresholds");
+
+    const gk::FVector3d inwardPositions[2] = { shallowRoot, Point(-1.1, 0.0, 0.0) };
+    if (SegmentDistance(inwardPositions[0], inwardPositions[1], Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) >= static_cast<double>(rawSphere.radius) - rawTolerance)
+        return Fail("independent oracle did not confirm the inward span crosses the raw sphere");
+    if (CheckSecondaryMotionContacts(&rawSphere, 1, inwardPositions, 2, error))
+        return Fail("raw contact checker accepted an inward crossing from a shallow root");
+    if (CheckPreparedSecondaryMotionContacts(view.prepared, view.count, inwardPositions, 2, error, 1.0))
+        return Fail("guarded prepared checker incorrectly exempted an inward span at a shallow raw root");
+
+    const gk::FVector3d outwardPositions[2] = { shallowRoot, Point(1.1, 0.0, 0.0) };
+    if (SegmentDistance(outwardPositions[0], outwardPositions[1], Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) < static_cast<double>(rawSphere.radius) - rawTolerance)
+        return Fail("independent oracle found an outward span penetrating beyond the raw tolerance shell");
+    if (!CheckSecondaryMotionContacts(&rawSphere, 1, outwardPositions, 2, error) || !CheckPreparedSecondaryMotionContacts(view.prepared, view.count, outwardPositions, 2, error, 1.0))
+        return Fail("outward shallow-root span did not retain the original tolerance-shell behavior");
+
+    const gk::FVector3d deepPositions[2] = { Point(0.0, 0.0, 0.0), Point(-1.1, 0.0, 0.0) };
+    if (!CheckPreparedSecondaryMotionContacts(view.prepared, view.count, deepPositions, 2, error, 1.0))
+        return Fail("deep-inside root no longer exempts its first span");
+    return true;
+}
+
+/**
+ * 移動形状の中間半径を使い、root例外を最初の節にだけ適用する。
+ */
+bool TestInterpolatedRadiusRootOverrideAndSegmentRole()
+{
+    const FModelSecondaryMotionCollisionShape previousSphere = Shape({ -0.5f, 0.0f, 0.0f }, { -0.5f, 0.0f, 0.0f }, 0.5f);
+    const FModelSecondaryMotionCollisionShape currentSphere = Shape({ 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 1.5f);
+    const double weight = 0.5;
+    const FModelSecondaryMotionCollisionShape midpointSphere = Shape({ static_cast<float>(static_cast<double>(previousSphere.start.x) + (static_cast<double>(currentSphere.start.x) - previousSphere.start.x) * weight), 0.0f, 0.0f }, { static_cast<float>(static_cast<double>(previousSphere.end.x) + (static_cast<double>(currentSphere.end.x) - previousSphere.end.x) * weight), 0.0f, 0.0f }, static_cast<float>(static_cast<double>(previousSphere.radius) + (static_cast<double>(currentSphere.radius) - previousSphere.radius) * weight));
+    const float pointRadius = 0.1f;
+    FModelSecondaryMotionStepShapeCache cache(&midpointSphere, 1);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    if (!cache.Get(pointRadius, view, error) || view.count != 1 || !view.prepared)
+        return Fail("could not prepare the interpolated body sphere and point radius");
+
+    const double expandedRadius = static_cast<double>(view.expanded[0].radius);
+    const double expectedThreshold = expandedRadius - fmax(expandedRadius * 1.0e-3, expandedRadius * std::numeric_limits<double>::epsilon() * 64.0);
+    const double guardedThreshold = view.prepared[0].radius - view.prepared[0].tolerance;
+    if (fabs(static_cast<double>(view.expanded[0].radius) - (static_cast<double>(midpointSphere.radius) + pointRadius)) > 1.0e-6 || !view.prepared[0].hasRootContactOverride || view.prepared[0].rootContactThreshold != expectedThreshold || view.prepared[0].rootContactThreshold >= guardedThreshold)
+        return Fail("interpolated radius or point-radius expansion was not retained in the root threshold");
+
+    const gk::FVector3d shallowRoot = Point(expectedThreshold + (guardedThreshold - expectedThreshold) * 0.5, 0.0, 0.0);
+    const gk::FVector3d inwardPositions[2] = { shallowRoot, Point(-1.2, 0.0, 0.0) };
+    const gk::FVector3d outwardPositions[2] = { shallowRoot, Point(1.3, 0.0, 0.0) };
+    if (!(Distance(shallowRoot, Point(0.0, 0.0, 0.0)) > expectedThreshold) || !(Distance(shallowRoot, Point(0.0, 0.0, 0.0)) < guardedThreshold))
+        return Fail("interpolated-radius fixture did not place root between original and guarded thresholds");
+    if (SegmentDistance(inwardPositions[0], inwardPositions[1], Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) >= expectedThreshold || CheckSecondaryMotionContacts(view.expanded, view.count, inwardPositions, 2, error))
+        return Fail("independent oracle did not detect the inward span crossing the interpolated body shape");
+    if (SegmentDistance(outwardPositions[0], outwardPositions[1], Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) < expectedThreshold || !CheckSecondaryMotionContacts(view.expanded, view.count, outwardPositions, 2, error) || !CheckPreparedSecondaryMotionContacts(view.prepared, view.count, outwardPositions, 2, error, 1.0))
+        return Fail("outward shallow-root span did not preserve the interpolated shape's original tolerance shell");
+    if (CheckPreparedSecondaryMotionContacts(view.prepared, view.count, inwardPositions, 2, error, 1.0))
+        return Fail("prepared checker exempted an inward span at a shallow root for a moving shape");
+
+    gk::FVector3d firstDirection = Point(1.0, 0.0, 0.0);
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, shallowRoot, 0.2, true, Point(1.0, 0.0, 0.0), 1.0, firstDirection, error) || !error.Empty())
+        return Fail("first segment did not allow an outward direction from the original tolerance shell");
+    const gk::FVector3d firstEndpoint = Point(shallowRoot.value[0] + firstDirection.value[0] * 0.2, shallowRoot.value[1] + firstDirection.value[1] * 0.2, shallowRoot.value[2] + firstDirection.value[2] * 0.2);
+    if (SegmentDistance(shallowRoot, firstEndpoint, Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) < expectedThreshold)
+        return Fail("first-segment direction entered the interpolated body beyond its original tolerance shell");
+
+    const gk::FVector3d inwardReference = Point(-1.0, 0.0, 0.0);
+    gk::FVector3d inwardDirection = inwardReference;
+    const gk::FVector3d inwardDirectionBefore = inwardDirection;
+    if (FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, shallowRoot, 0.2, true, inwardReference, 1.0, inwardDirection, error) || !error.Empty() || memcmp(&inwardDirection, &inwardDirectionBefore, sizeof(inwardDirection)) != 0)
+        return Fail("first-segment direction accepted an inward crossing or changed its output on no solution");
+
+    gk::FVector3d ordinaryDirection = Point(1.0, 0.0, 0.0);
+    const gk::FVector3d ordinaryDirectionBefore = ordinaryDirection;
+    if (FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, shallowRoot, 0.2, false, Point(1.0, 0.0, 0.0), 1.0, ordinaryDirection, error) || !error.Empty() || memcmp(&ordinaryDirection, &ordinaryDirectionBefore, sizeof(ordinaryDirection)) != 0)
+        return Fail("a non-root segment used the root exception instead of the ordinary tolerance");
+
+    const gk::FVector3d outsideRoot = Point(guardedThreshold + 0.01, 0.0, 0.0);
+    gk::FVector3d outsideDirection = Point(1.0, 0.0, 0.0);
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, outsideRoot, 0.1, false, Point(1.0, 0.0, 0.0), 1.0, outsideDirection, error) || !error.Empty())
+        return Fail("a non-root segment outside the guard margin was rejected");
+    const gk::FVector3d outsideEndpoint = Point(outsideRoot.value[0] + outsideDirection.value[0] * 0.1, outsideRoot.value[1] + outsideDirection.value[1] * 0.1, outsideRoot.value[2] + outsideDirection.value[2] * 0.1);
+    if (SegmentDistance(outsideRoot, outsideEndpoint, Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) < guardedThreshold)
+        return Fail("ordinary non-root direction crossed the independent guarded-body clearance");
+
+    const gk::FVector3d deepRoot = Point(0.0, 0.0, 0.0);
+    const gk::FVector3d deepPositions[2] = { deepRoot, Point(-1.2, 0.0, 0.0) };
+    if (!CheckPreparedSecondaryMotionContacts(view.prepared, view.count, deepPositions, 2, error, 1.0) || SegmentDistance(deepPositions[0], deepPositions[1], Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) >= expectedThreshold)
+        return Fail("deep-root first-span exemption did not preserve its documented behavior");
+    return true;
+}
+
+/**
  * 重なった球と短いcapsuleの接触を解き、解けない複数形状ではstateを保つ。
  */
 bool TestMultipleContacts()
@@ -1127,6 +1239,542 @@ bool TestHumanoidContactDiagnosticFixture()
         if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
             return Fail("humanoid contact fixture violated a segment length or bend limit");
     }
+    return true;
+}
+
+/**
+ * 実機で記録したSkirt鎖の失敗入力を再生し、接触と鎖制約の両立を確認する。
+ */
+bool TestRecordedSkinningChainContact()
+{
+    const gk::Vec3 targets[5] = { { 0.0137152309f, 0.990111709f, 0.798526406f }, { 0.0168546848f, 0.896700263f, 0.803701699f }, { 0.0189411007f, 0.834534466f, 0.807320952f }, { 0.0201907903f, 0.798206449f, 0.807601452f }, { 0.0214216802f, 0.763258517f, 0.806143463f } };
+    const gk::Vec3 initialPositions[5] = { { 0.0129065318f, 0.987856388f, 0.777404189f }, { -0.0227742549f, 0.909798503f, 0.814769804f }, { -0.0000708915395f, 0.881434023f, 0.865386486f }, { 0.0160481185f, 0.864139974f, 0.83777374f }, { 0.0228332393f, 0.8393085f, 0.814059615f } };
+    const gk::Vec3 initialVelocities[5] = { { 0.0565983541f, 0.0545060635f, 1.37712121f }, { 0.112575158f, 0.0744315684f, 1.47459412f }, { -1.29270697f, -0.0752636492f, 2.3835516f }, { -0.397095621f, 0.07214275f, 2.56566334f }, { 0.113758825f, 0.516395569f, 2.42391777f } };
+    const gk::Vec3 previousTargets[5] = { { 0.0129065318f, 0.987856388f, 0.777404189f }, { 0.0163068697f, 0.894374311f, 0.780851007f }, { 0.0185674485f, 0.832158327f, 0.78331995f }, { 0.019913232f, 0.79583472f, 0.782928467f }, { 0.0212312136f, 0.760922909f, 0.780824244f } };
+    const FModelSecondaryMotionCollisionShape previousShapes[8] = { Shape({ 0.0161567889f, 0.923788786f, 0.714889944f }, { 0.0161567889f, 0.923788786f, 0.714889944f }, 0.108000003f), Shape({ 0.0141029572f, 0.977692306f, 0.719482958f }, { 0.0105709173f, 1.08754122f, 0.724036276f }, 0.118000008f), Shape({ 0.0102808857f, 1.09656143f, 0.724410117f }, { 0.00837408658f, 1.21642244f, 0.670283556f }, 0.118000008f), Shape({ 0.0113126487f, 1.35527658f, 0.627325535f }, { 0.0113126487f, 1.35527658f, 0.627325535f }, 0.128000006f), Shape({ 0.0805434957f, 0.873250127f, 0.700870812f }, { 0.107641831f, 0.703914762f, 0.822078109f }, 0.088000007f), Shape({ -0.0457378179f, 0.874792814f, 0.705248654f }, { -0.0765114352f, 0.746733546f, 0.868814588f }, 0.0879999995f), Shape({ 0.112692989f, 0.654587448f, 0.821263969f }, { 0.119289987f, 0.441653967f, 0.624500692f }, 0.0780000016f), Shape({ -0.0841958374f, 0.699825048f, 0.880942345f }, { -0.110519975f, 0.445947409f, 0.743272007f }, 0.0780000016f) };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0169844441f, 0.924896896f, 0.737210929f }, { 0.0169844441f, 0.924896896f, 0.737210929f }, 0.108000003f), Shape({ 0.0150609855f, 0.978881001f, 0.740805805f }, { 0.0114761218f, 1.08873475f, 0.745200336f }, 0.118000008f), Shape({ 0.0111817531f, 1.09775531f, 0.745561182f }, { 0.00944366772f, 1.21850741f, 0.693446755f }, 0.118000008f), Shape({ 0.0124584585f, 1.35788345f, 0.652506113f }, { 0.0124584585f, 1.35788345f, 0.652506113f }, 0.128000006f), Shape({ 0.0808926225f, 0.874606252f, 0.725257754f }, { 0.104470044f, 0.712119758f, 0.856186211f }, 0.088000007f), Shape({ -0.0448668823f, 0.877693534f, 0.729560435f }, { -0.0754696205f, 0.765339732f, 0.904317677f }, 0.0879999995f), Shape({ 0.109497063f, 0.663221359f, 0.857721746f }, { 0.121347837f, 0.443760276f, 0.668522418f }, 0.0780000016f), Shape({ -0.0835563317f, 0.720323741f, 0.919595659f }, { -0.114035763f, 0.460263878f, 0.794936776f }, 0.0780000016f) };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.frequencyHz = 5.0f;
+    settings.dampingRatio = 0.800000012f;
+    settings.maxAngleDegrees = 60.0f;
+    settings.gravity = { 0.0f, -1.0f, 0.0f };
+    settings.windAcceleration = { 0.0f, 0.0f, 0.0f };
+    settings.endOffset = { 0.0f, 0.0350000001f, 0.0f };
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 32;
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 5, state, error))
+        return Fail(error.CStr());
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        state.points.At(index).position = initialPositions[index];
+        state.points.At(index).velocity = initialVelocities[index];
+        state.previousTargets.At(index) = previousTargets[index];
+    }
+
+    if (!StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f))
+        return Fail(error.CStr());
+    if (state.points.Count() != 5 || state.previousTargets.Count() != 5 || !IsFinite(state))
+        return Fail("recorded skinning chain returned an invalid state size or non-finite value");
+    if (fabs(state.points.At(0).position.x - targets[0].x) > 1.0e-7f || fabs(state.points.At(0).position.y - targets[0].y) > 1.0e-7f || fabs(state.points.At(0).position.z - targets[0].z) > 1.0e-7f)
+        return Fail("recorded skinning chain moved its pinned root");
+    gk::FVector3d positions[5]{};
+    for (uint32_t index = 0; index < 5; ++index)
+        positions[index] = ToDouble(state.points.At(index).position);
+    if (!CheckSecondaryMotionContacts(currentShapes, 8, positions, 5, error))
+        return Fail("recorded skinning chain still penetrates a current body shape");
+    for (uint32_t index = 1; index < 5; ++index)
+    {
+        const gk::FVector3d targetAxis = Point(static_cast<double>(targets[index].x) - targets[index - 1].x, static_cast<double>(targets[index].y) - targets[index - 1].y, static_cast<double>(targets[index].z) - targets[index - 1].z);
+        const gk::FVector3d solvedAxis = Point(positions[index].value[0] - positions[index - 1].value[0], positions[index].value[1] - positions[index - 1].value[1], positions[index].value[2] - positions[index - 1].value[2]);
+        const double targetLength = Distance(Point(0.0, 0.0, 0.0), targetAxis);
+        const double solvedLength = Distance(Point(0.0, 0.0, 0.0), solvedAxis);
+        if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            return Fail("recorded skinning chain violated a target bone length or bend limit");
+    }
+
+    if (!StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f) || !IsFinite(state))
+        return Fail("recorded skinning chain could not complete its following update");
+    FModelSecondaryMotionChainState snapshot;
+    if (!CopyState(state, snapshot))
+        return Fail("could not snapshot the recorded skinning chain before invalid input");
+    gk::Vec3 invalidTargets[5];
+    memcpy(invalidTargets, targets, sizeof(invalidTargets));
+    invalidTargets[2].z = std::numeric_limits<float>::quiet_NaN();
+    if (StepSecondaryMotionChainWithCollisions(invalidTargets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f) || error.Empty() || !SameState(state, snapshot))
+        return Fail("invalid follow-up input changed the recorded skinning chain state");
+    return true;
+}
+
+/**
+ * 実機frame 98で失敗したSkirt鎖を、記録された接触形状と物理状態で再生する。
+ */
+bool TestRecordedSkinningChainFrame98Contact()
+{
+    const gk::Vec3 targets[5] = { { 0.0522558875f, 1.4412837f, 2.16266918f }, { 0.0185298193f, 1.35360909f, 2.17676449f }, { -0.00116496801f, 1.29468632f, 2.18176365f }, { -0.0131363347f, 1.26076651f, 2.182899f }, { -0.0257917773f, 1.22813702f, 2.1826458f } };
+    const gk::Vec3 initialPositions[5] = { { 0.0516432561f, 1.44268143f, 2.15808702f }, { 0.0780251995f, 1.39041913f, 2.23289084f }, { 0.0803740546f, 1.3617667f, 2.28819275f }, { 0.0943295062f, 1.33179021f, 2.27398658f }, { 0.0928504243f, 1.31215811f, 2.24505043f } };
+    const gk::Vec3 initialVelocities[5] = { { 0.0372096151f, -0.0788068771f, 0.288004875f }, { -0.0189410541f, -0.581553638f, -0.0235349275f }, { 1.00490355f, 2.85015965f, 3.75069356f }, { -0.137468517f, 2.49641037f, 2.48658514f }, { -0.243808091f, 2.53369212f, 2.46474957f } };
+    const gk::Vec3 previousTargets[5] = { { 0.0516432561f, 1.44268143f, 2.15808702f }, { 0.0187839605f, 1.35475314f, 2.17264223f }, { -0.000312760036f, 1.29566169f, 2.17796087f }, { -0.0119336778f, 1.26162672f, 2.1792779f }, { -0.0242472049f, 1.22886574f, 2.17919564f } };
+    const FModelSecondaryMotionCollisionShape previousShapes[8] = { Shape({ 0.0160482898f, 1.38302505f, 2.08632016f }, { 0.0160482898f, 1.38302505f, 2.08632016f }, 0.108000003f), Shape({ 0.0343445502f, 1.43385482f, 2.08985329f }, { 0.0796978548f, 1.53283799f, 2.10551858f }, 0.118000008f), Shape({ 0.0834220126f, 1.54096603f, 2.10680485f }, { 0.104643799f, 1.67077184f, 2.10651708f }, 0.118000008f), Shape({ 0.166627616f, 1.79795384f, 2.12363029f }, { 0.166627616f, 1.79795384f, 2.12363029f }, 0.128000006f), Shape({ 0.0369305015f, 1.32969368f, 2.02564788f }, { 0.160042509f, 1.16477537f, 2.06742549f }, 0.088000007f), Shape({ -0.040792156f, 1.35613954f, 2.1353302f }, { 0.033236295f, 1.24326432f, 2.29619956f }, 0.088000007f), Shape({ 0.165427089f, 1.11501873f, 2.06175065f }, { 0.0256166663f, 0.89105165f, 1.94178486f }, 0.0780000016f), Shape({ 0.0325165801f, 1.19824207f, 2.32663918f }, { -0.0898085609f, 0.938934922f, 2.37018633f }, 0.0780000016f) };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0157923214f, 1.38247502f, 2.09063911f }, { 0.0157923214f, 1.38247502f, 2.09063911f }, 0.108000003f), Shape({ 0.0346308611f, 1.43308699f, 2.09444022f }, { 0.0811000615f, 1.53149605f, 2.11044836f }, 0.118000001f), Shape({ 0.0849158466f, 1.53957689f, 2.11176276f }, { 0.107534401f, 1.66914582f, 2.11121702f }, 0.118000001f), Shape({ 0.169579446f, 1.79640996f, 2.12838793f }, { 0.169579446f, 1.79640996f, 2.12838793f }, 0.128000006f), Shape({ 0.0364473723f, 1.32969165f, 2.02937508f }, { 0.161756068f, 1.16576648f, 2.06844211f }, 0.088000007f), Shape({ -0.0406854339f, 1.35646403f, 2.1398735f }, { 0.0360126197f, 1.24598169f, 2.30115294f }, 0.0879999995f), Shape({ 0.168105498f, 1.11549938f, 2.06291747f }, { 0.0341988541f, 0.885049999f, 1.94862795f }, 0.0780000016f), Shape({ 0.035163451f, 1.20142019f, 2.33028865f }, { -0.0925733745f, 0.942837358f, 2.36059022f }, 0.0780000016f) };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.frequencyHz = 5.0f;
+    settings.dampingRatio = 0.800000012f;
+    settings.maxAngleDegrees = 60.0f;
+    settings.endOffset = { 0.0f, 0.0350000001f, 0.0f };
+    settings.gravity = { 0.0f, -1.0f, 0.0f };
+    settings.windAcceleration = { 0.0f, 0.0f, 0.0f };
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 32;
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 5, state, error))
+        return Fail(error.CStr());
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        state.points.At(index).position = initialPositions[index];
+        state.points.At(index).velocity = initialVelocities[index];
+        state.previousTargets.At(index) = previousTargets[index];
+    }
+    if (!StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f))
+        return Fail(error.CStr());
+    if (state.points.Count() != 5 || state.previousTargets.Count() != 5 || !IsFinite(state))
+        return Fail("frame 98 contact result has an invalid state size or non-finite value");
+    if (fabs(state.points.At(0).position.x - targets[0].x) > 1.0e-7f || fabs(state.points.At(0).position.y - targets[0].y) > 1.0e-7f || fabs(state.points.At(0).position.z - targets[0].z) > 1.0e-7f)
+        return Fail("frame 98 contact result moved its pinned root");
+    gk::FVector3d positions[5]{};
+    for (uint32_t index = 0; index < 5; ++index)
+        positions[index] = ToDouble(state.points.At(index).position);
+    if (!CheckSecondaryMotionContacts(currentShapes, 8, positions, 5, error))
+        return Fail("frame 98 contact result still penetrates a body shape");
+    for (uint32_t index = 1; index < 5; ++index)
+    {
+        const gk::FVector3d targetAxis = Point(static_cast<double>(targets[index].x) - targets[index - 1].x, static_cast<double>(targets[index].y) - targets[index - 1].y, static_cast<double>(targets[index].z) - targets[index - 1].z);
+        const gk::FVector3d solvedAxis = Point(positions[index].value[0] - positions[index - 1].value[0], positions[index].value[1] - positions[index - 1].value[1], positions[index].value[2] - positions[index - 1].value[2]);
+        const double targetLength = Distance(Point(0.0, 0.0, 0.0), targetAxis);
+        const double solvedLength = Distance(Point(0.0, 0.0, 0.0), solvedAxis);
+        if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            return Fail("frame 98 contact result violated a target bone length or bend limit");
+    }
+    return true;
+}
+
+/**
+ * 実機frame 33で失敗したSkirt鎖を、記録された形状とstateで再生する。
+ */
+bool TestRecordedSkinningChainFrame33Contact()
+{
+    const gk::Vec3 targets[5] = { { 0.0153284529f, 1.0035491f, 0.86382401f }, { 0.0178400464f, 0.91059047f, 0.874535203f }, { 0.0195049793f, 0.848736346f, 0.881838202f }, { 0.0205464922f, 0.812482476f, 0.884275615f }, { 0.0216130223f, 0.777504265f, 0.884896576f } };
+    const gk::Vec3 initialPositions[5] = { { 0.0147370044f, 0.997879684f, 0.842226923f }, { -0.0393578075f, 0.936547935f, 0.887773752f }, { 0.00304610864f, 0.910022438f, 0.924926758f }, { 0.0250864569f, 0.881624222f, 0.919529319f }, { 0.0526653565f, 0.864714682f, 0.906170011f } };
+    const gk::Vec3 initialVelocities[5] = { { 0.0299438462f, 0.268063545f, 1.35918617f }, { -0.57809186f, 0.916440845f, 1.58825791f }, { 0.465206921f, 1.56869781f, 1.06432712f }, { -0.33724457f, 0.670648634f, 1.3349694f }, { -0.416152656f, 0.608715534f, 1.24426448f } };
+    const gk::Vec3 previousTargets[5] = { { 0.0147370044f, 0.997879684f, 0.842226923f }, { 0.0174910463f, 0.904708147f, 0.85081929f }, { 0.0193186607f, 0.842708409f, 0.856712461f }, { 0.0204412974f, 0.806410849f, 0.858323574f }, { 0.021572737f, 0.771429598f, 0.858147264f } };
+    const FModelSecondaryMotionCollisionShape previousShapes[8] = { Shape({ 0.0185930934f, 0.930477738f, 0.783359647f }, { 0.0185930934f, 0.930477738f, 0.783359647f }, 0.108000003f), Shape({ 0.0168055519f, 0.98456198f, 0.784973383f }, { 0.0131140389f, 1.09440768f, 0.789476871f }, 0.118000008f), Shape({ 0.0128109129f, 1.10342765f, 0.789846659f }, { 0.0115524065f, 1.22612667f, 0.742482424f }, 0.118000008f), Shape({ 0.0149520896f, 1.36661971f, 0.706597328f }, { 0.0149520896f, 1.36661971f, 0.706597328f }, 0.128000006f), Shape({ 0.0825759694f, 0.881251216f, 0.775822043f }, { 0.104529165f, 0.735094666f, 0.925007582f }, 0.088000007f), Shape({ -0.0429687314f, 0.887203038f, 0.778638601f }, { -0.0738526136f, 0.809302807f, 0.971194446f }, 0.0879999995f), Shape({ 0.109745972f, 0.687393606f, 0.931323588f }, { 0.125962645f, 0.454058409f, 0.759883642f }, 0.0780000016f), Shape({ -0.0825036764f, 0.768381655f, 0.993177235f }, { -0.118000418f, 0.494211733f, 0.905594051f }, 0.0780000016f) };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0195087641f, 0.934830189f, 0.806522369f }, { 0.0195087641f, 0.934830189f, 0.806522369f }, 0.108000003f), Shape({ 0.0178112816f, 0.98894006f, 0.806902885f }, { 0.0139207728f, 1.09878945f, 0.811141849f }, 0.118000008f), Shape({ 0.0136013068f, 1.10780966f, 0.81148988f }, { 0.0124743786f, 1.23135614f, 0.76637888f }, 0.118000001f), Shape({ 0.0159734208f, 1.37230504f, 0.733028591f }, { 0.0159734208f, 1.37230504f, 0.733028591f }, 0.128000006f), Shape({ 0.083589755f, 0.885942757f, 0.801124156f }, { 0.105068296f, 0.747396111f, 0.95746839f }, 0.088000007f), Shape({ -0.0418595113f, 0.893231034f, 0.802915514f }, { -0.0727071017f, 0.831402183f, 1.00122237f }, 0.0879999995f), Shape({ 0.110421143f, 0.70020175f, 0.965985656f }, { 0.128692657f, 0.459904402f, 0.804668188f }, 0.0780000016f), Shape({ -0.081521675f, 0.792448759f, 1.02647865f }, { -0.11865557f, 0.512254894f, 0.961575389f }, 0.0780000016f) };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.frequencyHz = 5.0f;
+    settings.dampingRatio = 0.800000012f;
+    settings.maxAngleDegrees = 60.0f;
+    settings.endOffset = { 0.0f, 0.0350000001f, 0.0f };
+    settings.gravity = { 0.0f, -1.0f, 0.0f };
+    settings.windAcceleration = { 0.0f, 0.0f, 0.0f };
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 32;
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 5, state, error))
+        return Fail(error.CStr());
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        state.points.At(index).position = initialPositions[index];
+        state.points.At(index).velocity = initialVelocities[index];
+        state.previousTargets.At(index) = previousTargets[index];
+    }
+    if (!StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f))
+        return Fail(error.CStr());
+    if (state.points.Count() != 5 || state.previousTargets.Count() != 5 || !IsFinite(state))
+        return Fail("frame 33 contact result has an invalid state size or non-finite value");
+    if (fabs(state.points.At(0).position.x - targets[0].x) > 1.0e-7f || fabs(state.points.At(0).position.y - targets[0].y) > 1.0e-7f || fabs(state.points.At(0).position.z - targets[0].z) > 1.0e-7f)
+        return Fail("frame 33 contact result moved its pinned root");
+    gk::FVector3d positions[5]{};
+    for (uint32_t index = 0; index < 5; ++index)
+        positions[index] = ToDouble(state.points.At(index).position);
+    if (!CheckSecondaryMotionContacts(currentShapes, 8, positions, 5, error))
+        return Fail("frame 33 contact result still penetrates a body shape");
+    for (uint32_t index = 1; index < 5; ++index)
+    {
+        const gk::FVector3d targetAxis = Point(static_cast<double>(targets[index].x) - targets[index - 1].x, static_cast<double>(targets[index].y) - targets[index - 1].y, static_cast<double>(targets[index].z) - targets[index - 1].z);
+        const gk::FVector3d solvedAxis = Point(positions[index].value[0] - positions[index - 1].value[0], positions[index].value[1] - positions[index - 1].value[1], positions[index].value[2] - positions[index - 1].value[2]);
+        const double targetLength = Distance(Point(0.0, 0.0, 0.0), targetAxis);
+        const double solvedLength = Distance(Point(0.0, 0.0, 0.0), solvedAxis);
+        if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            return Fail("frame 33 contact result violated a target bone length or bend limit");
+    }
+    return true;
+}
+
+/**
+ * 実機frame 433を60度ではatomicに拒否し、90度では接触と鎖制約を確かめる。
+ */
+bool TestRecordedSkinningChainFrame433Contact()
+{
+    const gk::Vec3 targets[5] = { { 0.0524181724f, 1.30573833f, 2.30838704f }, { 0.025579948f, 1.21521747f, 2.31881022f }, { 0.0101585453f, 1.15487289f, 2.32115054f }, { 0.000517625362f, 1.12020171f, 2.32080936f }, { -0.00999284349f, 1.08685613f, 2.31922412f } };
+    const gk::Vec3 initialPositions[5] = { { 0.0528368317f, 1.31087661f, 2.30467749f }, { 0.113033332f, 1.2387743f, 2.29051375f }, { 0.0827215463f, 1.18431616f, 2.28999019f }, { 0.0581187718f, 1.1581105f, 2.29175806f }, { 0.02991529f, 1.13859797f, 2.29873872f } };
+    const gk::Vec3 initialVelocities[5] = { { -0.032729432f, -0.335047245f, 0.241670609f }, { 0.228562832f, -0.0965973064f, 0.0942454189f }, { 0.0898612887f, -0.0225474723f, 0.170084745f }, { 0.224670768f, -0.162892386f, 0.0765588284f }, { 0.260088593f, -0.178806677f, 0.183034956f } };
+    const gk::Vec3 previousTargets[5] = { { 0.0528368317f, 1.31087661f, 2.30467749f }, { 0.0256179348f, 1.22057271f, 2.31596041f }, { 0.00996227562f, 1.16031396f, 2.31888461f }, { 0.000193927262f, 1.12567675f, 2.31887579f }, { -0.0104337437f, 1.09235489f, 2.31760502f } };
+    const FModelSecondaryMotionCollisionShape previousShapes[8] = { Shape({ 0.0149547318f, 1.25374651f, 2.23203135f }, { 0.0149547318f, 1.25374651f, 2.23203135f }, 0.108000003f), Shape({ 0.0308959652f, 1.3051995f, 2.23745108f }, { 0.0840883404f, 1.39868951f, 2.26047683f }, 0.118000008f), Shape({ 0.0884561986f, 1.40636647f, 2.26236749f }, { 0.125415996f, 1.5323534f, 2.27019453f }, 0.118000001f), Shape({ 0.157499328f, 1.67349601f, 2.2686193f }, { 0.157499328f, 1.67349601f, 2.2686193f }, 0.128000006f), Shape({ 0.0382152349f, 1.20976925f, 2.16110086f }, { 0.202875867f, 1.08058834f, 2.14380431f }, 0.088000007f), Shape({ -0.0294418968f, 1.23463035f, 2.28405356f }, { 0.11220938f, 1.21254826f, 2.43750477f }, 0.088000007f), Shape({ 0.218928427f, 1.03340936f, 2.13124776f }, { 0.117491439f, 0.778664827f, 2.0368247f }, 0.0780000016f), Shape({ 0.123567298f, 1.18290484f, 2.4528687f }, { 0.0126074441f, 0.930764139f, 2.36224341f }, 0.0780000016f) };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0144355483f, 1.24925363f, 2.23529005f }, { 0.0144355483f, 1.24925363f, 2.23529005f }, 0.108000003f), Shape({ 0.0302106198f, 1.30070412f, 2.24119711f }, { 0.0841112509f, 1.39336157f, 2.2658813f }, 0.118000008f), Shape({ 0.0885372683f, 1.4009701f, 2.26790833f }, { 0.12732403f, 1.52617562f, 2.27882433f }, 0.118000008f), Shape({ 0.159450129f, 1.66695678f, 2.2802732f }, { 0.159450129f, 1.66695678f, 2.2802732f }, 0.128000006f), Shape({ 0.037584126f, 1.20612586f, 2.16409612f }, { 0.202856869f, 1.07772315f, 2.14684272f }, 0.088000007f), Shape({ -0.0294804778f, 1.23011863f, 2.28721166f }, { 0.114214748f, 1.21185112f, 2.43925762f }, 0.0879999995f), Shape({ 0.218926534f, 1.03082323f, 2.13397288f }, { 0.116700955f, 0.777564347f, 2.03645468f }, 0.0780000016f), Shape({ 0.126307994f, 1.18245208f, 2.45496225f }, { 0.0192711167f, 0.926729083f, 2.36982226f }, 0.0780000016f) };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.frequencyHz = 5.0f;
+    settings.dampingRatio = 0.800000012f;
+    settings.maxAngleDegrees = 60.0f;
+    settings.gravity = { 0.0f, -1.0f, 0.0f };
+    settings.endOffset = { 0.0f, 0.0350000001f, 0.0f };
+    settings.windAcceleration = { 0.0f, 0.0f, 0.0f };
+    settings.teleportDistance = 0.5f;
+    settings.constraintIterations = 32;
+    FModelSecondaryMotionChainState state;
+    FModelSecondaryMotionChainState snapshot;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 5, state, error))
+        return Fail(error.CStr());
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        state.points.At(index).position = initialPositions[index];
+        state.points.At(index).velocity = initialVelocities[index];
+        state.previousTargets.At(index) = previousTargets[index];
+    }
+    if (!CopyState(state, snapshot))
+        return Fail("could not snapshot the recorded frame 433 state before its 60-degree attempt");
+    if (StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f) || error.Empty() || !SameState(state, snapshot))
+        return Fail("frame 433 60-degree solve succeeded or changed state after failing to find a candidate");
+    settings.maxAngleDegrees = 90.0f;
+    error.Clear();
+    if (!StepSecondaryMotionChainWithCollisions(targets, 5, settings, 0.016666666666666666, previousShapes, currentShapes, 8, state, error, 0.0f))
+        return Fail(error.CStr());
+    if (state.points.Count() != 5 || state.previousTargets.Count() != 5 || !IsFinite(state))
+        return Fail("frame 433 contact result has an invalid state size or non-finite value");
+    if (fabs(state.points.At(0).position.x - targets[0].x) > 1.0e-7f || fabs(state.points.At(0).position.y - targets[0].y) > 1.0e-7f || fabs(state.points.At(0).position.z - targets[0].z) > 1.0e-7f)
+        return Fail("frame 433 contact result moved its pinned root");
+
+    gk::FVector3d positions[5]{};
+    for (uint32_t index = 0; index < 5; ++index)
+        positions[index] = ToDouble(state.points.At(index).position);
+    if (!CheckSecondaryMotionContacts(currentShapes, 8, positions, 5, error))
+        return Fail("frame 433 contact result still penetrates a current body shape");
+    for (uint32_t shapeIndex = 0; shapeIndex < 8; ++shapeIndex)
+    {
+        const double radius = currentShapes[shapeIndex].radius;
+        const double tolerance = fmax(radius * 1.0e-3, radius * std::numeric_limits<double>::epsilon() * 64.0);
+        const double rootDistance = SegmentDistance(positions[0], positions[0], ToDouble(currentShapes[shapeIndex].start), ToDouble(currentShapes[shapeIndex].end));
+        const bool rootInside = rootDistance < radius - tolerance;
+        for (uint32_t pointIndex = 1; pointIndex < 5; ++pointIndex)
+        {
+            const double pointDistance = SegmentDistance(positions[pointIndex], positions[pointIndex], ToDouble(currentShapes[shapeIndex].start), ToDouble(currentShapes[shapeIndex].end));
+            if (pointDistance < radius - tolerance)
+                return Fail("frame 433 result left a free point inside a body shape by the independent distance oracle");
+            if (pointIndex == 1 && rootInside)
+                continue;
+            const double spanDistance = SegmentDistance(positions[pointIndex - 1], positions[pointIndex], ToDouble(currentShapes[shapeIndex].start), ToDouble(currentShapes[shapeIndex].end));
+            if (spanDistance < radius - tolerance)
+                return Fail("frame 433 result left a span inside a body shape by the independent distance oracle");
+        }
+    }
+    for (uint32_t index = 1; index < 5; ++index)
+    {
+        const gk::FVector3d targetAxis = Point(static_cast<double>(targets[index].x) - targets[index - 1].x, static_cast<double>(targets[index].y) - targets[index - 1].y, static_cast<double>(targets[index].z) - targets[index - 1].z);
+        const gk::FVector3d solvedAxis = Point(positions[index].value[0] - positions[index - 1].value[0], positions[index].value[1] - positions[index - 1].value[1], positions[index].value[2] - positions[index - 1].value[2]);
+        const double targetLength = Distance(Point(0.0, 0.0, 0.0), targetAxis);
+        const double solvedLength = Distance(Point(0.0, 0.0, 0.0), solvedAxis);
+        if (!(solvedLength > 0.0) || fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            return Fail("frame 433 contact result violated a target bone length or bend limit");
+    }
+    return true;
+}
+
+/**
+ * frame 33の全節方向を同時に解き、鎖全体の身体接触・長さ・角度を独立に確かめる。
+ */
+bool TestPreparedWholeChainContactsForFrame33()
+{
+    const gk::Vec3 stepTargets[5] = { { 0.015328452922403812f, 1.0035490989685059f, 0.86382400989532471f }, { 0.017840046435594559f, 0.91059046983718872f, 0.8745352029800415f }, { 0.019504979252815247f, 0.84873634576797485f, 0.8818382024765015f }, { 0.02054649218916893f, 0.812482476234436f, 0.8842756152153015f }, { 0.021613022312521935f, 0.7775042653083801f, 0.8848965764045715f } };
+    const gk::FVector3d initialPositions[5] = { Point(0.015328452922403812, 1.0035490989685059, 0.86382400989532471), Point(-0.047302105761660773, 0.95173579704578026, 0.91024748835217639), Point(-0.023339989720381673, 0.92713839793601505, 0.9622361738439259), Point(0.0015777348288604776, 0.91019939287402507, 0.98257200175942239), Point(0.018528778633142357, 0.8912036641876121, 0.95855486778161891) };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0195087641f, 0.934830189f, 0.806522369f }, { 0.0195087641f, 0.934830189f, 0.806522369f }, 0.108000003f), Shape({ 0.0178112816f, 0.98894006f, 0.806902885f }, { 0.0139207728f, 1.09878945f, 0.811141849f }, 0.118000008f), Shape({ 0.0136013068f, 1.10780966f, 0.81148988f }, { 0.0124743786f, 1.23135614f, 0.76637888f }, 0.118000001f), Shape({ 0.0159734208f, 1.37230504f, 0.733028591f }, { 0.0159734208f, 1.37230504f, 0.733028591f }, 0.128000006f), Shape({ 0.083589755f, 0.885942757f, 0.801124156f }, { 0.105068296f, 0.747396111f, 0.95746839f }, 0.088000007f), Shape({ -0.0418595113f, 0.893231034f, 0.802915514f }, { -0.0727071017f, 0.831402183f, 1.00122237f }, 0.0879999995f), Shape({ 0.110421143f, 0.70020175f, 0.965985656f }, { 0.128692657f, 0.459904402f, 0.804668188f }, 0.0780000016f), Shape({ -0.081521675f, 0.792448759f, 1.02647865f }, { -0.11865557f, 0.512254894f, 0.961575389f }, 0.0780000016f) };
+    FModelSecondaryMotionStepShapeCache cache(currentShapes, 8);
+    FModelSecondaryMotionStepShapes view{};
+    gk::Array<gk::FVector3d> positions;
+    gk::Array<FSecondaryMotionReferenceSegment> references;
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || view.count != 8 || !view.prepared || !positions.AppendRange(initialPositions, 5))
+        return Fail("could not prepare frame 33 chain positions and guarded shapes");
+    for (uint32_t index = 1; index < 5; ++index)
+    {
+        FSecondaryMotionReferenceSegment segment{};
+        segment.direction = Point(static_cast<double>(stepTargets[index].x) - stepTargets[index - 1].x, static_cast<double>(stepTargets[index].y) - stepTargets[index - 1].y, static_cast<double>(stepTargets[index].z) - stepTargets[index - 1].z);
+        segment.length = Distance(Point(0.0, 0.0, 0.0), segment.direction);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+            segment.direction.value[axis] /= segment.length;
+        if (!references.Append(segment))
+            return Fail("could not allocate frame 33 reference segments");
+    }
+    const gk::FVector3d rootBefore = positions.At(0);
+    if (!ResolvePreparedSecondaryMotionChainContacts(view.prepared, view.count, references.Data(), references.Count(), 0.5, positions, error, 1.0) || !error.Empty())
+        return Fail(error.Empty() ? "whole-chain direction solve found no frame 33 candidate" : error.CStr());
+    if (positions.Count() != 5 || memcmp(&positions.At(0), &rootBefore, sizeof(rootBefore)) != 0)
+        return Fail("whole-chain direction solve changed its fixed root or point count");
+    for (uint32_t index = 0; index < 5; ++index)
+    {
+        if (!IsFinite(positions.At(index)))
+            return Fail("whole-chain direction solve produced a non-finite position");
+    }
+    if (!CheckPreparedSecondaryMotionContacts(view.prepared, view.count, positions.Data(), positions.Count(), error, 1.0))
+        return Fail("whole-chain direction solve left a guarded shape contact");
+    for (uint32_t shapeIndex = 0; shapeIndex < view.count; ++shapeIndex)
+    {
+        const FPreparedSecondaryMotionCollisionShape& shape = view.prepared[shapeIndex];
+        const bool rootInside = SegmentDistance(positions.At(0), positions.At(0), shape.start, shape.end) + shape.tolerance < shape.radius;
+        for (uint32_t pointIndex = 1; pointIndex < positions.Count(); ++pointIndex)
+        {
+            const double pointDistance = SegmentDistance(positions.At(pointIndex), positions.At(pointIndex), shape.start, shape.end);
+            if (pointDistance + shape.tolerance < shape.radius)
+                return Fail("whole-chain solution left a free point inside a guarded shape by the independent distance oracle");
+            if (pointIndex == 1 && rootInside)
+                continue;
+            const double spanDistance = SegmentDistance(positions.At(pointIndex - 1), positions.At(pointIndex), shape.start, shape.end);
+            if (spanDistance + shape.tolerance < shape.radius)
+                return Fail("whole-chain solution left a free span inside a guarded shape by the independent distance oracle");
+        }
+    }
+    for (uint32_t index = 0; index < references.Count(); ++index)
+    {
+        const gk::FVector3d solvedAxis = Point(positions.At(index + 1).value[0] - positions.At(index).value[0], positions.At(index + 1).value[1] - positions.At(index).value[1], positions.At(index + 1).value[2] - positions.At(index).value[2]);
+        const double solvedLength = Distance(Point(0.0, 0.0, 0.0), solvedAxis);
+        if (fabs(solvedLength - references.At(index).length) > references.At(index).length * 0.001 || Dot(solvedAxis, references.At(index).direction) / solvedLength < 0.5 - 0.001)
+            return Fail("whole-chain direction solve violated its target bone length or 60-degree cone");
+    }
+
+    gk::Array<gk::FVector3d> failureCandidate;
+    gk::Array<gk::FVector3d> failureSnapshot;
+    if (!CopyPositions(positions, failureCandidate) || !CopyPositions(positions, failureSnapshot))
+        return Fail("could not snapshot whole-chain direction failure input");
+    if (ResolvePreparedSecondaryMotionChainContacts(view.prepared, view.count, references.Data(), references.Count(), 1.0, failureCandidate, error, 1.0) || !error.Empty() || !SamePositions(failureCandidate, failureSnapshot))
+        return Fail("infeasible zero-angle whole-chain solve changed positions or reported the wrong status");
+
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    gk::Array<gk::FVector3d> invalidCandidate;
+    gk::Array<gk::FVector3d> invalidSnapshot;
+    if (!CopyPositions(positions, invalidCandidate) || !CopyPositions(positions, invalidSnapshot))
+        return Fail("could not snapshot invalid whole-chain input");
+    invalidCandidate.At(2).value[1] = nan;
+    invalidSnapshot.At(2).value[1] = nan;
+    if (ResolvePreparedSecondaryMotionChainContacts(view.prepared, view.count, references.Data(), references.Count(), 0.5, invalidCandidate, error, 1.0) || error.Empty() || invalidCandidate.Count() != invalidSnapshot.Count() || memcmp(invalidCandidate.Data(), invalidSnapshot.Data(), static_cast<size_t>(invalidCandidate.Count()) * sizeof(gk::FVector3d)) != 0)
+        return Fail("non-finite whole-chain input was accepted or changed positions");
+    if (ResolvePreparedSecondaryMotionChainContacts(view.prepared, view.count, references.Data(), references.Count() - 1u, 0.5, failureCandidate, error, 1.0) || error.Empty() || !SamePositions(failureCandidate, failureSnapshot))
+        return Fail("mismatched whole-chain reference count was accepted or changed positions");
+    if (ResolvePreparedSecondaryMotionChainContacts(nullptr, 1, references.Data(), references.Count(), 0.5, failureCandidate, error, 1.0) || error.Empty() || !SamePositions(failureCandidate, failureSnapshot))
+        return Fail("missing prepared shape data was accepted or changed positions");
+    if (ResolvePreparedSecondaryMotionChainContacts(view.prepared, view.count, references.Data(), references.Count(), 0.5, failureCandidate, error, -0.1) || error.Empty() || !SamePositions(failureCandidate, failureSnapshot))
+        return Fail("invalid whole-chain tolerance was accepted or changed positions");
+
+    gk::Array<gk::FVector3d> emptyShapePositions;
+    gk::Array<gk::FVector3d> emptyShapeSnapshot;
+    if (!CopyPositions(positions, emptyShapePositions) || !CopyPositions(positions, emptyShapeSnapshot))
+        return Fail("could not copy positions for the no-shape whole-chain case");
+    if (!ResolvePreparedSecondaryMotionChainContacts(nullptr, 0, references.Data(), references.Count(), 0.5, emptyShapePositions, error, 1.0) || !error.Empty() || !SamePositions(emptyShapePositions, emptyShapeSnapshot))
+        return Fail("empty shape set changed the whole-chain positions or failed unexpectedly");
+    return true;
+}
+
+/**
+ * frame 98の固定親で、厳密なguard判定と半径許容幅内の候補を分けて調べる。
+ */
+bool TestFrame98DirectionToleranceFraction()
+{
+    const gk::Vec3 targets[2] = { { -0.0131363347f, 1.26076651f, 2.182899f }, { -0.0257917773f, 1.22813702f, 2.1826458f } };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0157923214f, 1.38247502f, 2.09063911f }, { 0.0157923214f, 1.38247502f, 2.09063911f }, 0.108000003f), Shape({ 0.0346308611f, 1.43308699f, 2.09444022f }, { 0.0811000615f, 1.53149605f, 2.11044836f }, 0.118000001f), Shape({ 0.0849158466f, 1.53957689f, 2.11176276f }, { 0.107534401f, 1.66914582f, 2.11121702f }, 0.118000001f), Shape({ 0.169579446f, 1.79640996f, 2.12838793f }, { 0.169579446f, 1.79640996f, 2.12838793f }, 0.128000006f), Shape({ 0.0364473723f, 1.32969165f, 2.02937508f }, { 0.161756068f, 1.16576648f, 2.06844211f }, 0.088000007f), Shape({ -0.0406854339f, 1.35646403f, 2.1398735f }, { 0.0360126197f, 1.24598169f, 2.30115294f }, 0.0879999995f), Shape({ 0.168105498f, 1.11549938f, 2.06291747f }, { 0.0341988541f, 0.885049999f, 1.94862795f }, 0.0780000016f), Shape({ 0.035163451f, 1.20142019f, 2.33028865f }, { -0.0925733745f, 0.942837358f, 2.36059022f }, 0.0780000016f) };
+    const gk::FVector3d parent = Point(0.08720073209638556, 1.3231778912282939, 2.2986010876469303);
+    gk::FVector3d reference = Point(static_cast<double>(targets[1].x) - targets[0].x, static_cast<double>(targets[1].y) - targets[0].y, static_cast<double>(targets[1].z) - targets[0].z);
+    const double length = Distance(Point(0.0, 0.0, 0.0), reference);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        reference.value[axis] /= length;
+    gk::FVector3d candidate = Point(0.62145, -0.77805, 0.091835);
+    FModelSecondaryMotionStepShapeCache cache(currentShapes, 8);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || view.count != 8 || !view.prepared)
+        return Fail("could not prepare guarded frame 98 shapes for direction tolerance checks");
+
+    const gk::FVector3d strictCandidate = candidate;
+    if (FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, parent, length, false, reference, 0.5, candidate, error, 0.0) || !error.Empty() || memcmp(&candidate, &strictCandidate, sizeof(candidate)) != 0)
+        return Fail("frame 98 candidate was accepted by strict guarded-body clearance or changed on no-solution");
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, parent, length, false, reference, 0.5, candidate, error, 1.0) || !error.Empty() || !IsFinite(candidate))
+        return Fail(error.Empty() ? "frame 98 candidate was not found inside the prepared tolerance" : error.CStr());
+
+    const double directionLength = Distance(Point(0.0, 0.0, 0.0), candidate);
+    const gk::FVector3d endpoint = Point(parent.value[0] + candidate.value[0] * length, parent.value[1] + candidate.value[1] * length, parent.value[2] + candidate.value[2] * length);
+    if (fabs(directionLength - 1.0) > 1.0e-8 || Dot(candidate, reference) / directionLength < 0.5 - 0.001 || !CheckPreparedSecondaryMotionFreeSegmentContacts(view.prepared, view.count, parent, endpoint, error, 1.0) || !IsFreeSegmentClear(currentShapes, 8, 0.0f, parent, endpoint))
+        return Fail("frame 98 tolerance candidate violated the guarded tolerance, original shape, length, or cone contract");
+
+    const double invalidFractions[3] = { -0.1, 1.01, std::numeric_limits<double>::quiet_NaN() };
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        gk::FVector3d invalidOutput = strictCandidate;
+        const gk::FVector3d savedOutput = invalidOutput;
+        gk::String diagnostic;
+        if (FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, parent, length, false, reference, 0.5, invalidOutput, diagnostic, invalidFractions[index]) || diagnostic.Empty() || memcmp(&invalidOutput, &savedOutput, sizeof(invalidOutput)) != 0)
+            return Fail("invalid direction tolerance fraction was accepted or changed its output");
+    }
+    return true;
+}
+
+/**
+ * 固定親位置から全身体形状を同時に避ける方向を探し、角度制約と失敗時の出力保持を調べる。
+ */
+bool TestPreparedJointDirectionForRecordedSkinningChain()
+{
+    const gk::Vec3 targets[5] = { { 0.0137152309f, 0.990111709f, 0.798526406f }, { 0.0168546848f, 0.896700263f, 0.803701699f }, { 0.0189411007f, 0.834534466f, 0.807320952f }, { 0.0201907903f, 0.798206449f, 0.807601452f }, { 0.0214216802f, 0.763258517f, 0.806143463f } };
+    const FModelSecondaryMotionCollisionShape currentShapes[8] = { Shape({ 0.0169844441f, 0.924896896f, 0.737210929f }, { 0.0169844441f, 0.924896896f, 0.737210929f }, 0.108000003f), Shape({ 0.0150609855f, 0.978881001f, 0.740805805f }, { 0.0114761218f, 1.08873475f, 0.745200336f }, 0.118000008f), Shape({ 0.0111817531f, 1.09775531f, 0.745561182f }, { 0.00944366772f, 1.21850741f, 0.693446755f }, 0.118000008f), Shape({ 0.0124584585f, 1.35788345f, 0.652506113f }, { 0.0124584585f, 1.35788345f, 0.652506113f }, 0.128000006f), Shape({ 0.0808926225f, 0.874606252f, 0.725257754f }, { 0.104470044f, 0.712119758f, 0.856186211f }, 0.088000007f), Shape({ -0.0448668823f, 0.877693534f, 0.729560435f }, { -0.0754696205f, 0.765339732f, 0.904317677f }, 0.0879999995f), Shape({ 0.109497063f, 0.663221359f, 0.857721746f }, { 0.121347837f, 0.443760276f, 0.668522418f }, 0.0780000016f), Shape({ -0.0835563317f, 0.720323741f, 0.919595659f }, { -0.114035763f, 0.460263878f, 0.794936776f }, 0.0780000016f) };
+    const gk::FVector3d parent = Point(0.011513302372902844, 0.8537709445352083, 0.8582320426416739);
+    const gk::FVector3d targetEnd = Point(targets[4].x, targets[4].y, targets[4].z);
+    const gk::FVector3d targetStart = Point(targets[3].x, targets[3].y, targets[3].z);
+    gk::FVector3d reference = Point(targetEnd.value[0] - targetStart.value[0], targetEnd.value[1] - targetStart.value[1], targetEnd.value[2] - targetStart.value[2]);
+    const double length = Distance(Point(0.0, 0.0, 0.0), reference);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        reference.value[axis] /= length;
+    gk::FVector3d seed = Point(0.02850950543130424 - parent.value[0], 0.8303153472273358 - parent.value[1], 0.838586106831392 - parent.value[2]);
+    const double seedLength = Distance(Point(0.0, 0.0, 0.0), seed);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        seed.value[axis] /= seedLength;
+    const double cosineLimit = cos(60.0 * 3.14159265358979323846 / 180.0);
+    FModelSecondaryMotionStepShapeCache cache(currentShapes, 8);
+    FModelSecondaryMotionStepShapes view{};
+    gk::String error;
+    if (!cache.Get(0.0f, view, error) || view.count != 8 || !view.prepared)
+        return Fail("could not prepare guarded shapes for the recorded direction fixture");
+
+    const gk::FVector3d originalSeed = seed;
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, parent, length, false, reference, cosineLimit, seed, error) || !error.Empty() || !IsFinite(seed))
+        return Fail(error.Empty() ? "joint direction search failed on the recorded feasible tip" : error.CStr());
+    const double directionLength = Distance(Point(0.0, 0.0, 0.0), seed);
+    const gk::FVector3d child = Point(parent.value[0] + seed.value[0] * length, parent.value[1] + seed.value[1] * length, parent.value[2] + seed.value[2] * length);
+    const double cosine = Dot(seed, reference) / directionLength;
+    if (fabs(directionLength - 1.0) > 1.0e-8 || cosine < cosineLimit - 0.001 || !IsFreeSegmentClear(currentShapes, 8, 0.0f, parent, child) || !CheckPreparedSecondaryMotionFreeSegmentContacts(view.prepared, view.count, parent, child, error, 0.0))
+        return Fail("joint direction search did not independently clear every guarded body shape within the length and cone");
+
+    gk::FVector3d clearSeed = seed;
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, parent, length, false, reference, cosineLimit, clearSeed, error) || !error.Empty() || Distance(seed, clearSeed) > 1.0e-10)
+        return Fail("joint direction search changed an already-clear direction");
+
+    const gk::FVector3d root = Point(targets[0].x, targets[0].y, targets[0].z);
+    gk::FVector3d firstReference = Point(static_cast<double>(targets[1].x) - targets[0].x, static_cast<double>(targets[1].y) - targets[0].y, static_cast<double>(targets[1].z) - targets[0].z);
+    const double firstLength = Distance(Point(0.0, 0.0, 0.0), firstReference);
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        firstReference.value[axis] /= firstLength;
+    bool rootInside = false;
+    for (uint32_t shapeIndex = 0; shapeIndex < view.count; ++shapeIndex)
+    {
+        const FPreparedSecondaryMotionCollisionShape& shape = view.prepared[shapeIndex];
+        if (SegmentDistance(root, root, shape.start, shape.end) < shape.radius)
+            rootInside = true;
+    }
+    if (!rootInside)
+        return Fail("recorded first segment did not exercise the root-inside exception");
+    gk::FVector3d firstDirection = reference;
+    if (!FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, root, firstLength, true, firstReference, cosineLimit, firstDirection, error) || !error.Empty())
+        return Fail(error.Empty() ? "joint direction search failed to keep a free first endpoint outside the shapes" : error.CStr());
+    const gk::FVector3d firstChild = Point(root.value[0] + firstDirection.value[0] * firstLength, root.value[1] + firstDirection.value[1] * firstLength, root.value[2] + firstDirection.value[2] * firstLength);
+    bool firstChildClear = true;
+    for (uint32_t shapeIndex = 0; shapeIndex < view.count; ++shapeIndex)
+    {
+        const FPreparedSecondaryMotionCollisionShape& shape = view.prepared[shapeIndex];
+        if (SegmentDistance(firstChild, firstChild, shape.start, shape.end) + 1.0e-10 < shape.radius)
+            firstChildClear = false;
+    }
+    if (!firstChildClear || Dot(firstDirection, firstReference) / Distance(Point(0.0, 0.0, 0.0), firstDirection) < cosineLimit - 0.001)
+        return Fail("root-inside exception did not preserve a clear free endpoint and the reference cone");
+
+    gk::FVector3d impossibleDirection = firstReference;
+    const gk::FVector3d savedImpossibleDirection = impossibleDirection;
+    if (FindPreparedSecondaryMotionCollisionDirection(view.prepared, view.count, root, firstLength, true, firstReference, 1.0, impossibleDirection, error) || !error.Empty() || memcmp(&impossibleDirection, &savedImpossibleDirection, sizeof(impossibleDirection)) != 0)
+        return Fail("infeasible zero-angle direction changed its output or reported the wrong status");
+
+    const auto RejectAtomic = [&](const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& candidateParent, double candidateLength, const gk::FVector3d& candidateReference, double candidateCosine)
+    {
+        gk::FVector3d candidate = originalSeed;
+        const gk::FVector3d saved = candidate;
+        gk::String diagnostic;
+        return !FindPreparedSecondaryMotionCollisionDirection(shapes, shapeCount, candidateParent, candidateLength, false, candidateReference, candidateCosine, candidate, diagnostic) && !diagnostic.Empty() && memcmp(&candidate, &saved, sizeof(candidate)) == 0;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const gk::FVector3d invalidParent = Point(nan, 0.0, 0.0);
+    const gk::FVector3d invalidReference = Point(0.0, 0.0, 0.0);
+    if (!RejectAtomic(nullptr, 1, parent, length, reference, cosineLimit) || !RejectAtomic(view.prepared, 65, parent, length, reference, cosineLimit) || !RejectAtomic(view.prepared, view.count, invalidParent, length, reference, cosineLimit) || !RejectAtomic(view.prepared, view.count, parent, 0.0, reference, cosineLimit) || !RejectAtomic(view.prepared, view.count, parent, length, invalidReference, cosineLimit) || !RejectAtomic(view.prepared, view.count, parent, length, reference, 1.01))
+        return Fail("joint direction search accepted invalid inputs or changed its output on failure");
+
+    gk::FVector3d emptyDirection = originalSeed;
+    if (!FindPreparedSecondaryMotionCollisionDirection(nullptr, 0, parent, length, false, reference, cosineLimit, emptyDirection, error) || !error.Empty() || memcmp(&emptyDirection, &originalSeed, sizeof(emptyDirection)) != 0)
+        return Fail("empty prepared shape set changed the direction or failed unexpectedly");
+    return true;
+}
+
+/**
+ * 非軸参照のcone境界と、球中心からcone内へ抜ける方向を確認する。
+ */
+bool TestJointDirectionNormalizationAndConeBoundaries()
+{
+    const FModelSecondaryMotionCollisionShape farSphere = Shape({ 100.0f, -100.0f, 80.0f }, { 100.0f, -100.0f, 80.0f }, 0.1f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> farPrepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&farSphere, 1, farPrepared, error) || farPrepared.Count() != 1)
+        return Fail("could not prepare a far sphere for cone-boundary checks");
+    const gk::FVector3d references[3] = { Point(0.2672612419124244, -0.5345224838248488, 0.8017837257372732), Point(-0.31234752377721214, 0.875, 0.369958), Point(0.731, 0.221, -0.645) };
+    const double cosineLimits[5] = { -1.0, 0.0, 0.5, 0.7071067811865476, 1.0 };
+    const gk::FVector3d parent = Point(0.17, -0.23, 0.41);
+    for (uint32_t referenceIndex = 0; referenceIndex < 3; ++referenceIndex)
+    {
+        const double referenceLength = Distance(Point(0.0, 0.0, 0.0), references[referenceIndex]);
+        gk::FVector3d normalizedReference = Point(references[referenceIndex].value[0] / referenceLength, references[referenceIndex].value[1] / referenceLength, references[referenceIndex].value[2] / referenceLength);
+        for (uint32_t limitIndex = 0; limitIndex < 5; ++limitIndex)
+        {
+            gk::FVector3d candidate = limitIndex == 4 ? references[referenceIndex] : Point(-3.0 * references[referenceIndex].value[0], -3.0 * references[referenceIndex].value[1], -3.0 * references[referenceIndex].value[2]);
+            if (!FindPreparedSecondaryMotionCollisionDirection(farPrepared.Data(), farPrepared.Count(), parent, 0.75, false, references[referenceIndex], cosineLimits[limitIndex], candidate, error) || !error.Empty() || !IsFinite(candidate))
+            {
+                fprintf(stderr, "cone-boundary case failed: reference=%u cosineIndex=%u cosine=%.17g error=%s\n", referenceIndex, limitIndex, cosineLimits[limitIndex], error.CStr());
+                return Fail(error.Empty() ? "non-axis direction failed to normalize inside a valid cone" : error.CStr());
+            }
+            const double outputLength = Distance(Point(0.0, 0.0, 0.0), candidate);
+            const double outputCosine = Dot(candidate, normalizedReference) / outputLength;
+            if (fabs(outputLength - 1.0) > 1.0e-12 || outputCosine < cosineLimits[limitIndex] - 2.0e-12)
+                return Fail("non-axis cone clamp returned a non-unit direction or crossed its cosine boundary");
+        }
+    }
+
+    const gk::FVector3d sphereCenter = Point(0.0, 0.0, 1.0);
+    const FModelSecondaryMotionCollisionShape centerSphere = Shape({ 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 1.0f }, 0.2f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> centerPrepared;
+    if (!PrepareSecondaryMotionCollisionShapes(&centerSphere, 1, centerPrepared, error) || centerPrepared.Count() != 1)
+        return Fail("could not prepare the endpoint-center sphere");
+    const gk::FVector3d centerParent = Point(0.0, 0.0, 0.0);
+    const gk::FVector3d centerReference = Point(0.0, 0.0, 1.0);
+    const double centerCosineLimits[2] = { 0.5, 0.7071067811865476 };
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+        gk::FVector3d candidate = centerReference;
+        if (!FindPreparedSecondaryMotionCollisionDirection(centerPrepared.Data(), centerPrepared.Count(), centerParent, 1.0, false, centerReference, centerCosineLimits[index], candidate, error) || !error.Empty() || !IsFinite(candidate))
+        {
+            fprintf(stderr, "sphere-center cone case failed: reference=3 cosineIndex=%u cosine=%.17g error=%s\n", index, centerCosineLimits[index], error.CStr());
+            return Fail(error.Empty() ? "cone grid failed to find a feasible escape from a sphere-centered endpoint" : error.CStr());
+        }
+        const gk::FVector3d endpoint = Point(candidate.value[0], candidate.value[1], candidate.value[2]);
+        const double outputLength = Distance(Point(0.0, 0.0, 0.0), candidate);
+        const double outputCosine = Dot(candidate, centerReference) / outputLength;
+        if (SegmentDistance(endpoint, endpoint, sphereCenter, sphereCenter) + 1.0e-12 < centerPrepared.At(0).radius || fabs(outputLength - 1.0) > 1.0e-12 || outputCosine < centerCosineLimits[index] - 2.0e-12 || !CheckPreparedSecondaryMotionFreeSegmentContacts(centerPrepared.Data(), centerPrepared.Count(), centerParent, endpoint, error, 0.0))
+            return Fail("sphere-centered endpoint escape violated independent clearance, bone length, or cone bounds");
+    }
+
+    gk::FVector3d clearZeroAngle = centerReference;
+    if (!FindPreparedSecondaryMotionCollisionDirection(farPrepared.Data(), farPrepared.Count(), parent, 1.0, false, centerReference, 1.0, clearZeroAngle, error) || !error.Empty() || memcmp(&clearZeroAngle, &centerReference, sizeof(clearZeroAngle)) != 0)
+        return Fail("zero-angle clear reference direction was rejected or changed");
     return true;
 }
 
@@ -2079,6 +2727,56 @@ bool TestStepShapeCacheReuseAndAtomicity()
 }
 
 /**
+ * 身体形状maskはradiusと独立したcache keyで、選択した元indexを保つ。
+ */
+bool TestStepShapeCacheColliderMaskSelection()
+{
+    const FModelSecondaryMotionCollisionShape shapes[3] = { Shape({ 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.1f), Shape({ 2.0f, 0.0f, 0.0f }, { 2.0f, 1.0f, 0.0f }, 0.2f), Shape({ 3.0f, 0.0f, 0.0f }, { 3.0f, 0.0f, 0.0f }, 0.3f) };
+    FModelSecondaryMotionStepShapeCache cache(shapes, 3);
+    FModelSecondaryMotionStepShapes allView{};
+    FModelSecondaryMotionStepShapes firstMaskView{};
+    FModelSecondaryMotionStepShapes firstAndThirdView{};
+    FModelSecondaryMotionStepShapes noShapeView{};
+    gk::String error;
+    ResetSecondaryMotionCollisionExpansionCount();
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!cache.Get(0.05f, UINT64_MAX, allView, error) || !error.Empty() || allView.count != 3 || GetSecondaryMotionCollisionExpansionCount() != 1 || GetSecondaryMotionCollisionPrepareCount() != 3)
+        return Fail("all-body mask did not preserve the legacy cache group and preparation budget");
+    if (!cache.Get(0.05f, 1u, firstMaskView, error) || !error.Empty() || firstMaskView.count != 1 || firstMaskView.expanded[0].start.x != 1.0f || GetSecondaryMotionCollisionExpansionCount() != 2 || GetSecondaryMotionCollisionPrepareCount() != 4)
+        return Fail("single-body mask did not select the first original shape");
+    if (!cache.Get(0.05f, 5u, firstAndThirdView, error) || !error.Empty() || firstAndThirdView.count != 2 || firstAndThirdView.expanded[0].start.x != 1.0f || firstAndThirdView.expanded[1].start.x != 3.0f || GetSecondaryMotionCollisionExpansionCount() != 3 || GetSecondaryMotionCollisionPrepareCount() != 6)
+        return Fail("multi-body mask did not preserve selected shape order");
+    if (!cache.Get(0.05f, 1u, firstMaskView, error) || !error.Empty())
+        return Fail("could not reacquire the single-body cache view before checking unused bits");
+    const FModelSecondaryMotionStepShapes cachedMaskView = firstMaskView;
+    if (!cache.Get(0.05f, (UINT64_C(1) << 63) | 1u, firstMaskView, error) || !error.Empty() || firstMaskView.expanded != cachedMaskView.expanded || firstMaskView.prepared != cachedMaskView.prepared || firstMaskView.count != cachedMaskView.count || GetSecondaryMotionCollisionExpansionCount() != 3 || GetSecondaryMotionCollisionPrepareCount() != 6)
+        return Fail("unused mask bits changed the effective cache key or selected shapes");
+    if (!cache.Get(0.05f, 0u, noShapeView, error) || !error.Empty() || noShapeView.count != 0 || noShapeView.expanded || noShapeView.guarded || noShapeView.prepared || GetSecondaryMotionCollisionExpansionCount() != 3 || GetSecondaryMotionCollisionPrepareCount() != 6)
+        return Fail("zero body mask did not return an empty group without preparation");
+
+    FModelSecondaryMotionCollisionShape indexedShapes[64]{};
+    for (uint32_t shapeIndex = 0; shapeIndex < 64; ++shapeIndex)
+        indexedShapes[shapeIndex] = Shape({ static_cast<float>(shapeIndex + 1u), 0.0f, 0.0f }, { static_cast<float>(shapeIndex + 1u), 0.0f, 0.0f }, 0.1f);
+    FModelSecondaryMotionStepShapeCache indexedCache(indexedShapes, 64);
+    FModelSecondaryMotionStepShapes index63View{};
+    ResetSecondaryMotionCollisionExpansionCount();
+    ResetSecondaryMotionCollisionPrepareCount();
+    if (!indexedCache.Get(0.0f, UINT64_C(1) << 63, index63View, error) || !error.Empty() || index63View.count != 1 || index63View.expanded[0].start.x != 64.0f || GetSecondaryMotionCollisionExpansionCount() != 0 || GetSecondaryMotionCollisionPrepareCount() != 1)
+        return Fail("mask bit 63 did not select exactly body shape index 63");
+    FModelSecondaryMotionStepShapes index0And63View{};
+    if (!indexedCache.Get(0.0f, (UINT64_C(1) << 63) | 1u, index0And63View, error) || !error.Empty() || index0And63View.count != 2 || index0And63View.expanded[0].start.x != 1.0f || index0And63View.expanded[1].start.x != 64.0f || GetSecondaryMotionCollisionExpansionCount() != 0 || GetSecondaryMotionCollisionPrepareCount() != 3)
+        return Fail("bits 0 and 63 did not select the expected shape indices in source order");
+    FModelSecondaryMotionStepShapes preservedView = firstAndThirdView;
+    if (cache.Get(std::numeric_limits<float>::quiet_NaN(), 5u, firstAndThirdView, error) || error.Empty() || firstAndThirdView.expanded != preservedView.expanded || firstAndThirdView.prepared != preservedView.prepared || firstAndThirdView.count != preservedView.count)
+        return Fail("invalid radius changed a previously selected mask view");
+    const FModelSecondaryMotionCollisionShape invalidShape = Shape({}, {}, 0.0f);
+    FModelSecondaryMotionStepShapeCache invalidSourceCache(&invalidShape, 1);
+    if (invalidSourceCache.Get(0.05f, 1u, firstAndThirdView, error) || error.Empty() || firstAndThirdView.expanded != preservedView.expanded || firstAndThirdView.prepared != preservedView.prepared || firstAndThirdView.count != preservedView.count)
+        return Fail("invalid selected body shape changed an existing mask view");
+    return true;
+}
+
+/**
  * 新しい半径groupの各確保段階が失敗しても既存groupと出力viewを保つ。
  */
 bool TestStepShapeCacheAllocationFailureAtomicity()
@@ -2538,8 +3236,9 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestPreparedSegmentAvoidanceMatchesRaw, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsCallerScratchReuseAndAtomicity, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "prepared segment avoidance", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact caller scratch", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestPreparedSegmentAvoidanceMatchesRaw, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestGuardedRootInsideUsesOriginalShapeRule, TestInterpolatedRadiusRootOverrideAndSegmentRole, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestRecordedSkinningChainContact, TestRecordedSkinningChainFrame98Contact, TestRecordedSkinningChainFrame33Contact, TestRecordedSkinningChainFrame433Contact, TestPreparedWholeChainContactsForFrame33, TestFrame98DirectionToleranceFraction, TestPreparedJointDirectionForRecordedSkinningChain, TestJointDirectionNormalizationAndConeBoundaries, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsCallerScratchReuseAndAtomicity, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheColliderMaskSelection, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedSolverWorkspaceReuseAndAtomicity, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "prepared segment avoidance", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "guarded root-inside uses original shape", "interpolated-radius root override and segment role", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "recorded skinning chain contact", "recorded skinning chain frame 98 contact", "recorded skinning chain frame 33 contact", "recorded skinning chain frame 433 contact", "prepared whole-chain contacts frame 33", "frame 98 direction tolerance fraction", "prepared joint direction recorded skinning chain", "joint direction normalization and cone boundaries", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact caller scratch", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache collider mask selection", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared solver workspace reuse and atomicity", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    static_assert(sizeof(tests) / sizeof(tests[0]) == sizeof(names) / sizeof(names[0]), "test names must match test functions");
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {

@@ -2,6 +2,7 @@
 #ifndef GKCORE_MODEL_ANIMATION_FMODELSECONDARYMOTIONCHAIN_H
 #define GKCORE_MODEL_ANIMATION_FMODELSECONDARYMOTIONCHAIN_H
 
+#include <stdint.h>
 #include <gkcore/FModelSecondaryMotionSettings.h>
 #include "model/animation/FModelSecondaryMotionChainState.h"
 #include "model/animation/FModelBoneTransform.h"
@@ -22,6 +23,8 @@ struct FModelSecondaryMotionChain
     FModelSecondaryMotionSettings settings;
     // 各節の球と隣接節間の太さ。model空間で指定し、0は従来の節接触。
     float collisionRadius = 0.0f;
+    // 節球・隣接線分が調べるcollider index。全形状を既定とする。
+    uint64_t colliderMask = UINT64_MAX;
     // 前回更新の節位置と速度。
     animation::FModelSecondaryMotionChainState simulation;
     // bonesと同じ順の確定回転。位置とscaleは適用しない。

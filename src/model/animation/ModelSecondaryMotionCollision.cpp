@@ -547,18 +547,40 @@ bool CheckPreparedContacts(const FPreparedSecondaryMotionCollisionShape* shapes,
     {
         // root例外を調べる準備済み形状。
         const FPreparedSecondaryMotionCollisionShape& shape = shapes[shapeIndex];
+        if (shape.hasRootContactOverride && (!isfinite(shape.radius) || shape.radius < 0.0 || !isfinite(shape.rootContactThreshold) || shape.rootContactThreshold < 0.0 || shape.rootContactThreshold > shape.radius))
+        {
+            error.Assign("Secondary motion prepared root contact threshold is invalid");
+            return false;
+        }
         // 鎖の固定root位置。
         const gk::FVector3d root = positions[0];
         // 固定rootと形状軸の最近位置。
         const gk::FVector3d rootClosest = ClosestPointOnPreparedAxis(root, shape);
         // rootが内部なら最初の線分を免除する。
-        const bool rootInside = Length(Subtract(root, rootClosest)) < shape.radius - shape.tolerance;
+        const bool rootInside = Length(Subtract(root, rootClosest)) < GetPreparedSecondaryMotionRootContactThreshold(shape);
         // rootが形状内なら最初の線分だけを検査対象から外す。
         for (uint32_t spanIndex = 1; spanIndex < pointCount; ++spanIndex)
         {
             if (spanIndex == 1 && rootInside)
                 continue;
-            if (SpanPenetrates(positions[spanIndex - 1], positions[spanIndex], shape, toleranceFraction))
+            if (spanIndex == 1 && shape.hasRootContactOverride)
+            {
+                FPreparedSecondaryMotionCollisionShape rootOutsideShape = shape;
+                rootOutsideShape.radius = shape.rootContactThreshold;
+                rootOutsideShape.tolerance = 0.0;
+                rootOutsideShape.hasRootContactOverride = false;
+                if (SpanPenetrates(positions[spanIndex - 1], positions[spanIndex], rootOutsideShape, toleranceFraction))
+                {
+                    error.Assign("Secondary motion chain intersects a collision shape");
+                    error.Append(" (shape: ");
+                    error.AppendUnsigned(shapeIndex);
+                    error.Append(", span: ");
+                    error.AppendUnsigned(spanIndex);
+                    error.Append(")");
+                    return false;
+                }
+            }
+            else if (SpanPenetrates(positions[spanIndex - 1], positions[spanIndex], shape, toleranceFraction))
             {
                 error.Assign("Secondary motion chain intersects a collision shape");
                 error.Append(" (shape: ");
@@ -797,12 +819,19 @@ static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondar
 {
     // 動かないrootの形状内判定を一度だけ保持する。
     bool rootInsideByShape[kMaximumCollisionShapes] = {};
+    double rootDistanceByShape[kMaximumCollisionShapes] = {};
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
+        if (preparedShapes[shapeIndex].hasRootContactOverride && (!isfinite(preparedShapes[shapeIndex].radius) || preparedShapes[shapeIndex].radius < 0.0 || !isfinite(preparedShapes[shapeIndex].rootContactThreshold) || preparedShapes[shapeIndex].rootContactThreshold < 0.0 || preparedShapes[shapeIndex].rootContactThreshold > preparedShapes[shapeIndex].radius))
+        {
+            error.Assign("Secondary motion prepared root contact threshold is invalid");
+            return false;
+        }
         // 固定rootと形状軸の最近位置。
         const gk::FVector3d rootClosest = ClosestPointOnPreparedAxis(candidate.At(0), preparedShapes[shapeIndex]);
+        rootDistanceByShape[shapeIndex] = Length(Subtract(candidate.At(0), rootClosest));
         // 最初の線分を免除するためのroot侵入状態。
-        rootInsideByShape[shapeIndex] = Length(Subtract(candidate.At(0), rootClosest)) < preparedShapes[shapeIndex].radius - preparedShapes[shapeIndex].tolerance;
+        rootInsideByShape[shapeIndex] = rootDistanceByShape[shapeIndex] < GetPreparedSecondaryMotionRootContactThreshold(preparedShapes[shapeIndex]);
     }
     // 形状ごとに線分接触と点接触を反復して解く。
     for (uint32_t pass = 0; pass < kProjectionPassCount; ++pass)
@@ -817,7 +846,23 @@ static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondar
             {
                 if (spanIndex == 1 && rootInside)
                     continue;
-                ProjectSpan(shape, spanIndex == 1, candidate.At(spanIndex - 1), candidate.At(spanIndex));
+                if (spanIndex == 1 && shape.hasRootContactOverride)
+                {
+                    FPreparedSecondaryMotionCollisionShape rootOutsideShape = shape;
+                    rootOutsideShape.radius = GetPreparedSecondaryMotionRootSpanThreshold(shape, rootDistanceByShape[shapeIndex], 1.0);
+                    rootOutsideShape.tolerance = 0.0;
+                    rootOutsideShape.hasRootContactOverride = false;
+                    if (!isfinite(rootOutsideShape.radius) || rootOutsideShape.radius < shape.rootContactThreshold || rootOutsideShape.radius > shape.radius)
+                    {
+                        error.Assign("Secondary motion prepared root span threshold is invalid");
+                        return false;
+                    }
+                    ProjectSpan(rootOutsideShape, true, candidate.At(spanIndex - 1), candidate.At(spanIndex));
+                }
+                else
+                {
+                    ProjectSpan(shape, spanIndex == 1, candidate.At(spanIndex - 1), candidate.At(spanIndex));
+                }
             }
             // root以外の各点を形状外へ投影する。
             for (uint32_t pointIndex = 1; pointIndex < pointCount; ++pointIndex)
@@ -851,7 +896,24 @@ static bool ProjectPreparedSecondaryMotionContactsKernel(const FPreparedSecondar
             {
                 if (spanIndex == 1 && rootInside)
                     continue;
-                if (SpanPenetrates(candidate.At(spanIndex - 1), candidate.At(spanIndex), shape))
+                if (spanIndex == 1 && shape.hasRootContactOverride)
+                {
+                    FPreparedSecondaryMotionCollisionShape rootOutsideShape = shape;
+                    rootOutsideShape.radius = GetPreparedSecondaryMotionRootSpanThreshold(shape, rootDistanceByShape[shapeIndex], 1.0);
+                    rootOutsideShape.tolerance = 0.0;
+                    rootOutsideShape.hasRootContactOverride = false;
+                    if (!isfinite(rootOutsideShape.radius) || rootOutsideShape.radius < shape.rootContactThreshold || rootOutsideShape.radius > shape.radius)
+                    {
+                        error.Assign("Secondary motion prepared root span threshold is invalid");
+                        return false;
+                    }
+                    if (SpanPenetrates(candidate.At(spanIndex - 1), candidate.At(spanIndex), rootOutsideShape))
+                    {
+                        anyPenetration = true;
+                        break;
+                    }
+                }
+                else if (SpanPenetrates(candidate.At(spanIndex - 1), candidate.At(spanIndex), shape))
                 {
                     anyPenetration = true;
                     break;
@@ -1088,6 +1150,11 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
             error.Assign("Secondary motion collision segment input is invalid");
         return false;
     }
+    if (preparedShape && preparedShape->hasRootContactOverride && (!isfinite(preparedShape->radius) || preparedShape->radius < 0.0 || !isfinite(preparedShape->rootContactThreshold) || preparedShape->rootContactThreshold < 0.0 || preparedShape->rootContactThreshold > preparedShape->radius))
+    {
+        error.Assign("Secondary motion prepared root contact threshold is invalid");
+        return false;
+    }
     gk::FVector3d candidateDirection = direction;
     if (!Normalize(candidateDirection))
     {
@@ -1110,7 +1177,8 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
     const double parentDistance = Length(Subtract(parent, parentClosest));
     const double radius = preparedShape ? preparedShape->radius : rawShape->radius;
     const double tolerance = preparedShape ? preparedShape->tolerance : ContactTolerance(radius);
-    const bool parentInside = parentDistance < radius - tolerance;
+    const double rootContactThreshold = preparedShape && firstSegment ? GetPreparedSecondaryMotionRootContactThreshold(*preparedShape) : radius - tolerance;
+    const bool parentInside = parentDistance < rootContactThreshold;
     if (parentInside && !firstSegment)
     {
         // 親節の侵入は外側の反復処理で解き、方向coneの補正を保留する。
@@ -1119,6 +1187,23 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
     }
     // root内部の最初の節はendpointだけを外へ出し、通常は線分全体を判定する。
     const bool endpointOnly = firstSegment && parentInside;
+    FPreparedSecondaryMotionCollisionShape rootOutsideShape = {};
+    const FPreparedSecondaryMotionCollisionShape* segmentShape = preparedShape;
+    if (preparedShape && firstSegment && preparedShape->hasRootContactOverride && !parentInside)
+    {
+        rootOutsideShape = *preparedShape;
+        rootOutsideShape.radius = GetPreparedSecondaryMotionRootSpanThreshold(*preparedShape, parentDistance, 1.0);
+        rootOutsideShape.tolerance = 0.0;
+        rootOutsideShape.hasRootContactOverride = false;
+        if (!isfinite(rootOutsideShape.radius) || rootOutsideShape.radius < rootContactThreshold || rootOutsideShape.radius > preparedShape->radius)
+        {
+            error.Assign("Secondary motion prepared root span threshold is invalid");
+            return false;
+        }
+        segmentShape = &rootOutsideShape;
+    }
+    const double segmentRadius = endpointOnly ? radius : (segmentShape ? segmentShape->radius : radius);
+    const double segmentTolerance = endpointOnly ? tolerance : (segmentShape ? segmentShape->tolerance : tolerance);
     // 現在の長さと方向で作る終点。
     const gk::FVector3d currentEnd = Add(parent, Multiply(candidateDirection, length));
     if (!IsFinite(currentEnd))
@@ -1139,7 +1224,7 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
     }
     else
     {
-        const bool outside = preparedShape ? IsOutsideExpandedBounds(parent, currentEnd, *preparedShape) : IsOutsideExpandedBounds(parent, currentEnd, *rawShape);
+        const bool outside = segmentShape ? IsOutsideExpandedBounds(parent, currentEnd, *segmentShape) : IsOutsideExpandedBounds(parent, currentEnd, *rawShape);
         if (outside)
         {
             direction = candidateDirection;
@@ -1149,33 +1234,33 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
         double spanAmount = 0.0;
         double axisAmount = 0.0;
         gk::FVector3d spanPoint = {};
-        if (preparedShape)
+        if (segmentShape)
         {
-            ClosestSegmentPairWithAxis(parent, currentEnd, preparedShape->start, preparedShape->axis, preparedShape->axisLengthSquared, spanAmount, axisAmount, spanPoint, closest);
+            ClosestSegmentPairWithAxis(parent, currentEnd, segmentShape->start, segmentShape->axis, segmentShape->axisLengthSquared, spanAmount, axisAmount, spanPoint, closest);
         }
         else
         {
             ClosestSegmentPair(parent, currentEnd, ToDouble(rawShape->start), ToDouble(rawShape->end), spanAmount, axisAmount, spanPoint, closest);
         }
         (void)spanAmount;
-        if (Length(Subtract(spanPoint, closest)) >= radius - tolerance)
+        if (Length(Subtract(spanPoint, closest)) >= segmentRadius - segmentTolerance)
         {
             direction = candidateDirection;
             return true;
         }
         // 軸の途中への侵入は、軸に直交する平面内の円筒coneで先に解く。
         // collider軸とその長さ。
-        const gk::FVector3d shapeAxis = preparedShape ? preparedShape->axis : Subtract(ToDouble(rawShape->end), ToDouble(rawShape->start));
-        const double shapeAxisLength = preparedShape ? preparedShape->axisLength : Length(shapeAxis);
+        const gk::FVector3d shapeAxis = segmentShape ? segmentShape->axis : Subtract(ToDouble(rawShape->end), ToDouble(rawShape->start));
+        const double shapeAxisLength = segmentShape ? segmentShape->axisLength : Length(shapeAxis);
         if (axisAmount > 0.0 && axisAmount < 1.0 && shapeAxisLength > 0.0 && isfinite(shapeAxisLength))
         {
             // 軸の単位方向と親位置の軸直交成分。
             const gk::FVector3d axisUnit = Multiply(shapeAxis, 1.0 / shapeAxisLength);
-            const gk::FVector3d parentOffset = preparedShape ? Subtract(parent, preparedShape->start) : Subtract(parent, ToDouble(rawShape->start));
+            const gk::FVector3d parentOffset = segmentShape ? Subtract(parent, segmentShape->start) : Subtract(parent, ToDouble(rawShape->start));
             const gk::FVector3d parentRadial = Subtract(parentOffset, Multiply(axisUnit, Dot(parentOffset, axisUnit)));
             // 親から無限軸までの半径方向距離。
             const double radialDistance = Length(parentRadial);
-            if (radialDistance >= radius + tolerance)
+            if (radialDistance >= segmentRadius + segmentTolerance)
             {
                 // 進行方向の軸平行成分と直交成分。
                 const gk::FVector3d directionParallel = Multiply(axisUnit, Dot(candidateDirection, axisUnit));
@@ -1187,7 +1272,7 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
                 {
                     // 親から軸へ向かう方向と半径距離の比。
                     const gk::FVector3d towardAxis = Multiply(parentRadial, -1.0 / radialDistance);
-                    const double radiusRatio = radius / radialDistance;
+                    const double radiusRatio = segmentRadius / radialDistance;
                     // 半径に接するために必要な軸直交移動量。
                     const double tangentTravel = radialDistance * sqrt(fmax(0.0, 1.0 - radiusRatio * radiusRatio));
                     // 許される内積の上限。初期値は実現不能を表す。
@@ -1196,9 +1281,9 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
                     {
                         cosineLimit = tangentTravel / radialDistance;
                     }
-                    else if (radialTravel >= radialDistance - radius)
+                    else if (radialTravel >= radialDistance - segmentRadius)
                     {
-                        cosineLimit = 0.5 * (radialTravel / radialDistance + ((radialDistance - radius) / radialTravel) * (1.0 + radiusRatio));
+                        cosineLimit = 0.5 * (radialTravel / radialDistance + ((radialDistance - segmentRadius) / radialTravel) * (1.0 + radiusRatio));
                     }
                     if (cosineLimit >= -1.0 && cosineLimit <= 1.0)
                     {
@@ -1240,7 +1325,7 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
             direction = candidateDirection;
             return true;
         }
-        if (length < radius - tolerance)
+        if (length < segmentRadius - segmentTolerance)
         {
             error.Assign("Secondary motion collision segment cannot reach outside a shape");
             return false;
@@ -1248,10 +1333,10 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
         direction = candidateDirection;
         return true;
     }
-    if (!endpointOnly && distance >= radius + tolerance)
+    if (!endpointOnly && distance >= segmentRadius + segmentTolerance)
     {
         // 軸から半径だけ離れる接線距離と安全な方向角の上限。
-        const double tangentDistance = sqrt(fmax(0.0, distance * distance - radius * radius));
+        const double tangentDistance = sqrt(fmax(0.0, distance * distance - segmentRadius * segmentRadius));
         if (length >= tangentDistance)
         {
             // 親から軸最近点へ向かう単位方向と許される最大内積。
@@ -1284,7 +1369,7 @@ static bool AvoidSecondaryMotionCollisionSegmentCore(const FModelSecondaryMotion
         error.Assign("Secondary motion collision endpoint constraint is invalid");
         return false;
     }
-    const double cosineLimit = (length * length + distance * distance - radius * radius) / denominator;
+    const double cosineLimit = (length * length + distance * distance - segmentRadius * segmentRadius) / denominator;
     if (cosineLimit < -1.0 - DBL_EPSILON * 64.0)
     {
         error.Assign("Secondary motion collision segment cannot reach outside a shape");
@@ -1782,6 +1867,22 @@ bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisio
     if (!ValidatePositions(positions, pointCount, error))
         return false;
     return CheckPreparedContacts(shapes, shapeCount, positions, pointCount, error, toleranceFraction);
+}
+
+double GetPreparedSecondaryMotionRootContactThreshold(const FPreparedSecondaryMotionCollisionShape& shape)
+{
+    return shape.hasRootContactOverride ? shape.rootContactThreshold : shape.radius - shape.tolerance;
+}
+
+double GetPreparedSecondaryMotionRootSpanThreshold(const FPreparedSecondaryMotionCollisionShape& shape, double rootDistance, double toleranceFraction)
+{
+    if (!shape.hasRootContactOverride)
+    {
+        return shape.radius - shape.tolerance * toleranceFraction;
+    }
+    const double guardThreshold = shape.radius - shape.tolerance * toleranceFraction;
+    const double rootClearance = shape.rootContactThreshold + fmax(0.0, rootDistance - shape.rootContactThreshold) * 0.5;
+    return fmin(guardThreshold, rootClearance);
 }
 
 bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error)

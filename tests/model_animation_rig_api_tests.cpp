@@ -32,6 +32,7 @@
 #include <initializer_list>
 #include <limits>
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string>
 #include <vector>
@@ -524,6 +525,35 @@ bool TestModelSecondaryMotionColliders(gk::ModelHandle model, gk::ModelHandle in
     state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
     passed = state && state->colliders.Count() == 1 && state->colliders.At(0).bone == collider.bone && state->colliders.At(0).radius == collider.radius && state->colliderMargin == 0.01f && state->previousCollisionShapes.Count() == 1 && Near(state->previousCollisionShapes.At(0).start.x, 4.0f) && Near(state->previousCollisionShapes.At(0).radius, 0.06f) && passed;
 
+    // 巨大な身体球なら既定の全形状maskで更新を拒否し、mask0だけは鎖を動かせる。
+    gk::FModelSecondaryMotionCollider maskCollider{};
+    maskCollider.bone = 0;
+    maskCollider.start = { 0.0f, 0.0f, 0.0f };
+    maskCollider.end = maskCollider.start;
+    maskCollider.radius = 10.0f;
+    passed = gk::SetModelSecondaryMotionColliders(instance, &maskCollider, 1, 0.0f) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    auto* maskChain = state && state->chains.Count() == 1 ? state->chains.At(0) : nullptr;
+    const bool defaultMaskIsAll = maskChain && maskChain->colliderMask == UINT64_MAX;
+    gk::Array<gk::model::animation::FModelSecondaryMotionPoint> failedMaskPoints;
+    gk::Array<gk::Vec3> failedMaskTargets;
+    const bool failureSnapshotReady = maskChain && failedMaskPoints.AppendRange(maskChain->simulation.points.Data(), maskChain->simulation.points.Count()) && failedMaskTargets.AppendRange(maskChain->simulation.previousTargets.Data(), maskChain->simulation.previousTargets.Count());
+    const bool defaultMaskRejected = defaultMaskIsAll && gk::UpdateModelSecondaryMotion(instance, 0.0) == -1;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    maskChain = state && state->chains.Count() == 1 ? state->chains.At(0) : nullptr;
+    const bool defaultMaskFailureAtomic = failureSnapshotReady && maskChain && failedMaskPoints.Count() == maskChain->simulation.points.Count() && failedMaskTargets.Count() == maskChain->simulation.previousTargets.Count() && memcmp(failedMaskPoints.Data(), maskChain->simulation.points.Data(), static_cast<size_t>(failedMaskPoints.Count()) * sizeof(gk::model::animation::FModelSecondaryMotionPoint)) == 0 && memcmp(failedMaskTargets.Data(), maskChain->simulation.previousTargets.Data(), static_cast<size_t>(failedMaskTargets.Count()) * sizeof(gk::Vec3)) == 0;
+    passed = defaultMaskRejected && defaultMaskFailureAtomic && passed;
+    passed = defaultMaskFailureAtomic && gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], 0) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], UINT64_C(1) << 63) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], 1u) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], 0u) == 0 && gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && passed;
+    state = instanceTransform && instanceTransform->playback ? instanceTransform->playback->secondaryMotion : nullptr;
+    maskChain = state && state->chains.Count() == 1 ? state->chains.At(0) : nullptr;
+    passed = maskChain && maskChain->colliderMask == 0u && gk::ResetModelSecondaryMotion(instance) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(gk::ModelHandle{}, chainBones[0], 1u) == -1 && gk::SetModelSecondaryMotionChainColliderMask(instance, 0u, 1u) == -1 && gk::SetModelSecondaryMotionChainColliderMask(instance, 99u, 1u) == -1 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    passed = gk::ClearModelSecondaryMotion(instance) == 0 && gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && gk::SetModelSecondaryMotionColliders(instance, &maskCollider, 1, 0.0f) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == -1 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], 0u) == 0 && gk::SetModelSecondaryMotionChain(instance, chainBones, 2, settings) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::UpdateModelSecondaryMotion(instance, 0.0) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChainColliderMask(instance, chainBones[0], UINT64_MAX) == 0 && gk::ResetModelSecondaryMotion(instance) == 0 && gk::SetModelSecondaryMotionColliders(instance, &collider, 1, 0.01f) == 0 && passed;
     // 有効な一様scaleは端点と半径へ反映し、わずかな軸差も許す。
     passed = gk::SetModelAnimationBlendWeight(instance, 0.0f) == 0 && passed;
     source.skeleton.restLocalTransforms.At(0).scale[0] = 2.0f;
@@ -1906,20 +1936,32 @@ bool TestSecondaryMotionPoseEvaluationBudget()
         };
         bool stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
         auto* configuredFirstChain = ReadFirstChain();
-        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, "11-number radius row");
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->colliderMask == UINT64_MAX && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, "11-number radius row retains default all-body mask");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 18446744073709551615 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->colliderMask == UINT64_MAX, "12-number maximum uint64 mask row");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 0 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->colliderMask == 0u, "12-number zero mask row");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 240 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->colliderMask == 240u, "12-number decimal mask row");
+        stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 0.008 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
+        configuredFirstChain = ReadFirstChain();
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->colliderMask == 240u, "legacy 11-number row preserves mask");
         stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
         configuredFirstChain = ReadFirstChain();
-        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8, "legacy 9-number row preserves radius");
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8 && configuredFirstChain->colliderMask == 240u, "legacy 9-number row preserves radius and mask");
         stagePassed = WriteConfig("4 0.8 60 0 0.25 0 0 0 0 8 | joint_b joint_c\n") && gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
         configuredFirstChain = ReadFirstChain();
-        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8, "legacy 10-number row preserves radius");
-        const char* invalidConfigs[5] = { "4 0.8 60 0 0.25 0 0 0 0 8 nan | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 -0.008 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8.5 | joint_b joint_c\n" };
-        for (uint32_t index = 0; index < 5; ++index)
+        CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.constraintIterations == 8 && configuredFirstChain->colliderMask == 240u, "legacy 10-number row preserves radius and mask");
+        const char* invalidConfigs[8] = { "4 0.8 60 0 0.25 0 0 0 0 8 nan | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 -0.008 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 18446744073709551616 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 -1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 +1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 1.0 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 240 1 | joint_b joint_c\n", "4 0.8 60 0 0.25 0 0 0 0 8 0.008 joint_b joint_c\n" };
+        for (uint32_t index = 0; index < 8; ++index)
         {
             stagePassed = WriteConfig(invalidConfigs[index]) && !gk::examples::ApplySecondaryMotionPreview(instance, configUtf8Path.c_str());
             configuredFirstChain = ReadFirstChain();
-            const char* stage = index == 0 ? "NaN radius rejected atomically" : (index == 1 ? "negative radius rejected atomically" : (index == 2 ? "extra field rejected atomically" : (index == 3 ? "missing separator rejected atomically" : "fractional iterations rejected atomically")));
-            CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8, stage);
+            const char* stage = index == 0 ? "NaN radius rejected atomically" : (index == 1 ? "negative radius rejected atomically" : (index == 2 ? "overflowing mask rejected atomically" : (index == 3 ? "negative mask rejected atomically" : (index == 4 ? "signed mask rejected atomically" : (index == 5 ? "fractional mask rejected atomically" : (index == 6 ? "extra field rejected atomically" : "missing separator rejected atomically"))))));
+            CheckRadiusConfigStage(stagePassed && configuredFirstChain && configuredFirstChain->collisionRadius == 0.008f && configuredFirstChain->settings.frequencyHz == 4.0f && configuredFirstChain->settings.constraintIterations == 8 && configuredFirstChain->colliderMask == 240u, stage);
         }
         fs::remove_all(configDirectory);
         passed = configPassed && passed;
@@ -3476,6 +3518,12 @@ static bool TestSecondaryMotionContactLinkApiLifecycle()
     firstState = ReadState(firstInstance);
     const bool bodyAddedPreserves = firstState && firstState->colliders.Count() == 1 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4;
     passed = Checkpoint("body collider registration preserves contact links", bodyAddedPreserves) && passed;
+    const int maskClearResult = gk::SetModelSecondaryMotionChainColliderMask(firstInstance, firstChain[0], 0u);
+    firstState = ReadState(firstInstance);
+    const auto* maskedFirstChain = FindChainByRoot(firstState, firstChain[0]);
+    const auto* untouchedSecondChain = FindChainByRoot(firstState, secondChain[0]);
+    const bool maskLeavesAuxiliaryConstraints = maskClearResult == 0 && maskedFirstChain && maskedFirstChain->colliderMask == 0u && untouchedSecondChain && untouchedSecondChain->colliderMask == UINT64_MAX && firstState->links.Count() == 1 && firstState->distanceConstraints.Count() == 1 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4;
+    passed = Checkpoint("chain collider mask leaves links and bone-local contacts registered", maskLeavesAuxiliaryConstraints) && gk::SetModelSecondaryMotionChainColliderMask(firstInstance, firstChain[0], UINT64_MAX) == 0 && passed;
     passed = gk::SetModelSecondaryMotionColliders(firstInstance, nullptr, 0) == 0 && passed;
     passed = gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings) == 0 && passed;
     firstState = ReadState(firstInstance);

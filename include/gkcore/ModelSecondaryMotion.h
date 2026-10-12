@@ -67,6 +67,13 @@ GKCORE_API int SetModelSecondaryMotionVertexContactsEnabled(ModelHandle model, b
  */
 GKCORE_API int SetModelSecondaryMotionChainCollisionRadius(ModelHandle model, uint32_t firstBone, float radius);
 /**
+ * 鎖の節球・隣接線分が調べる身体形状をbit maskで指定する。
+ * bitはSetModelSecondaryMotionCollidersへ渡した配列indexに対応する。未使用の上位bitは無視し、UINT64_MAXは全形状を表す。
+ * collider配列の順を変えると、同じmaskが指す形状も変わる。
+ * mask=0でも鎖同士のlinkとbone-local接触linkは無効にならない。設定は次のUpdateから適用し、失敗時は以前の設定を保つ。
+ */
+GKCORE_API int SetModelSecondaryMotionChainColliderMask(ModelHandle model, uint32_t firstBone, uint64_t colliderMask);
+/**
  * 別の鎖の自由boneを結ぶ接触補助をコピーして全置換する。最大1024本。
  * 同じbone対や固定rootは指定できない。iterationsは1から32、count=0で解除する。
  * 反復上限は距離制約と共通で、最後に呼んだsetterの値を使う。

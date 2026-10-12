@@ -26,6 +26,11 @@ bool VerifySecondaryMotionApiExports()
     {
         return false;
     }
+    // 鎖ごとの身体選択も、配布headerとDLLから参照できることを確認する。
+    if (gk::SetModelSecondaryMotionChainColliderMask({}, 0, UINT64_MAX) != -1)
+    {
+        return false;
+    }
     const uint32_t bone = 0;
     if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1 || gk::SetModelSecondaryMotionVertexContactsEnabled({}, true) != -1 || gk::SetModelSecondaryMotionChainCollisionRadius({}, 0, 0.01f) != -1 || gk::SetModelSecondaryMotionLinks({}, &link, 1) != -1 || gk::GetModelSecondaryMotionDebugShapes({}, nullptr, 0) != -1)
     {

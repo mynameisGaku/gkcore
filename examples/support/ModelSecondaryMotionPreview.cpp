@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 
 namespace gk::examples
 {
@@ -147,6 +148,9 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
         // 11番目の数値があるときだけ鎖の小球半径を設定する。
         bool hasCollisionRadius = false;
         float collisionRadius = 0.0f;
+        // 12番目の数値があるときだけ身体形状のbit maskを設定する。
+        bool hasColliderMask = false;
+        uint64_t colliderMask = ~static_cast<uint64_t>(0);
         int namesOffset = -1;
         if (sscanf(cursor, "%f %f %f %f %f %f %f %f %f %n", &settings.frequencyHz, &settings.dampingRatio, &settings.maxAngleDegrees, &settings.endOffset.x, &settings.endOffset.y, &settings.endOffset.z, &settings.gravity.x, &settings.gravity.y, &settings.gravity.z, &namesOffset) != 9 || namesOffset < 0)
         {
@@ -195,6 +199,35 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
             }
             collisionRadius = static_cast<float>(radius);
             hasCollisionRadius = true;
+            if (*cursor != '|')
+            {
+                // maskは符号や小数を許さない十進数字として範囲検査する。
+                const char* maskStart = cursor;
+                uint64_t parsedMask = 0;
+                const uint64_t maximumMask = ~static_cast<uint64_t>(0);
+                while (*cursor >= '0' && *cursor <= '9')
+                {
+                    const uint64_t digit = static_cast<uint64_t>(*cursor - '0');
+                    if (parsedMask > (maximumMask - digit) / 10u)
+                    {
+                        passed = false;
+                        break;
+                    }
+                    parsedMask = parsedMask * 10u + digit;
+                    ++cursor;
+                }
+                if (!passed || cursor == maskStart || (*cursor != ' ' && *cursor != '\t' && *cursor != '|'))
+                {
+                    passed = false;
+                    break;
+                }
+                colliderMask = parsedMask;
+                hasColliderMask = true;
+                while (*cursor == ' ' || *cursor == '\t')
+                {
+                    ++cursor;
+                }
+            }
         }
         if (*cursor++ != '|')
         {
@@ -236,6 +269,10 @@ bool ApplySecondaryMotionPreview(ModelHandle model, const char* path)
             if (passed && hasCollisionRadius)
             {
                 passed = SetModelSecondaryMotionChainCollisionRadius(model, bones[0], collisionRadius) == 0;
+            }
+            if (passed && hasColliderMask)
+            {
+                passed = SetModelSecondaryMotionChainColliderMask(model, bones[0], colliderMask) == 0;
             }
             if (!passed)
             {

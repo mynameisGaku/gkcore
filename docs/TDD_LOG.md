@@ -1618,3 +1618,27 @@ Native commandはgkcore_real_model_capture_tests.exe <YUMEKA FBX> 1.1166145684 0
 最終CPU Debug62/62（6.54秒）・Release62/62（5.18秒）成功、設定生成の8契約も含みます。実installで新header漏れのSDK REDを捕捉し、install対象へ追加後59ファイルがRuntime allowlistに一致しました。ゲーム構築用367ファイルからRuntimeと5sampleをビルドし、新APIをリンクする外部consumerでGPU Init・Present・Shutdownが成功。tests、開発記録、私有assetはゲーム用mainへ含めません。実機の高解像度画像で179球と脚capsuleの配置、通常表示を確認し、lossless PNGのpixel一致も検査しました。コメントは日本語、BOM/CRLF/formatter、START CheckOnlyを確認しています。
 
 記録はcontact-links-final-{debug,release}-{build,test}.log、contact-links-final-replay-{debug,release}.log、contact-links-functional-comparison.json、contact-links-quality-images.json、contact-links-{game,sdk}-manifest.json、contact-links-consumer-run.logです。次は複数接触・骨長・曲げ角を同時に満たせず停止する条件と、実際の布面侵入を改善します。細かなFPS計測へは戻りません。
+
+## 身体接触付きの外部motionを連続再生するための鎖補正と形状選択
+
+2026-10-13、Skinning Test・SwingingをYUMEKAへblend + IKで適用した停止入力を調べました。frame30の末端、frame98の許容幅境界、frame33の親位置も動かす必要がある接触を数値fixtureへ保存し、REDを取得しました。固定長の節方向で複数身体形状を同時に避ける計算と、全節の方向を変数にする鎖全体の有限探索を追加しました。候補は骨長・曲げ角を保って再構成し、点・線分の接触をすべて満たす場合だけ採用します。失敗時は状態を確定しません。
+
+計算中の1.001倍の半径guardで固定rootの内外分類が元形状と変わる問題もREDで捕捉しました。準備済み形状へguard前の接触閾値を保持し、投影・方向回避・鎖探索・検査を同じroot例外へ揃えました。浅い外側rootでは、元閾値からrootまでの空きを越えない補正余白を使います。通常shapeや後続節の判定は維持しています。
+
+長い再生では、同じ固定rootの60度制限内で腰の点接触と脚の線分接触が両立しないframe433を確認しました。263,168方向の等角格子と最近格子からの移動距離上限で調べ、通常の元形状許容幅でも全方向に少なくとも約0.0004477 model unitの侵入が残る数値証明を保存しました。90度には全8形状を離れる第一節の候補があります。単体fixtureは60度で失敗と状態保持、90度で全接触・長さ・角度の成功を検査します。未検証の許容幅緩和案は採用していません。
+
+90度設定でも全身体形状を全鎖に適用した3,000frame試験は2,627frameで停止しました。そこでSetModelSecondaryMotionChainColliderMaskを追加しました。登録順の64bitで各鎖の節球・隣接線分が接触する身体を選び、0は身体接触なし、既定は全形状です。未使用上位bitは無視します。初期更新、鎖復元、最終の描画FK検査で同じ選択を使い、二重半径拡張を避けます。骨原点間link・offset接触link・頂点接触の判定対象は変更しません。clone・同root再登録・resetで設定を保持し、clearで破棄します。maskだけの変更でanimation基準姿勢cacheは破棄しません。
+
+mask Getの未実装契約によるbuild REDと、古いinstall済みSDKに新APIがないconsumer REDを記録しました。bit63、mask0、異なるmaskのcache分離、上位bitの正規化、既定経路の準備回数、無効入力、失敗時のview保持を検査しています。APIでは巨大球による不成立、mask変更による更新の可否、無効handle/root、状態保持、ライフサイクルを検査しました。設定の12個目は厳密な十進uint64で、符号・小数・桁あふれ・余剰列を拒否し、9/10/11列の旧形式を保ちます。
+
+START18は13鎖と8身体形状、頂点接触OFFです。スカートは半径0.038・最大角90度・反復32・mask240で脚の配列index4〜7だけを判定し、髪・尻尾は全身体形状を使います。旧presetの60度値や身体の半径は変更していません。179offset球、骨原点間link、距離補助はこのメニューには指定しません。髪とスカートで接触対象を分けた動作確認であり、衣服の面全体の接触成功とは区別します。
+
+Windows 11 Pro build26200、RTX4070 SUPER / driver617.42、Runtime v142 / MSVC19.29、Windows SDK10.0.22621.0で実行しました。START18のSkinning Test・Swingingは1/60秒の3,000 deltaをDebug/Releaseで再生し、双方framesCompleted=3000 / completed=trueです。さらに0秒・3.35秒から各120frameを両構成で再生し、START16のSilly Dancing・Capoeiraも同じ区間で確認しました。計960frameのGPU位置・法線と実skin1,314点が有効で、4組の最後の画像と全mesh集計がDebug/Releaseで一致しています。1314点はJacket443・Skirt440・Vest_Shirt431へ分類し、全8身体形状に対する集計を保持しました。
+
+START18の開始区間は、Jacket平均侵入10.308点・Skirt35.817点・Vest_Shirt41.992点、最大深度はそれぞれ0.067606・0.073506・0.076412 model unitでした。接触選択で連続動作は成立しましたが、元の全身体形状に対する布面の品質改善とは判定しません。高解像度の通常表示も目視し、lossless PNGの画素一致を確認しました。179球をSkinning Test・Swingingへ重ねる別構成の未収束は残ります。次は鎖とoffset接触の同時解決、実際の布面侵入を扱います。FPSの小さな改善には戻りません。
+
+最終CPU Debug62/62（6.11秒）、Release62/62（5.45秒）成功。ゲーム構築用371ファイルのRuntimeと5sampleをRelease buildし、install済みSDK59ファイルのallowlistと、新mask APIをリンクする外部consumerのGPU Init→Present→Shutdownが成功しました。START CheckOnly、独立レビュー、formatter、BOM/CRLF、diff検査も実施しています。mainにはtests・私有asset・開発記録を含めません。
+
+Native commandはgkcore_model_benchmark.exe <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Skinning Test.fbx> <Swinging.fbx> --follow-motion --secondary-motion samples/config/yumeka-skinning-contact-motion.txt --secondary-colliders samples/config/yumeka-bone-colliders.txt --materials <material-config.txt>。GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_BENCHMARK_FRAMES=3000、GKCORE_BENCHMARK_WARMUP=0、GKCORE_BENCHMARK_DELTA_REPLAY_PATH=chain-joint-fixed-3000-deltas.txtです。描画検査は同じ引数へGKCORE_VERIFY_GPU_SKINNING=1、GKCORE_VERIFY_SKIN_POINTS=Skirt、GKCORE_SKIN_POINT_MESH_SUMMARY=1を付け、120frame・step1/60秒・開始0/3.35秒を指定しました。
+
+記録はchain-contact-{skin,skin-frame98,skin-frame33,skin-frame433}-fixture.json、chain-contact-frame433-{cone-certificate,90deg-witness}.json、chain-collider-mask-{red-build,green-test,sdk-red-build}.log、chain-mask-skin-3000-{debug,release}.log、chain-joint-functional-comparison.json、chain-mask-final-cpu-{debug,release}-test.log、chain-mask-{game,sdk}-manifest.json、chain-mask-consumer-run.logです。一時調査source、PPM、重複Debug画像、使用済みexport staging、重複したconsumerのbinコピーなど、生成809ファイルと空folder80個を片づけました。元asset・現在のbuild・最新PNGと数値記録は保持しています。調査source本文はchain-mask-cleanup.jsonへ保存し、削除前の絶対pathとSHA-256を個別照合しました。
