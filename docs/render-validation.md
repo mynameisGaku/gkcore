@@ -270,3 +270,12 @@ YUMEKAの接続10本設定を保持して、目標方向/長さと接触形状�
 同じ接続更新内で、鎖の節半径ごとの拡張・guard・prepared形状を共有しました。Win11 build26200 / RTX4070SUPER driver617.42 / v14219.29 / SDK22621.0、YUMEKA・2motion blend・右腕IK・13鎖・身体8形状・接続10本・頂点補正OFFで、0秒/3.35秒開始をDebug/Release各120frame、計480frame検証しました。GPU位置/法線とSkirt1314点が全frame有効、最大位置誤差9.314e-10、法線1.789e-7です。
 
 変更前の全480skin記録と48画像が一致し、Debug/Release間の24組もbyte一致。loop侵入平均15.833/最大深さ.020639も保持しており、画質改善とは扱いません。比較はstep-shapes-image-comparison.json、目視画像はstep-shapes-quality.pngです。実測delta3300frameの隠し再生と変動1200frameの可視再生も完走しました。最初の可視実測再生はAPIエラーなく295frameで途中終了し、step-shapes-trace-1-replay-incomplete.logへ分けています。
+
+
+## 接触投影と骨長復元の停止を再現する
+
+benchmarkのGKCORE_BENCHMARK_DELTA_TRACE_PATHは、全deltaを固定容量bufferへ保存して再生終了後にまとめて書きます。記録行は更新に渡す前に保持するため、失敗した更新のdeltaも含みます。以前の毎frame書き込みとfflushは次frameのdeltaに含まれ、失敗を再現しにくくしていました。再生中のファイル長が0、終了後に全行を保存し、traceWritten=trueを確認します。GKCORE_BENCHMARK_DELTA_REPLAY_PATHとは同時に使えません。記録・再生modeはFPS計測値に数えません。
+
+constraint-buffer-green-deltas.txtの611個を使い、GKCORE_BENCHMARK_FRAMES=611、GKCORE_BENCHMARK_WARMUP=0、GKCORE_TEST_WINDOW_VISIBLE=0でbenchmarkを再生します。頂点接触OFF、YUMEKA・Silly DancingとCapoeira・blend+右腕IK・13鎖・身体8形状・接触線分10本・距離10組です。修正前は距離併用時だけ611番目で接続1と身体形状4が未収束になり、距離なしは完走します。GKCORE_TRACE_SECONDARY_CONSTRAINTS=1はcapture/testのbuildだけで、失敗した最後2反復の距離投影後・接触線分投影後・鎖復元後における距離残差と形状別の最大侵入をJSONへ出します。通常SDKに診断計算や出力は含めません。
+
+修正後の611再生はDebug/Releaseともcompleted=trueで、通常の実時間3000frame/warmup300も距離あり・なしで完走しました。固定delta1/60の2区間×120frame×Debug/Release計480frameでGPU位置・法線・Skirt点参照を確認し、24画像組が一致しています。開始区間とloop区間の保存画像・Skirt記録は修正前と一致します。clothの非貫通を改善した結果ではありません。今回の停止は修正しましたが、deltaを保存しなかった以前のshape5/link8のwarmup停止まで同じ原因だったと断定しません。最新の失敗・再生・成功記録はconstraint-buffer-green-*.log、constraint-failure-replay-{on,off}.log、constraint-fixed-replay-{Release,Debug}.log、constraint-final-benchmark.log、constraint-off-benchmark.log、constraint-image-comparison.jsonです。

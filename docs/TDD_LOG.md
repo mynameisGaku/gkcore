@@ -1519,3 +1519,24 @@ REDは未実装距離投影と公開setterで捕捉しました（distance-red-d
 Runtime SDK58ファイルがallowlistに一致し、追加APIを参照した外部consumerのビルドとGPU Init→Present→Shutdownも成功しました。START -CheckOnlyは設定ファイルと起動引数を確認し、sample15は試験設定と明示します。ゲーム用sourceのcurator計画は358ファイルで、新しい公開headerと距離kernelを含み、tests・開発記録・私有assetを除外します。今回は計画の確認で、curated sourceの別ビルドやmainへの公開は行っていません。sourceのBOM/CRLF、formatterとdiff checkを確認します。
 
 記録した今回の3300 deltaを距離制約ON/OFFで再生し、両方completed=trueを確認しました。距離OFFの現在sourceで追加240frameを描画し、前commitの24画像と全Skirt点参照JSONが一致しています。保存画像は画素一致を確認してlossless PNGへ変換し、重複したDebug/旧版のPPM、今回使い終えたtrial設定を片づけます。最新Release ON/OFF画像、元asset、現在build、成功/失敗ログとdelta traceは保持します。再生ログはdistance-real-delta-replay-{on,off}.log、画像/skin比較はdistance-image-comparison.json、distance-off-and-rate-comparison.json、整理記録はdistance-cleanup.jsonです。
+
+
+## 骨長を戻す処理と接触投影の停滞を修正
+
+まず、benchmarkの毎frameファイル書き込みとfflushが次の実測deltaへ含まれていることを見つけました。再生中はファイルが空という契約を、旧コードのprocessRunning=true/traceBytes=22でREDにしました（constraint-buffer-red-check.json）。全deltaを既存8192要素bufferへ保持し、終了後だけ書くように変え、processRunning=true/traceBytes=0のGREENを取得しました。終了後の611行はtraceWritten=trueです。失敗した更新のdeltaも保存されます。バッファと一括書き出しはbenchmark定義でだけ有効です。
+
+この記録でshape4/link1の停止を611番目に再現しました。修正前の距離併用は610frame完了/611番目失敗、距離なしは611完走です。capture/test限定の侵入深さ測定をstubでREDにしてから実装し、球・カプセルの独立segment-distance oracle、退化、接線、外側の負深度、不正値とaliasの出力保持を検査しました。診断は最後2反復を3段階で採取します。pass30/31のshape4/link1は投影後depth=-8.206e-8/-9.195e-8、鎖復元後depth=9.538e-5/9.300e-5で、距離残差は1.308e-5/1.271e-5です。接触補正が骨長復元で削られることを数値で確認しました。
+
+独立監査が提案した小fixtureは、Y軸カプセル半径.2、自由骨(-.5,0,0)/(.5,0,0)、各親をz=-1、骨長1・最大角20度です。旧接触法線+Zは両骨を伸ばすだけで、長さ復元により完全に元へ戻り、32反復で失敗します。しかし両骨をYへ20度回した姿勢は骨長・角度・身体・接続距離を満たします。この既知の可行姿勢を独立に検算してから、距離なし/softありの収束をREDにしました（constraint-cycle-red-test.log）。
+
+反復の前半は旧投影を使い、後半は骨方向uから接触法線nのradial成分を除いたt=n-dot(n,u)uを使います。角度円錐の境界で外向き成分も除き、補正の分母をsum(weight²*|t|²)にして骨長復元が消す成分を見込みます。最終の骨長・角度・身体・距離・float・描画FK検査は保持します。接触を改善する方向が退化する場合は、カプセル全体の外へ出る支持平面への両側の移動を比較します。親は各link補正の直前の現在位置で、複数骨との関係を完全同時に解く手法ではありません。全制約を満たせない場合は以前の確定状態を保って失敗します。半径・角度・許容幅・反復上限32は緩めません。
+
+小fixtureは距離あり/なし、端点順反転、任意軸回転と平行移動で成功し、角度0の不可行対照は失敗します。直接anchor投影は独立PBD値/旧pathとのbyte一致、空body no-op、不正anchor・aliasのatomic出力保持も検査。監査でfloat保存方向に対して角度境界の判定幅が小さい点を指摘され、64*FLT_EPSILONへ修正しました。通常のprepared shapeは生成関数の有効な値だけを使う既存内部契約を保ちます。
+
+最終CPUテストDebug60/60（7.53秒）、Release60/60（5.12秒）成功。RuntimeMSVC19.29/v142・SDK22621.0、CPU MSVC19.51/SDK28000.0、Win11 build26200・RTX4070 SUPER driver617.42を確認しています。実データの611 delta replayはDebug/Releaseとも全611frameを完走。通常可視3000frame/warmup300は距離あり155.443FPS・secondary3.239ms、距離なし178.505FPS・secondary2.275msで双方完走しました。300FPSは未達です。固定delta1/60・0秒/3.35秒開始のDebug/Release各120frame、計480frameのGPU位置/法線とSkirt1314点参照が有効。保存24組の画像が構成間で一致し、修正前の保存画像/Skirt記録も保持しました。start平均16.008/max深さ.017313、loop平均15.483/max深さ.023409で、布面侵入は保持しています。
+
+今回の停止は再現して修正しましたが、記録を残していない以前のshape5/link8のwarmup停止まで同じ原因だとは断定しません。新しい再現・可行/不可行・通常再生の結果を根拠に、この修正を安定した区切りとしてゲーム構築用sourceへ反映します。SDK全体の完成や300FPS達成とは区別します。Runtime SDKの公開API/ABIと58ファイルは維持し、新headerは内部計算用です。更新DLLの外部consumer GPU Init→Present→Shutdownも成功しました。
+
+再現ログはconstraint-buffer-{red,green}-check.json、constraint-depth-{red,green}-test.log、constraint-cycle-red-test.log、constraint-failure-replay-{on,off}.log、constraint-fixed-replay-{Release,Debug}.log、constraint-final-{debug,release}-test.log、constraint-final-benchmark.log、constraint-off-benchmark.log、constraint-{Release,Debug}-{start,loop}.logです。Native入力は前節と同じmodel/motion/configで、replayはGKCORE_BENCHMARK_DELTA_REPLAY_PATH=<constraint-buffer-green-deltas.txt>、FRAMES=611、WARMUP=0、GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_TRACE_SECONDARY_CONSTRAINTS=1。通常計測はTRACE/REPLAYを指定せずFRAMES=3000/WARMUP=300。診断は通常SDKのbinaryへ含めません。
+
+ゲーム構築用359ファイルをprepare_game_repository.pyから生成し、tests・開発記録・私有assetを除外した独立treeでRuntimeと5sampleのReleaseビルドに成功しました。Visual Studio18/v142、platform x64,version=10.0.22621.0を明示し、固定Forge/DXCと現在のshader artifactを使用。インストールSDK58ファイルがallowlistに一致し、game tree由来DLLの外部consumer GPU Init→Present→Shutdownも成功。記録はconstraint-game-{export,configure,build,install,consumer-run}.log、constraint-game-manifest.json、constraint-sdk-manifest.jsonです。START CheckOnly、formatter、BOM/CRLF、diff checkと関連package/no-STL検査を確認しました。画像は画素一致を確認して最新Release PNGへ保存し、重複Debug/PPM48個、旧game検証build3個、使い終えたexport stagingとPython cacheを削除しました。現在のNative/CPU/game build、元asset、成功/失敗ログと再現deltaを保持します。削除対象の生成物確認はconstraint-cleanup.jsonへ記録しました。

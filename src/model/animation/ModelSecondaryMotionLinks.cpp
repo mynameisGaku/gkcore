@@ -6,6 +6,10 @@
 #include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 #include <float.h>
 #include <math.h>
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 #include <string.h>
 
 namespace gk::model
@@ -159,6 +163,40 @@ bool StorePosition(const FVector3d& input, Vec3& output, String& error)
 }
 
 /**
+ * 接続端点の現在親位置と、登録済み基準方向・曲げ角をanchorへまとめる。
+ */
+bool BuildFreeSegmentAnchor(const animation::FModelSecondaryMotionChainState& simulation, uint32_t pointIndex, float maxAngleDegrees, animation::FSecondaryMotionFreeSegmentAnchor& anchor, String& error)
+{
+    if (pointIndex == 0 || pointIndex >= simulation.points.Count() || pointIndex >= simulation.previousTargets.Count() || !isfinite(maxAngleDegrees) || maxAngleDegrees < 0.0f || maxAngleDegrees > 180.0f)
+    {
+        error.Assign("secondary link anchor index or angle is invalid");
+        return false;
+    }
+    // 投影直前の親節位置。
+    const auto& parent = simulation.points.At(pointIndex - 1u).position;
+    // 登録時基準姿勢の隣接2点。
+    const auto& referenceParent = simulation.previousTargets.At(pointIndex - 1u);
+    const auto& referenceChild = simulation.previousTargets.At(pointIndex);
+    // 基準の親から子への方向成分。
+    const double dx = static_cast<double>(referenceChild.x) - referenceParent.x;
+    const double dy = static_cast<double>(referenceChild.y) - referenceParent.y;
+    const double dz = static_cast<double>(referenceChild.z) - referenceParent.z;
+    // 基準方向を単位長にする距離。
+    const double length = sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(length > 0.0) || !isfinite(length))
+    {
+        error.Assign("secondary link anchor reference direction is degenerate");
+        return false;
+    }
+    // 許容曲げ角をradianへ変換した値。
+    const double radians = static_cast<double>(maxAngleDegrees) * (3.1415926535897932384626433832795 / 180.0);
+    anchor.parentPosition = { { parent.x, parent.y, parent.z } };
+    anchor.referenceDirection = { { dx / length, dy / length, dz / length } };
+    anchor.cosineLimit = cos(radians);
+    return isfinite(anchor.cosineLimit);
+}
+
+/**
  * 接続端点と半径ごとの身体形状を準備する。不正設定や確保失敗は候補を破棄する。
  */
 bool PrepareLinks(const FModelSecondaryMotionState& state, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, Array<FResolvedSecondaryMotionLink>& links, Array<animation::FPreparedSecondaryMotionCollisionShape>& preparedShapes, String& error)
@@ -264,6 +302,150 @@ bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolv
         error.Clear();
     return clear;
 }
+
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+/**
+ * 1段階の制約残差と形状別最大侵入を、失敗時出力用に保持する。
+ */
+struct FSecondaryMotionConstraintTraceStage
+{
+    // この記録が属する反復番号。
+    uint32_t pass = 0;
+    // 距離制約全体で最大の絶対残差。
+    double maxDistanceResidual = 0.0;
+    // 最大残差を持つ距離制約番号。
+    uint32_t distanceIndex = 0;
+    // 残差計算がすべて有限値だったか。
+    bool distanceValid = false;
+    // 身体形状ごとに見た接続線分の最大侵入深さ。
+    double maxPenetration[64]{};
+    // 形状ごとの最大侵入を生じた接続線分番号。
+    uint32_t maxPenetrationLink[64]{};
+    // 形状ごとの侵入計算がすべて成功したか。
+    uint8_t shapeValid[64]{};
+};
+
+/**
+ * 診断環境変数が有効なときだけ数値採取を行う。
+ */
+bool IsSecondaryMotionConstraintTraceEnabled()
+{
+    const char* setting = getenv("GKCORE_TRACE_SECONDARY_CONSTRAINTS");
+    return setting && setting[0] == '1' && setting[1] == '\0';
+}
+
+/**
+ * 現在の候補から距離残差と各形状の最大侵入を計算する。
+ */
+void CaptureSecondaryMotionConstraintStage(uint32_t pass, const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<FResolvedSecondaryMotionDistance>& distances, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, FSecondaryMotionConstraintTraceStage& output)
+{
+    output = {};
+    output.pass = pass;
+    output.maxDistanceResidual = -1.0;
+    output.distanceIndex = UINT32_MAX;
+    output.distanceValid = true;
+    for (uint32_t shape = 0; shape < shapeCount; ++shape)
+    {
+        output.maxPenetration[shape] = -DBL_MAX;
+        output.maxPenetrationLink[shape] = UINT32_MAX;
+        output.shapeValid[shape] = 1;
+    }
+    for (uint32_t index = 0; index < distances.Count(); ++index)
+    {
+        const auto& resolved = distances.At(index);
+        const auto& constraint = state.distanceConstraints.At(index);
+        const auto& first = state.chains.At(resolved.firstChain)->simulation.points.At(resolved.firstPoint).position;
+        const auto& second = state.chains.At(resolved.secondChain)->simulation.points.At(resolved.secondPoint).position;
+        const double dx = static_cast<double>(second.x) - first.x;
+        const double dy = static_cast<double>(second.y) - first.y;
+        const double dz = static_cast<double>(second.z) - first.z;
+        const double length = sqrt(dx * dx + dy * dy + dz * dz);
+        const double alpha = constraint.compliance == 0.0f ? 0.0 : static_cast<double>(constraint.compliance) / (state.distanceStepSeconds * state.distanceStepSeconds);
+        const double residual = length - constraint.restDistance - alpha * state.distanceLambdas.At(index);
+        if (!isfinite(residual))
+        {
+            output.distanceValid = false;
+            continue;
+        }
+        const double absoluteResidual = fabs(residual);
+        if (absoluteResidual > output.maxDistanceResidual)
+        {
+            output.maxDistanceResidual = absoluteResidual;
+            output.distanceIndex = index;
+        }
+    }
+    if (distances.Count() == 0)
+    {
+        output.maxDistanceResidual = 0.0;
+        output.distanceIndex = UINT32_MAX;
+    }
+    String measurementError;
+    for (uint32_t linkIndex = 0; linkIndex < links.Count(); ++linkIndex)
+    {
+        const auto& link = links.At(linkIndex);
+        const auto& first = state.chains.At(link.firstChain)->simulation.points.At(link.firstPoint).position;
+        const auto& second = state.chains.At(link.secondChain)->simulation.points.At(link.secondPoint).position;
+        const FVector3d firstDouble{ { first.x, first.y, first.z } };
+        const FVector3d secondDouble{ { second.x, second.y, second.z } };
+        for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+        {
+            const auto& shape = shapes.At(link.shapeOffset + shapeIndex);
+            double penetration = 0.0;
+            if (!animation::MeasurePreparedSecondaryMotionFreeSegmentPenetration(shape, firstDouble, secondDouble, penetration, measurementError))
+            {
+                output.shapeValid[shapeIndex] = 0;
+                continue;
+            }
+            if (penetration > output.maxPenetration[shapeIndex])
+            {
+                output.maxPenetration[shapeIndex] = penetration;
+                output.maxPenetrationLink[shapeIndex] = linkIndex;
+            }
+        }
+    }
+    for (uint32_t shape = 0; shape < shapeCount; ++shape)
+    {
+        if (output.maxPenetrationLink[shape] == UINT32_MAX)
+        {
+            output.maxPenetration[shape] = 0.0;
+        }
+    }
+}
+
+/**
+ * 非収束時に最後の2反復を3段階ずつJSON行として出力する。
+ */
+void WriteSecondaryMotionConstraintTrace(const FSecondaryMotionConstraintTraceStage stages[2][3], uint32_t iterations, uint32_t shapeCount, double delta, double stepSeconds)
+{
+    static const char* stageNames[] = { "after_distance", "after_links", "after_restore" };
+    const uint32_t firstPass = iterations > 1u ? iterations - 2u : 0u;
+    for (uint32_t pass = firstPass; pass < iterations; ++pass)
+    {
+        const uint32_t slot = pass & 1u;
+        for (uint32_t stage = 0; stage < 3; ++stage)
+        {
+            const auto& sample = stages[slot][stage];
+            fprintf(stderr, "{\"type\":\"gkcore_secondary_constraint_trace\",\"delta\":%.17g,\"h\":%.17g,\"iterations\":%u,\"pass\":%u,\"stage\":\"%s\",\"distance\":{\"index\":", delta, stepSeconds, iterations, sample.pass, stageNames[stage]);
+            if (sample.distanceValid && sample.distanceIndex != UINT32_MAX)
+                fprintf(stderr, "%u,\"absResidual\":%.17g},\"shapes\":[", sample.distanceIndex, sample.maxDistanceResidual);
+            else
+                fprintf(stderr, "null,\"absResidual\":null},\"shapes\":[");
+            for (uint32_t shape = 0; shape < shapeCount; ++shape)
+            {
+                if (shape > 0)
+                    fprintf(stderr, ",");
+                if (sample.shapeValid[shape] && sample.maxPenetrationLink[shape] != UINT32_MAX)
+                    fprintf(stderr, "{\"shape\":%u,\"link\":%u,\"maxPenetration\":%.17g}", shape, sample.maxPenetrationLink[shape], sample.maxPenetration[shape]);
+                else if (sample.shapeValid[shape])
+                    fprintf(stderr, "{\"shape\":%u,\"link\":null,\"maxPenetration\":0}", shape);
+                else
+                    fprintf(stderr, "{\"shape\":%u,\"link\":null,\"maxPenetration\":null}", shape);
+            }
+            fprintf(stderr, "]}\n");
+        }
+    }
+}
+#endif
 }
 
 bool ValidateSecondaryMotionLinks(const FModelSecondaryMotionState& state, String& error)
@@ -445,8 +627,15 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             }
         }
     }
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+    const bool traceSecondaryConstraints = IsSecondaryMotionConstraintTraceEnabled();
+    FSecondaryMotionConstraintTraceStage constraintTrace[2][3]{};
+#endif
     for (uint32_t pass = 0; pass < candidate.linkIterations; ++pass)
     {
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+        const bool captureConstraintPass = traceSecondaryConstraints && pass + 2u >= candidate.linkIterations;
+#endif
         for (uint32_t index = 0; index < resolvedDistances.Count(); ++index)
         {
             const auto& distance = resolvedDistances.At(index);
@@ -482,6 +671,12 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             if (memcmp(&secondBefore, &second, sizeof(second)) != 0)
                 restorePending.At(distance.secondChain) = 1;
         }
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (captureConstraintPass)
+        {
+            CaptureSecondaryMotionConstraintStage(pass, candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, constraintTrace[pass & 1u][0]);
+        }
+#endif
         for (uint32_t index = 0; index < resolvedLinks.Count(); ++index)
         {
             const auto& link = resolvedLinks.At(index);
@@ -494,7 +689,24 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             // float保存後の位置を比べ、符号付きゼロを含む変化も復元対象にする。
             const Vec3 firstBefore = first, secondBefore = second;
             FVector3d projectedFirst{ { first.x, first.y, first.z } }, projectedSecond{ { second.x, second.y, second.z } };
-            if (!animation::ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data() + link.shapeOffset, shapeCount, { { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, projectedFirst, projectedSecond, error) || !StorePosition(projectedFirst, first, error) || !StorePosition(projectedSecond, second, error))
+            bool projected = false;
+            if (pass >= (candidate.linkIterations + 1u) / 2u)
+            {
+                animation::FSecondaryMotionFreeSegmentAnchor firstAnchor;
+                animation::FSecondaryMotionFreeSegmentAnchor secondAnchor;
+                if (!BuildFreeSegmentAnchor(firstState, link.firstPoint, candidate.chains.At(link.firstChain)->settings.maxAngleDegrees, firstAnchor, error) || !BuildFreeSegmentAnchor(secondState, link.secondPoint, candidate.chains.At(link.secondChain)->settings.maxAngleDegrees, secondAnchor, error))
+                {
+                    LinkFailure(index, error);
+                    error.Append(" (link anchor)");
+                    return false;
+                }
+                projected = animation::ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(preparedShapes.Data() + link.shapeOffset, shapeCount, { { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, firstAnchor, secondAnchor, projectedFirst, projectedSecond, error);
+            }
+            else
+            {
+                projected = animation::ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data() + link.shapeOffset, shapeCount, { { referenceFirst.x, referenceFirst.y, referenceFirst.z } }, { { referenceSecond.x, referenceSecond.y, referenceSecond.z } }, projectedFirst, projectedSecond, error);
+            }
+            if (!projected || !StorePosition(projectedFirst, first, error) || !StorePosition(projectedSecond, second, error))
             {
                 LinkFailure(index, error);
                 error.Append(" (link projection)");
@@ -511,6 +723,12 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
                 restorePending.At(link.secondChain) = 1;
             }
         }
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (captureConstraintPass)
+        {
+            CaptureSecondaryMotionConstraintStage(pass, candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, constraintTrace[pass & 1u][1]);
+        }
+#endif
         // 初回は接続鎖をすべて検証し、以後は変更または不成立が残る鎖だけ復元する。
         for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
         {
@@ -535,6 +753,12 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             }
             restorePending.At(chain) = 0;
         }
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+        if (captureConstraintPass)
+        {
+            CaptureSecondaryMotionConstraintStage(pass, candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, constraintTrace[pass & 1u][2]);
+        }
+#endif
         if (CheckCandidate(candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, restorePending, error))
         {
             // 距離制約はframe-level solve、それ以外は既存substepの秒数で速度へ補正を戻す。
@@ -577,6 +801,13 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
         error.Assign(activeDistances ? "secondary links and distances could not preserve body contact and chain constraints together" : "secondary links could not preserve body contact and chain constraints together");
     else if (activeDistances)
         error.Append(" (secondary constraints did not converge)");
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+    if (traceSecondaryConstraints)
+    {
+        const double traceStep = activeDistances ? candidate.distanceStepSeconds : (delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0);
+        WriteSecondaryMotionConstraintTrace(constraintTrace, candidate.linkIterations, activeLinks ? shapeCount : 0u, delta, traceStep);
+    }
+#endif
     return false;
 }
 

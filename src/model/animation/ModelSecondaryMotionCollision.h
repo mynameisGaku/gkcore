@@ -7,6 +7,7 @@
 #include "foundation/String.h"
 #include "model/animation/FPreparedSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
+#include "model/animation/FSecondaryMotionFreeSegmentAnchor.h"
 
 namespace gk
 {
@@ -65,6 +66,11 @@ bool PrepareSecondaryMotionFreeSegmentShapes(const FModelSecondaryMotionCollisio
 bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
 
 /**
+ * 準備済み形状へ接触する線分を、両端の親位置と曲げ角を考慮して投影する。
+ */
+bool ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, const FSecondaryMotionFreeSegmentAnchor& firstAnchor, const FSecondaryMotionFreeSegmentAnchor& secondAnchor, gk::FVector3d& first, gk::FVector3d& second, gk::String& error);
+
+/**
  * 準備済み身体形状に対する自由線分の接触を検査する。許容幅の割合は0から1。
  */
 bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0);
@@ -83,6 +89,13 @@ bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisio
  * 半径を変えずに生形状を検証・準備し、失敗時はoutputを保つ。
  */
 bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::Array<FPreparedSecondaryMotionCollisionShape>& output, gk::String& error);
+
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+/**
+ * 準備済み形状と自由線分の侵入深さを診断する。診断無効時や計算失敗時はdepthを保つ。
+ */
+bool MeasurePreparedSecondaryMotionFreeSegmentPenetration(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second, double& depth, gk::String& error);
+#endif
 
 #if defined(GKCORE_TESTING)
 /**

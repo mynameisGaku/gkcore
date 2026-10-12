@@ -5,6 +5,8 @@
 
 #include <float.h>
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
 
 namespace gk::model::animation
 {
@@ -1229,7 +1231,135 @@ bool ProjectSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollis
     return ProjectPreparedSecondaryMotionFreeSegmentContacts(preparedShapes.Data(), preparedShapes.Count(), referenceFirst, referenceSecond, first, second, error);
 }
 
-bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+namespace
+{
+/**
+ * 親位置と基準方向を検査し、補正中に使う角度制約を複製する。
+ */
+bool PrepareFreeSegmentAnchor(const FSecondaryMotionFreeSegmentAnchor& input, FSecondaryMotionFreeSegmentAnchor& output, gk::String& error)
+{
+    output = input;
+    if (!ValidateFreeSegmentEndpoints(output.parentPosition, output.parentPosition, error) || !IsFinite(output.referenceDirection) || !isfinite(output.cosineLimit) || output.cosineLimit < -1.0 || output.cosineLimit > 1.0)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion free-segment anchor is invalid");
+        return false;
+    }
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        if (fabs(output.referenceDirection.value[axis]) > FLT_MAX)
+        {
+            error.Assign("Secondary motion free-segment anchor direction exceeds float range");
+            return false;
+        }
+    }
+    if (!Normalize(output.referenceDirection))
+    {
+        error.Assign("Secondary motion free-segment anchor direction is degenerate");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 接触勾配から親位置へ近づく成分と、角度境界を越える成分を除く。
+ */
+bool MakeAnchoredContactTangent(const FSecondaryMotionFreeSegmentAnchor& anchor, const gk::FVector3d& endpoint, const gk::FVector3d& normal, gk::FVector3d& tangent, gk::String& error)
+{
+    // 親からendpointへ向かう現在の骨方向。
+    gk::FVector3d radial = Subtract(endpoint, anchor.parentPosition);
+    if (!Normalize(radial))
+    {
+        error.Assign("Secondary motion free-segment anchor radial direction is degenerate");
+        return false;
+    }
+    tangent = Subtract(normal, Multiply(radial, Dot(normal, radial)));
+    if (anchor.cosineLimit >= 1.0)
+    {
+        tangent = {};
+        return true;
+    }
+    // 現在方向が基準方向の許容円錐境界へ近いか調べる余弦。
+    const double cosine = Dot(anchor.referenceDirection, radial);
+    if (anchor.cosineLimit > -1.0 && cosine <= anchor.cosineLimit + 64.0 * FLT_EPSILON)
+    {
+        // 許容角境界に沿う勾配。
+        const gk::FVector3d boundaryGradient = Subtract(anchor.referenceDirection, Multiply(radial, cosine));
+        // 境界勾配の長さの二乗。
+        const double gradientLengthSquared = Dot(boundaryGradient, boundaryGradient);
+        // tangentが許容角の外側へ押す成分。
+        const double outwardDerivative = Dot(boundaryGradient, tangent);
+        if (outwardDerivative < 0.0 && gradientLengthSquared > 64.0 * DBL_EPSILON)
+        {
+            tangent = Subtract(tangent, Multiply(boundaryGradient, outwardDerivative / gradientLengthSquared));
+        }
+    }
+    if (!IsFinite(tangent))
+    {
+        error.Assign("Secondary motion free-segment anchor tangent is non-finite");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 2端点を同じ向きへ移し、capsuleの支持平面外へ出す最小の合法量を選ぶ。
+ */
+bool TranslateAnchoredSegmentToSupportPlane(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& normal, double guard, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+{
+    // capsule軸の両端を法線方向へ射影した値。
+    const double shapeStartProjection = Dot(shape.start, normal);
+    const double shapeEndProjection = Dot(shape.end, normal);
+    // 線分の両端を同じ法線へ射影した値。
+    const double firstProjection = Dot(first, normal);
+    const double secondProjection = Dot(second, normal);
+    // 軸と線分の支持面を表す上下限。
+    const double shapeMaximum = fmax(shapeStartProjection, shapeEndProjection);
+    const double shapeMinimum = fmin(shapeStartProjection, shapeEndProjection);
+    const double segmentMaximum = fmax(firstProjection, secondProjection);
+    const double segmentMinimum = fmin(firstProjection, secondProjection);
+    // 正負それぞれの支持面まで全線分を動かす距離。
+    const double positiveDistance = shapeMaximum + shape.radius + guard - segmentMinimum;
+    const double negativeDistance = segmentMaximum - (shapeMinimum - shape.radius - guard);
+    if (!isfinite(positiveDistance) || !isfinite(negativeDistance) || positiveDistance < 0.0 || negativeDistance < 0.0)
+    {
+        error.Assign("Secondary motion free-segment support-plane escape is invalid");
+        return false;
+    }
+    // 正方向へ移した場合の両端候補。
+    gk::FVector3d positiveFirst = Add(first, Multiply(normal, positiveDistance));
+    gk::FVector3d positiveSecond = Add(second, Multiply(normal, positiveDistance));
+    // 負方向へ移した場合の両端候補。
+    gk::FVector3d negativeFirst = Subtract(first, Multiply(normal, negativeDistance));
+    gk::FVector3d negativeSecond = Subtract(second, Multiply(normal, negativeDistance));
+    // 各方向が有限かつfloat範囲へ収まるか検査するerror受け皿。
+    gk::String positiveError;
+    gk::String negativeError;
+    // 正負それぞれの候補が採用可能か。
+    const bool positiveValid = ValidateFreeSegmentEndpoints(positiveFirst, positiveSecond, positiveError);
+    const bool negativeValid = ValidateFreeSegmentEndpoints(negativeFirst, negativeSecond, negativeError);
+    if (!positiveValid && !negativeValid)
+    {
+        error.Assign("Secondary motion free-segment support-plane escape exceeds float range");
+        return false;
+    }
+    if (positiveValid && (!negativeValid || positiveDistance <= negativeDistance))
+    {
+        first = positiveFirst;
+        second = positiveSecond;
+    }
+    else
+    {
+        first = negativeFirst;
+        second = negativeSecond;
+    }
+    return true;
+}
+
+/**
+ * 接触制約を投影し、必要なら親位置の接線空間へ補正方向を制限する。
+ */
+bool ProjectPreparedSecondaryMotionFreeSegmentContactsInternal(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, const FSecondaryMotionFreeSegmentAnchor* firstAnchor, const FSecondaryMotionFreeSegmentAnchor* secondAnchor, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
 {
     error.Clear();
     if (&first == &second)
@@ -1242,12 +1372,17 @@ bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryM
     const gk::FVector3d candidateReferenceSecond = referenceSecond;
     gk::FVector3d candidateFirst = first;
     gk::FVector3d candidateSecond = second;
+    // 検査・正規化後に投影へ使う親位置と角度制約。
+    FSecondaryMotionFreeSegmentAnchor candidateFirstAnchor{};
+    FSecondaryMotionFreeSegmentAnchor candidateSecondAnchor{};
     if (shapeCount > kMaximumCollisionShapes || (shapeCount > 0 && !shapes))
     {
         error.Assign("Secondary motion prepared collision shape count is invalid");
         return false;
     }
     if (!ValidateFreeSegmentEndpoints(candidateReferenceFirst, candidateReferenceSecond, error) || !ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
+        return false;
+    if ((firstAnchor && !PrepareFreeSegmentAnchor(*firstAnchor, candidateFirstAnchor, error)) || (secondAnchor && !PrepareFreeSegmentAnchor(*secondAnchor, candidateSecondAnchor, error)))
         return false;
     if (shapeCount == 0)
     {
@@ -1304,6 +1439,49 @@ bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryM
             const double targetDistance = shape.radius + guard;
             // 最近点を表面の外へ運ぶ距離。
             const double penetration = targetDistance - distance;
+            if (firstAnchor && secondAnchor)
+            {
+                if (!isfinite(targetDistance) || !isfinite(penetration) || !(penetration > 0.0))
+                {
+                    error.Assign("Secondary motion anchored free-segment correction is invalid");
+                    return false;
+                }
+                // 各endpointで親方向と角度境界を保てる接触勾配。
+                gk::FVector3d firstTangent{};
+                gk::FVector3d secondTangent{};
+                if (!MakeAnchoredContactTangent(candidateFirstAnchor, candidateFirst, normal, firstTangent, error) || !MakeAnchoredContactTangent(candidateSecondAnchor, candidateSecond, normal, secondTangent, error))
+                    return false;
+                // 最近点に対する各端点の補正重み。
+                const double firstWeight = 1.0 - spanAmount;
+                const double secondWeight = spanAmount;
+                // 親位置と曲げ角を保てる接触勾配の二乗和。
+                const double denominator = firstWeight * firstWeight * Dot(firstTangent, firstTangent) + secondWeight * secondWeight * Dot(secondTangent, secondTangent);
+                if (!isfinite(denominator))
+                {
+                    error.Assign("Secondary motion anchored free-segment denominator is invalid");
+                    return false;
+                }
+                if (denominator > 64.0 * DBL_EPSILON)
+                {
+                    candidateFirst = Add(candidateFirst, Multiply(firstTangent, penetration * firstWeight / denominator));
+                    candidateSecond = Add(candidateSecond, Multiply(secondTangent, penetration * secondWeight / denominator));
+                    if (!ValidateFreeSegmentEndpoints(candidateFirst, candidateSecond, error))
+                        return false;
+                    continue;
+                }
+                // 端点をまとめて逃がすための線分方向。
+                const gk::FVector3d commonDirection = Cross(normal, Subtract(candidateSecond, candidateFirst));
+                // 支持面へ使う正規化方向。
+                gk::FVector3d supportDirection = commonDirection;
+                if (!Normalize(supportDirection))
+                {
+                    error.Assign("Secondary motion anchored free-segment has no common escape direction");
+                    return false;
+                }
+                if (!TranslateAnchoredSegmentToSupportPlane(shape, supportDirection, guard, candidateFirst, candidateSecond, error))
+                    return false;
+                continue;
+            }
             // 両端の逆質量を1としたPBD補正の分母。
             const double firstWeight = 1.0 - spanAmount;
             const double secondWeight = spanAmount;
@@ -1328,6 +1506,17 @@ bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryM
         }
     }
     return false;
+}
+}
+
+bool ProjectPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+{
+    return ProjectPreparedSecondaryMotionFreeSegmentContactsInternal(shapes, shapeCount, referenceFirst, referenceSecond, nullptr, nullptr, first, second, error);
+}
+
+bool ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& referenceFirst, const gk::FVector3d& referenceSecond, const FSecondaryMotionFreeSegmentAnchor& firstAnchor, const FSecondaryMotionFreeSegmentAnchor& secondAnchor, gk::FVector3d& first, gk::FVector3d& second, gk::String& error)
+{
+    return ProjectPreparedSecondaryMotionFreeSegmentContactsInternal(shapes, shapeCount, referenceFirst, referenceSecond, &firstAnchor, &secondAnchor, first, second, error);
 }
 
 bool CheckSecondaryMotionFreeSegmentContacts(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, float radius, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error)
@@ -1438,5 +1627,49 @@ bool PrepareSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionS
     error.Clear();
     return true;
 }
+
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+bool MeasurePreparedSecondaryMotionFreeSegmentPenetration(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second, double& depth, gk::String& error)
+{
+    error.Clear();
+    const uintptr_t depthAddress = reinterpret_cast<uintptr_t>(&depth);
+    const uintptr_t shapeAddress = reinterpret_cast<uintptr_t>(&shape);
+    const uintptr_t firstAddress = reinterpret_cast<uintptr_t>(&first);
+    const uintptr_t secondAddress = reinterpret_cast<uintptr_t>(&second);
+    if ((depthAddress <= shapeAddress ? shapeAddress - depthAddress < sizeof(depth) : depthAddress - shapeAddress < sizeof(shape)) || (depthAddress <= firstAddress ? firstAddress - depthAddress < sizeof(depth) : depthAddress - firstAddress < sizeof(first)) || (depthAddress <= secondAddress ? secondAddress - depthAddress < sizeof(depth) : depthAddress - secondAddress < sizeof(second)))
+    {
+        error.Assign("Secondary motion penetration output overlaps its inputs");
+        return false;
+    }
+    bool boundsValid = true;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+    {
+        boundsValid = boundsValid && isfinite(shape.boundsLow[axis]) && isfinite(shape.boundsHigh[axis]) && shape.boundsLow[axis] <= shape.boundsHigh[axis];
+    }
+    if (!ValidateFreeSegmentEndpoints(first, second, error) || !IsFinite(shape.start) || !IsFinite(shape.end) || !IsFinite(shape.axis) || !isfinite(shape.axisLengthSquared) || shape.axisLengthSquared < 0.0 || !isfinite(shape.radius) || shape.radius < 0.0 || !isfinite(shape.tolerance) || shape.tolerance < 0.0 || !boundsValid)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion prepared penetration shape is invalid");
+        return false;
+    }
+    double spanAmount = 0.0;
+    double axisAmount = 0.0;
+    gk::FVector3d spanPoint{};
+    gk::FVector3d axisPoint{};
+    ClosestSegmentPairWithAxis(first, second, shape.start, shape.axis, shape.axisLengthSquared, spanAmount, axisAmount, spanPoint, axisPoint);
+    (void)spanAmount;
+    (void)axisAmount;
+    const double distance = Length(Subtract(spanPoint, axisPoint));
+    const double candidateDepth = shape.radius - distance;
+    if (!isfinite(distance) || !isfinite(candidateDepth))
+    {
+        error.Assign("Secondary motion penetration depth is outside the numeric range");
+        return false;
+    }
+    depth = candidateDepth;
+    error.Clear();
+    return true;
+}
+#endif
 
 }

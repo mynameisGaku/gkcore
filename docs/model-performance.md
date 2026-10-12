@@ -147,3 +147,10 @@ START15の試験設定では13鎖・身体8形状・接触線分10本に、基�
 30/60/120Hzでも3.35秒から同じmotion時刻4.25秒まで28/55/109frameを再生し、計192frameのGPU変形と更新成立を確認しました。鎖を内部substepで積分してから距離をframe末尾で解くため、更新頻度が異なる結果は完全一致を保証しません。実時間停止の再現と、接触・距離・鎖復元の残差の切り分けを続けます。
 
 記録した今回の3300 deltaを距離制約ON/OFFで再生し、両方completed=trueを確認しました。距離OFFの現在sourceで追加240frameを描画し、前commitの24画像と全Skirt点参照JSONが一致しています。保存画像は画素一致を確認してlossless PNGへ変換し、重複したDebug/旧版のPPM、今回使い終えたtrial設定を片づけます。最新Release ON/OFF画像、元asset、現在build、成功/失敗ログとdelta traceは保持します。再生ログはdistance-real-delta-replay-{on,off}.log、画像/skin比較はdistance-image-comparison.json、distance-off-and-rate-comparison.json、整理記録はdistance-cleanup.jsonです。
+
+
+## 骨長復元で消される接触補正を変える
+
+距離制約付きの実時間停止を611 deltaで再現しました。更新秒数.0102454の最後2反復では、接触線分1の身体形状4への侵入が投影後には解け、鎖復元後に95.384/93.002マイクロmodel unit戻ります。距離残差は13.083/12.712マイクロunitで、主要な残りは線分接触でした。32回反復でも通常法線への補正が骨長復元で小さくなります。反復の後半だけ親位置と曲げ角に沿う方向へ補正し、分母にもその方向の接触改善量を反映しました。半径・角度上限・接触許容幅・反復上限は保持します。
+
+同じGPU・Release1280×720・標準効果・VSyncなし・debug表示/頂点補正OFF・YUMEKA2motion blend+右腕IK+13鎖+身体8形状+接触線分10本で、距離10組あり3000frame/warmup300が155.443FPS、p95 7.741ms、Draw .390/Present2.238/IK .509/secondary3.239msで完走しました。距離なしも178.505FPS、p95 6.479ms、Draw .492/Present2.264/IK .513/secondary2.275msで完走。未完走151.599FPSとの速度改善比較は行いません。目的は接触停止の修正で、300FPSは未達です。固定2区間の保存画像とSkirt侵入は変わらず、布面の品質改善とは判定しません。

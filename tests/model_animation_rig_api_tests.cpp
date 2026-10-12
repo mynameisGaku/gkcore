@@ -17,6 +17,7 @@
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "foundation/Memory.h"
@@ -3235,6 +3236,229 @@ static bool TestSecondaryMotionLinkConstraintOnlyChangedChains()
 }
 
 /**
+ * body接触後の鎖復元と距離制約が有限反復で両立する既知可行姿勢を確かめる。
+ */
+static bool TestSecondaryMotionLinkLocalStallFeasiblePose()
+{
+    using namespace gk::model::animation;
+    const double angle = 20.0 * 3.14159265358979323846 / 180.0;
+    const double sine = sin(angle);
+    const double cosine = cos(angle);
+    const FModelSecondaryMotionCollisionShape body = { { 0.0f, -0.1f, 0.0f }, { 0.0f, 0.1f, 0.0f }, 0.2f };
+    gk::String error;
+    const auto Distance = [](const gk::Vec3& first, const gk::Vec3& second)
+    {
+        const double x = static_cast<double>(second.x) - first.x;
+        const double y = static_cast<double>(second.y) - first.y;
+        const double z = static_cast<double>(second.z) - first.z;
+        return sqrt(x * x + y * y + z * z);
+    };
+    const auto Dot = [](const gk::Vec3& first, const gk::Vec3& second) { return static_cast<double>(first.x) * second.x + static_cast<double>(first.y) * second.y + static_cast<double>(first.z) * second.z; };
+    const auto MakeFixture = [&](gk::model::FModelSecondaryMotionState& state, bool withDistance, bool reverseLink, const gk::Vec3& endOffset, const auto& transform)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < 2; ++chainIndex)
+        {
+            auto* chain = new gk::model::FModelSecondaryMotionChain;
+            const uint32_t bones[2] = { chainIndex * 2u, chainIndex * 2u + 1u };
+            const float side = chainIndex == 0 ? -0.5f : 0.5f;
+            const gk::Vec3 baseTargets[3] = { { side, 0.0f, -1.0f }, { side, 0.0f, 0.0f }, { side, 0.0f, 1.0f } };
+            gk::Vec3 targets[3];
+            for (uint32_t point = 0; point < 3; ++point)
+            {
+                targets[point] = transform(baseTargets[point]);
+            }
+            chain->settings.gravity = {};
+            chain->settings.maxAngleDegrees = 20.0f;
+            chain->settings.endOffset = endOffset;
+            chain->settings.constraintIterations = 8;
+            const bool ready = chain->bones.AppendRange(bones, 2) && ResetSecondaryMotionChain(targets, 3, chain->simulation, error) && state.chains.Append(chain);
+            if (!ready)
+            {
+                delete chain;
+                return false;
+            }
+        }
+        const gk::FModelSecondaryMotionLink link = reverseLink ? gk::FModelSecondaryMotionLink{ 3, 1, 0.0f } : gk::FModelSecondaryMotionLink{ 1, 3, 0.0f };
+        if (!state.links.Append(link))
+        {
+            return false;
+        }
+        state.linkIterations = 32;
+        if (withDistance)
+        {
+            const gk::FModelSecondaryMotionDistanceConstraint constraint = reverseLink ? gk::FModelSecondaryMotionDistanceConstraint{ 3, 1, 1.0f, 0.001f } : gk::FModelSecondaryMotionDistanceConstraint{ 1, 3, 1.0f, 0.001f };
+            if (!state.distanceConstraints.Append(constraint) || !state.distanceLambdas.Append(0.0))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    // ±20度で同じ高さへ傾けた2端点は、長さ1を保ちつつbody軸とlink半径0の両方を避ける。
+    const gk::Vec3 feasibleFirstRoot = { -0.5f, 0.0f, -1.0f };
+    const gk::Vec3 feasibleFirst = { -0.5f, static_cast<float>(sine), static_cast<float>(-1.0 + cosine) };
+    const gk::Vec3 feasibleFirstTip = { -0.5f, static_cast<float>(2.0 * sine), static_cast<float>(-1.0 + 2.0 * cosine) };
+    const gk::Vec3 feasibleSecondRoot = { 0.5f, 0.0f, -1.0f };
+    const gk::Vec3 feasibleSecond = { 0.5f, static_cast<float>(sine), static_cast<float>(-1.0 + cosine) };
+    const gk::Vec3 feasibleSecondTip = { 0.5f, static_cast<float>(2.0 * sine), static_cast<float>(-1.0 + 2.0 * cosine) };
+    if (fabs(Distance(feasibleFirstRoot, feasibleFirst) - 1.0) > 1.0e-6 || fabs(Distance(feasibleFirst, feasibleFirstTip) - 1.0) > 1.0e-6 || fabs(Distance(feasibleSecondRoot, feasibleSecond) - 1.0) > 1.0e-6 || fabs(Distance(feasibleSecond, feasibleSecondTip) - 1.0) > 1.0e-6)
+    {
+        fprintf(stderr, "known feasible local-stall endpoints did not preserve unit bone lengths\n");
+        return false;
+    }
+    if (fabs(Distance(feasibleFirst, feasibleSecond) - 1.0) > 1.0e-6 || fabs(feasibleFirst.x - body.start.x) <= body.radius || fabs(feasibleSecond.x - body.start.x) <= body.radius || fabs(feasibleFirstRoot.x - body.start.x) <= body.radius || fabs(feasibleSecondRoot.x - body.start.x) <= body.radius || fabs(feasibleFirstTip.x - body.start.x) <= body.radius || fabs(feasibleSecondTip.x - body.start.x) <= body.radius)
+    {
+        fprintf(stderr, "known feasible local-stall points did not preserve distance or point clearance\n");
+        return false;
+    }
+    const gk::Vec3 firstDirection = { 0.0f, feasibleFirst.y - feasibleFirstRoot.y, feasibleFirst.z - feasibleFirstRoot.z };
+    const gk::Vec3 secondDirection = { 0.0f, feasibleSecond.y - feasibleSecondRoot.y, feasibleSecond.z - feasibleSecondRoot.z };
+    const double firstDirectionLength = sqrt(Dot(firstDirection, firstDirection));
+    const double secondDirectionLength = sqrt(Dot(secondDirection, secondDirection));
+    if (fabs(firstDirection.z / firstDirectionLength - cosine) > 1.0e-6 || fabs(secondDirection.z / secondDirectionLength - cosine) > 1.0e-6)
+    {
+        fprintf(stderr, "known feasible local-stall endpoints exceeded their 20-degree cone\n");
+        return false;
+    }
+    const gk::Vec3 closestLinkPoint = { 0.0f, static_cast<float>(sine), static_cast<float>(-1.0 + cosine) };
+    const double closestBodyDistance = sqrt(static_cast<double>(closestLinkPoint.y - 0.1f) * (closestLinkPoint.y - 0.1f) + static_cast<double>(closestLinkPoint.z) * closestLinkPoint.z);
+    if (closestBodyDistance <= static_cast<double>(body.radius) + 0.001)
+    {
+        fprintf(stderr, "known feasible local-stall link still intersects the body capsule\n");
+        return false;
+    }
+
+    const auto ValidateSolvedCandidate = [&](const gk::model::FModelSecondaryMotionState& candidate, const FModelSecondaryMotionCollisionShape& activeBody, bool withDistance, const char* label)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < 2; ++chainIndex)
+        {
+            const auto& simulation = candidate.chains.At(chainIndex)->simulation;
+            for (uint32_t segment = 1; segment < 3; ++segment)
+            {
+                const auto& first = simulation.points.At(segment - 1u).position;
+                const auto& second = simulation.points.At(segment).position;
+                const auto& firstTarget = simulation.previousTargets.At(segment - 1u);
+                const auto& secondTarget = simulation.previousTargets.At(segment);
+                const double solvedLength = Distance(first, second);
+                const double targetLength = Distance(firstTarget, secondTarget);
+                const gk::Vec3 solvedAxis = { second.x - first.x, second.y - first.y, second.z - first.z };
+                const gk::Vec3 targetAxis = { secondTarget.x - firstTarget.x, secondTarget.y - firstTarget.y, secondTarget.z - firstTarget.z };
+                if (fabs(solvedLength - targetLength) > targetLength * 0.001 || Dot(solvedAxis, targetAxis) / (solvedLength * targetLength) < cos(angle) - 0.001)
+                {
+                    fprintf(stderr, "%s violated bone length or cone: chain=%u segment=%u\n", label, chainIndex, segment);
+                    return false;
+                }
+            }
+            gk::FVector3d points[3];
+            for (uint32_t point = 0; point < 3; ++point)
+            {
+                const auto& position = simulation.points.At(point).position;
+                points[point] = { { position.x, position.y, position.z } };
+            }
+            if (!CheckSecondaryMotionContacts(&activeBody, 1, points, 3, error))
+            {
+                fprintf(stderr, "%s left a chain point inside the body: %s\n", label, error.CStr());
+                return false;
+            }
+        }
+        const auto& first = candidate.chains.At(0)->simulation.points.At(1).position;
+        const auto& second = candidate.chains.At(1)->simulation.points.At(1).position;
+        if (!CheckSecondaryMotionFreeSegmentContacts(&activeBody, 1, 0.0f, { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error))
+        {
+            fprintf(stderr, "%s left the body-link segment inside the capsule: %s\n", label, error.CStr());
+            return false;
+        }
+        if (withDistance && (candidate.distanceConstraints.Count() != 1 || !CheckSecondaryMotionDistance(candidate.distanceConstraints.At(0).restDistance, candidate.distanceConstraints.At(0).compliance, candidate.distanceStepSeconds, candidate.distanceLambdas.At(0), { { first.x, first.y, first.z } }, { { second.x, second.y, second.z } }, error)))
+        {
+            fprintf(stderr, "%s violated its compliant distance residual: %s\n", label, error.CStr());
+            return false;
+        }
+        return true;
+    };
+
+    for (uint32_t withDistance = 0; withDistance < 2; ++withDistance)
+    {
+        gk::model::FModelSecondaryMotionState candidate;
+        gk::model::FModelSecondaryMotionState previous;
+        const auto Identity = [](gk::Vec3 point) { return point; };
+        if (!MakeFixture(candidate, withDistance != 0, false, { 0.0f, 0.0f, 1.0f }, Identity))
+        {
+            fprintf(stderr, "could not build the local-stall fixture: %s\n", error.CStr());
+            return false;
+        }
+        if (!ConstrainSecondaryMotionLinks(candidate, previous, &body, 1, 0.0, error))
+        {
+            fprintf(stderr, "known feasible body-link pose did not converge in 32 iterations (distance=%u): %s\n", withDistance, error.CStr());
+            return false;
+        }
+        if (!ValidateSolvedCandidate(candidate, body, withDistance != 0, "local-stall result"))
+        {
+            return false;
+        }
+    }
+
+    // 任意軸回転と平行移動を形状・鎖・可行姿勢へ共通適用し、端点順も反転する。
+    const double inverseAxisLength = 1.0 / sqrt(14.0);
+    const gk::Vec3 rotationAxis = { static_cast<float>(inverseAxisLength), static_cast<float>(2.0 * inverseAxisLength), static_cast<float>(3.0 * inverseAxisLength) };
+    const double rotationAngle = 0.73;
+    const double rotationCosine = cos(rotationAngle);
+    const double rotationSine = sin(rotationAngle);
+    const gk::Vec3 translation = { 3.0f, -2.0f, 1.5f };
+    const auto Transform = [&](gk::Vec3 point)
+    {
+        const double axisDot = static_cast<double>(rotationAxis.x) * point.x + static_cast<double>(rotationAxis.y) * point.y + static_cast<double>(rotationAxis.z) * point.z;
+        const gk::Vec3 cross = { rotationAxis.y * point.z - rotationAxis.z * point.y, rotationAxis.z * point.x - rotationAxis.x * point.z, rotationAxis.x * point.y - rotationAxis.y * point.x };
+        return gk::Vec3{ static_cast<float>(point.x * rotationCosine + cross.x * rotationSine + rotationAxis.x * axisDot * (1.0 - rotationCosine) + translation.x), static_cast<float>(point.y * rotationCosine + cross.y * rotationSine + rotationAxis.y * axisDot * (1.0 - rotationCosine) + translation.y), static_cast<float>(point.z * rotationCosine + cross.z * rotationSine + rotationAxis.z * axisDot * (1.0 - rotationCosine) + translation.z) };
+    };
+    const auto TransformVector = [&](gk::Vec3 vector)
+    {
+        const gk::Vec3 transformed = Transform(vector);
+        return gk::Vec3{ transformed.x - translation.x, transformed.y - translation.y, transformed.z - translation.z };
+    };
+    const FModelSecondaryMotionCollisionShape rotatedBody = { Transform({ body.start.x, body.start.y, body.start.z }), Transform({ body.end.x, body.end.y, body.end.z }), body.radius };
+    const gk::Vec3 rotatedFeasibleFirst = Transform(feasibleFirst);
+    const gk::Vec3 rotatedFeasibleSecond = Transform(feasibleSecond);
+    const gk::Vec3 rotatedFirstRoot = Transform(feasibleFirstRoot);
+    const gk::Vec3 rotatedFirstTip = Transform(feasibleFirstTip);
+    const gk::Vec3 rotatedSecondRoot = Transform(feasibleSecondRoot);
+    const gk::Vec3 rotatedSecondTip = Transform(feasibleSecondTip);
+    const gk::FVector3d rotatedKnownPoints[6] = { { { rotatedFirstRoot.x, rotatedFirstRoot.y, rotatedFirstRoot.z } }, { { rotatedFeasibleFirst.x, rotatedFeasibleFirst.y, rotatedFeasibleFirst.z } }, { { rotatedFirstTip.x, rotatedFirstTip.y, rotatedFirstTip.z } }, { { rotatedSecondRoot.x, rotatedSecondRoot.y, rotatedSecondRoot.z } }, { { rotatedFeasibleSecond.x, rotatedFeasibleSecond.y, rotatedFeasibleSecond.z } }, { { rotatedSecondTip.x, rotatedSecondTip.y, rotatedSecondTip.z } } };
+    if (fabs(Distance(rotatedFeasibleFirst, rotatedFeasibleSecond) - 1.0) > 1.0e-6 || !CheckSecondaryMotionContacts(&rotatedBody, 1, rotatedKnownPoints, 6, error) || !CheckSecondaryMotionFreeSegmentContacts(&rotatedBody, 1, 0.0f, { { rotatedFeasibleFirst.x, rotatedFeasibleFirst.y, rotatedFeasibleFirst.z } }, { { rotatedFeasibleSecond.x, rotatedFeasibleSecond.y, rotatedFeasibleSecond.z } }, error))
+    {
+        fprintf(stderr, "rigidly transformed known feasible link failed its independent contact check: %s\n", error.CStr());
+        return false;
+    }
+    for (uint32_t withDistance = 0; withDistance < 2; ++withDistance)
+    {
+        gk::model::FModelSecondaryMotionState candidate;
+        gk::model::FModelSecondaryMotionState previous;
+        if (!MakeFixture(candidate, withDistance != 0, true, TransformVector({ 0.0f, 0.0f, 1.0f }), Transform) || !ConstrainSecondaryMotionLinks(candidate, previous, &rotatedBody, 1, 0.0, error) || !ValidateSolvedCandidate(candidate, rotatedBody, withDistance != 0, "rotated reversed-link result"))
+        {
+            fprintf(stderr, "rigidly transformed reversed link did not converge (distance=%u): %s\n", withDistance, error.CStr());
+            return false;
+        }
+    }
+
+    gk::model::FModelSecondaryMotionState impossible;
+    gk::model::FModelSecondaryMotionState previous;
+    const auto Identity = [](gk::Vec3 point) { return point; };
+    if (!MakeFixture(impossible, false, true, { 0.0f, 0.0f, 1.0f }, Identity))
+    {
+        return false;
+    }
+    for (uint32_t chainIndex = 0; chainIndex < impossible.chains.Count(); ++chainIndex)
+    {
+        impossible.chains.At(chainIndex)->settings.maxAngleDegrees = 0.0f;
+    }
+    if (ConstrainSecondaryMotionLinks(impossible, previous, &body, 1, 0.0, error) || error.Empty())
+    {
+        fprintf(stderr, "zero-angle infeasible link contact was falsely accepted\n");
+        return false;
+    }
+    return true;
+}
+
+/**
  * 姿勢の向き補正をFKへ戻した線分が、投影候補の許容境界を跨ぐことを確認する。
  */
 static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
@@ -3336,5 +3560,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

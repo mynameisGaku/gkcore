@@ -26,6 +26,8 @@
 
 接続した鎖は初回の反復で長さ・角度・接触を検査します。後続の反復では、投影で位置が変わった鎖と、接触がまだ成立していない線分の両端鎖を補正します。位置が変わらず、接続も成立した鎖への再計算を省きます。
 
+反復の前半は通常の接触方向へ押し出します。後半まで接触が残るときは、親から子へ向かう骨方向と最大曲げ角を使い、骨の長さを戻す処理で消えにくい回転方向へ補正します。中心で交差してこの方向を定められない場合は、カプセル全体の外側へ向かう両側の移動を比較します。これらは候補の位置補正で、最終の骨長・曲げ角・接触・描画FKの検査を省きません。反復数や接触許容幅は増やしません。
+
 `GetModelSecondaryMotionDebugShapes`は公開値型`gk::FModelSecondaryMotionDebugShape`で、現在の姿勢に対応する接触形状をmodel空間で返します。`nullptr, 0`は必要な個数を返し、配列が足りない場合や無効なinstanceでは失敗して出力を保ちます。描画用の色分けでは、身体形状を青、自由に動く節を橙色、固定rootを白、仮想末端を灰色で表示します。身体球の半径には`SetModelSecondaryMotionColliders`のmarginが含まれ、鎖の球半径は上記のsetter値です。距離制約は半径0の接続線として、現在のbone原点間を表示します。照会はanimationと物理状態を進めません。
 
 身体形状の中に固定rootがある場合、その形状との最初の節間線分は接触判定から除外します。次の自由節の位置は引き続き検査します。鎖の球による接触は骨の位置を身体から離すもので、skin weightによる頂点位置や布の面全体は補正しません。複数boneのblendとmesh幅があるため、骨が離れていてもmeshが身体へ埋まることがあります。
@@ -91,7 +93,7 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。このoptionには`--secondary-colliders`が必要です。各行は`半径 | firstBone secondBone`で、半径はmodel空間です。設定ファイルは[スカート接続線分](../samples/config/yumeka-secondary-links.txt)を参照してください。接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
 
-骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。delta記録付きの再試行3300frameは完走しましたが、停止原因は未確定です。
+骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。これは布面の非貫通や全設定の収束を保証するものではありません。
 
 ```powershell
 model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-blend-ik <motion-a> <motion-b> --follow-motion --secondary-motion yumeka-bone-contact-motion.txt --secondary-colliders yumeka-bone-colliders.txt --collision-debug

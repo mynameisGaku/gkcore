@@ -420,7 +420,7 @@ int main(int argc, char** argv)
         return 2;
     }
     const uint32_t benchmarkTotalFrames = benchmarkWarmup + benchmarkFrames;
-    // 全frameのdeltaを再生順に保持する。
+    // 全frameのdeltaを再生または終了後の書き出し用に保持する。
     double benchmarkReplayDeltas[8192]{};
     // 再生deltaファイルのpath。
     const char* benchmarkDeltaReplayPath = getenv("GKCORE_BENCHMARK_DELTA_REPLAY_PATH");
@@ -433,9 +433,9 @@ int main(int argc, char** argv)
     }
     if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0] && !ReadDeltaReplayFile(benchmarkDeltaReplayPath, benchmarkTotalFrames, benchmarkReplayDeltas))
         return 2;
-    // 計測中にframe deltaを記録するfile。
+    // 再生終了後にdeltaをまとめて書くfile。frame中は書き込みで時間を変えない。
     FILE* benchmarkDeltaTraceFile = nullptr;
-    // fileへ確定したdelta行数。
+    // bufferに保持したdelta行数。失敗した更新のdeltaも含む。
     uint32_t benchmarkDeltaTraceCount = 0;
     if (benchmarkDeltaTracePath && benchmarkDeltaTracePath[0])
     {
@@ -723,14 +723,11 @@ int main(int argc, char** argv)
             break;
         }
 #if defined(GKCORE_MODEL_BENCHMARK)
-        if (benchmarkDeltaTraceFile && (fprintf(benchmarkDeltaTraceFile, "%.17g\n", deltaSeconds) < 0 || fflush(benchmarkDeltaTraceFile) != 0))
-        {
-            fprintf(stderr, "benchmark delta trace write failed at frame %u\n", benchmarkFrame);
-            failed = true;
-            break;
-        }
         if (benchmarkDeltaTraceFile)
+        {
+            benchmarkReplayDeltas[benchmarkDeltaTraceCount] = deltaSeconds;
             ++benchmarkDeltaTraceCount;
+        }
 #endif
         if (gk::IsKeyDown(gk::Key::ArrowLeft))
         {
@@ -964,13 +961,41 @@ int main(int argc, char** argv)
 #endif
     }
 #if defined(GKCORE_MODEL_BENCHMARK)
+    // 動作を測り終えてから書き出し、記録のための待ち時間を次のdeltaへ混ぜない。
+    const bool benchmarkHasTrace = benchmarkDeltaTraceFile != nullptr;
+    bool benchmarkTraceWritten = true;
+    if (benchmarkDeltaTraceFile)
+    {
+        for (uint32_t index = 0; index < benchmarkDeltaTraceCount; ++index)
+        {
+            if (fprintf(benchmarkDeltaTraceFile, "%.17g\n", benchmarkReplayDeltas[index]) < 0)
+            {
+                benchmarkTraceWritten = false;
+                break;
+            }
+        }
+        if (fflush(benchmarkDeltaTraceFile) != 0)
+        {
+            benchmarkTraceWritten = false;
+        }
+        if (fclose(benchmarkDeltaTraceFile) != 0)
+        {
+            benchmarkTraceWritten = false;
+        }
+        benchmarkDeltaTraceFile = nullptr;
+        if (!benchmarkTraceWritten)
+        {
+            fprintf(stderr, "benchmark delta trace write failed: %s\n", benchmarkDeltaTracePath);
+            failed = true;
+        }
+    }
     if (benchmarkDeltaReplayPath && benchmarkDeltaReplayPath[0])
     {
         fprintf(stdout, "{\"deltaReplay\":true,\"framesRequested\":%u,\"warmupFrames\":%u,\"framesCompleted\":%u,\"nextFrameIndex\":%u,\"completed\":%s}\n", benchmarkFrames, benchmarkWarmup, benchmarkFrame, benchmarkFrame, benchmarkFrame == benchmarkTotalFrames ? "true" : "false");
     }
-    else if (benchmarkDeltaTraceFile)
+    else if (benchmarkHasTrace)
     {
-        fprintf(stdout, "{\"deltaTrace\":true,\"framesRequested\":%u,\"warmupFrames\":%u,\"deltasRecorded\":%u,\"completed\":%s}\n", benchmarkFrames, benchmarkWarmup, benchmarkDeltaTraceCount, benchmarkFrame == benchmarkTotalFrames ? "true" : "false");
+        fprintf(stdout, "{\"deltaTrace\":true,\"framesRequested\":%u,\"warmupFrames\":%u,\"deltasRecorded\":%u,\"completed\":%s,\"traceWritten\":%s}\n", benchmarkFrames, benchmarkWarmup, benchmarkDeltaTraceCount, benchmarkFrame == benchmarkTotalFrames ? "true" : "false", benchmarkTraceWritten ? "true" : "false");
     }
     else
     {
@@ -1003,11 +1028,6 @@ int main(int argc, char** argv)
             p95FrameMs = frameMilliseconds[percentileIndex];
         }
         fprintf(stdout, "{\"framesRequested\":%u,\"warmupFrames\":%u,\"framesMeasured\":%u,\"completed\":%s,\"averageFps\":%.3f,\"p95FrameMs\":%.3f,\"averageDrawModelMs\":%.3f,\"averagePresentMs\":%.3f,\"averageIkSetupMs\":%.3f,\"averageSecondaryMotionMs\":%.3f}\n", benchmarkFrames, benchmarkWarmup, measuredFrames, benchmarkFrame == benchmarkTotalFrames ? "true" : "false", averageFps, p95FrameMs, averageDrawModelMs, averagePresentMs, averageIkSetupMs, averageSecondaryMotionMs);
-    }
-    if (benchmarkDeltaTraceFile && fclose(benchmarkDeltaTraceFile) != 0)
-    {
-        fprintf(stderr, "benchmark delta trace close failed: %s\n", benchmarkDeltaTracePath);
-        failed = true;
     }
 #endif
     if (model.IsValid() && !Check(gk::DeleteModel(model), "DeleteModel"))

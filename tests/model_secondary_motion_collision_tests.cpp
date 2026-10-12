@@ -1472,6 +1472,135 @@ bool TestPreparedFreeSegmentToleranceBoundaryRoundTrip()
 }
 
 /**
+ * 準備済み形状に対する自由線分の侵入深さを独立距離式と比較する。
+ */
+bool TestPreparedFreeSegmentPenetrationMeasurement()
+{
+    const FModelSecondaryMotionCollisionShape sphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.5f);
+    const FModelSecondaryMotionCollisionShape capsule = Shape({ 0.0f, -1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 0.4f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedSphere;
+    gk::Array<FPreparedSecondaryMotionCollisionShape> preparedCapsule;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&sphere, 1, preparedSphere, error) || preparedSphere.Count() != 1 || !PrepareSecondaryMotionCollisionShapes(&capsule, 1, preparedCapsule, error) || preparedCapsule.Count() != 1)
+        return Fail("could not prepare the penetration measurement shapes");
+
+    const auto MeasureAgainstOracle = [&](const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second, double expected, const char* message)
+    {
+        const double oracle = shape.radius - SegmentDistance(first, second, shape.start, shape.end);
+        double measured = -123.5;
+        error.Clear();
+        if (fabs(oracle - expected) > 1.0e-12 || !MeasurePreparedSecondaryMotionFreeSegmentPenetration(shape, first, second, measured, error) || !error.Empty() || fabs(measured - oracle) > 1.0e-12)
+            return Fail(message);
+        return true;
+    };
+    const gk::FVector3d sphereCrossFirst = Point(-1.0, 0.0, 0.0);
+    const gk::FVector3d sphereCrossSecond = Point(1.0, 0.0, 0.0);
+    if (!MeasureAgainstOracle(preparedSphere.At(0), sphereCrossFirst, sphereCrossSecond, 0.5, "sphere-crossing segment did not report its radius as penetration depth"))
+        return false;
+    if (!MeasureAgainstOracle(preparedSphere.At(0), Point(-1.0, 0.5, 0.0), Point(1.0, 0.5, 0.0), 0.0, "tangent sphere segment did not report zero penetration"))
+        return false;
+    if (!MeasureAgainstOracle(preparedSphere.At(0), Point(-1.0, 0.75, 0.0), Point(1.0, 0.75, 0.0), -0.25, "outside sphere segment did not report a negative clearance depth"))
+        return false;
+    if (!MeasureAgainstOracle(preparedCapsule.At(0), Point(0.1, -0.5, 0.0), Point(0.1, 0.5, 0.0), static_cast<double>(capsule.radius) - 0.1, "capsule-side distance did not produce the expected penetration depth"))
+        return false;
+    if (!MeasureAgainstOracle(preparedCapsule.At(0), Point(0.0, 1.3, 0.0), Point(0.2, 1.3, 0.0), static_cast<double>(capsule.radius) - 0.3, "capsule-endpoint distance did not produce the expected penetration depth"))
+        return false;
+    if (!MeasureAgainstOracle(preparedCapsule.At(0), Point(0.0, 1.25, 0.0), Point(0.0, 1.25, 0.0), static_cast<double>(capsule.radius) - 0.25, "degenerate segment against a capsule endpoint was measured incorrectly"))
+        return false;
+
+    const double sentinelDepth = 37.25;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const double infinity = std::numeric_limits<double>::infinity();
+    const auto RejectAtomic = [&](const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second)
+    {
+        double depth = sentinelDepth;
+        error.Clear();
+        const bool rejected = !MeasurePreparedSecondaryMotionFreeSegmentPenetration(shape, first, second, depth, error) && !error.Empty() && memcmp(&depth, &sentinelDepth, sizeof(depth)) == 0;
+        return rejected;
+    };
+    FPreparedSecondaryMotionCollisionShape invalid = preparedSphere.At(0);
+    invalid.radius = std::numeric_limits<double>::quiet_NaN();
+    if (!RejectAtomic(invalid, sphereCrossFirst, sphereCrossSecond))
+        return Fail("non-finite prepared radius was accepted or changed the depth output");
+    invalid = preparedSphere.At(0);
+    invalid.radius = -0.1;
+    if (!RejectAtomic(invalid, sphereCrossFirst, sphereCrossSecond))
+        return Fail("negative prepared radius was accepted or changed the depth output");
+    invalid = preparedSphere.At(0);
+    invalid.boundsLow[1] = infinity;
+    if (!RejectAtomic(invalid, sphereCrossFirst, sphereCrossSecond))
+        return Fail("non-finite prepared bounds were accepted or changed the depth output");
+    if (!RejectAtomic(preparedSphere.At(0), Point(nan, 0.0, 0.0), sphereCrossSecond) || !RejectAtomic(preparedSphere.At(0), sphereCrossFirst, Point(0.0, infinity, 0.0)) || !RejectAtomic(preparedSphere.At(0), Point(static_cast<double>(std::numeric_limits<float>::max()) * 2.0, 0.0, 0.0), sphereCrossSecond))
+        return Fail("invalid or out-of-float-range segment input was accepted or changed the depth output");
+    return true;
+}
+
+/**
+ * 親位置と曲げ制約を加えた線分投影が通常のPBD補正を保ち、失敗時に端点を保つ。
+ */
+bool TestAnchoredPreparedFreeSegmentProjection()
+{
+    const FModelSecondaryMotionCollisionShape sphere = Shape({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.5f);
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&sphere, 1, prepared, error) || prepared.Count() != 1)
+        return Fail("could not prepare the anchored-projection sphere");
+
+    const gk::FVector3d referenceFirst = Point(-1.0, 0.25, 0.0);
+    const gk::FVector3d referenceSecond = Point(1.0, 0.25, 0.0);
+    const gk::model::animation::FSecondaryMotionFreeSegmentAnchor firstAnchor = { Point(-1.0, 0.25, 1.0), Point(0.0, 0.0, -1.0), -1.0 };
+    const gk::model::animation::FSecondaryMotionFreeSegmentAnchor secondAnchor = { Point(1.0, 0.25, 1.0), Point(0.0, 0.0, -1.0), -1.0 };
+    gk::FVector3d anchoredFirst = referenceFirst;
+    gk::FVector3d anchoredSecond = referenceSecond;
+    gk::FVector3d legacyFirst = referenceFirst;
+    gk::FVector3d legacySecond = referenceSecond;
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(prepared.Data(), prepared.Count(), referenceFirst, referenceSecond, firstAnchor, secondAnchor, anchoredFirst, anchoredSecond, error) || !error.Empty())
+        return Fail("anchored sphere projection did not succeed");
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), referenceFirst, referenceSecond, legacyFirst, legacySecond, error) || !error.Empty())
+        return Fail("legacy sphere projection did not succeed for comparison");
+    if (memcmp(&anchoredFirst, &legacyFirst, sizeof(legacyFirst)) != 0 || memcmp(&anchoredSecond, &legacySecond, sizeof(legacySecond)) != 0)
+        return Fail("orthogonal parent anchors changed the unconstrained PBD projection result");
+
+    // 中点の法線は+y、両端の重みは1/2なので、PBD分母1/2で両端が同量だけ動く。
+    const double guard = fmax(1.0e-7, fmax(static_cast<double>(sphere.radius) * 1.0e-6, std::numeric_limits<float>::epsilon()));
+    const double penetration = static_cast<double>(sphere.radius) + guard - 0.25;
+    const double expectedY = 0.25 + penetration * 0.5 / 0.5;
+    if (fabs(anchoredFirst.value[0] + 1.0) > 1.0e-12 || fabs(anchoredSecond.value[0] - 1.0) > 1.0e-12 || fabs(anchoredFirst.value[1] - expectedY) > 1.0e-12 || fabs(anchoredSecond.value[1] - expectedY) > 1.0e-12 || fabs(anchoredFirst.value[2]) > 1.0e-12 || fabs(anchoredSecond.value[2]) > 1.0e-12)
+        return Fail("anchored sphere projection did not match the independent single-step PBD equation");
+    if (SegmentDistance(anchoredFirst, anchoredSecond, Point(0.0, 0.0, 0.0), Point(0.0, 0.0, 0.0)) < sphere.radius)
+        return Fail("anchored sphere projection remained penetrating");
+
+    gk::FVector3d emptyFirst = Point(4.0, -3.0, 2.0);
+    gk::FVector3d emptySecond = Point(-2.0, 5.0, 1.0);
+    const gk::FVector3d savedEmptyFirst = emptyFirst;
+    const gk::FVector3d savedEmptySecond = emptySecond;
+    if (!ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(nullptr, 0, savedEmptyFirst, savedEmptySecond, firstAnchor, secondAnchor, emptyFirst, emptySecond, error) || !error.Empty() || memcmp(&emptyFirst, &savedEmptyFirst, sizeof(emptyFirst)) != 0 || memcmp(&emptySecond, &savedEmptySecond, sizeof(emptySecond)) != 0)
+        return Fail("zero-body anchored projection did not preserve both endpoints");
+
+    gk::FVector3d aliased = Point(7.0, 8.0, 9.0);
+    const gk::FVector3d savedAlias = aliased;
+    if (ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(prepared.Data(), prepared.Count(), savedAlias, savedAlias, firstAnchor, secondAnchor, aliased, aliased, error) || error.Empty() || memcmp(&aliased, &savedAlias, sizeof(aliased)) != 0)
+        return Fail("aliased anchored-projection endpoints were accepted or changed");
+
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    const auto RejectAtomic = [&](const gk::model::animation::FSecondaryMotionFreeSegmentAnchor& invalidFirst, const gk::model::animation::FSecondaryMotionFreeSegmentAnchor& invalidSecond)
+    {
+        gk::FVector3d first = Point(3.0, 4.0, 5.0);
+        gk::FVector3d second = Point(6.0, 7.0, 8.0);
+        const gk::FVector3d savedFirst = first;
+        const gk::FVector3d savedSecond = second;
+        error.Clear();
+        return !ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(prepared.Data(), prepared.Count(), referenceFirst, referenceSecond, invalidFirst, invalidSecond, first, second, error) && !error.Empty() && memcmp(&first, &savedFirst, sizeof(first)) == 0 && memcmp(&second, &savedSecond, sizeof(second)) == 0;
+    };
+    const gk::model::animation::FSecondaryMotionFreeSegmentAnchor zeroDirection = { Point(-1.0, 0.25, 1.0), Point(0.0, 0.0, 0.0), -1.0 };
+    const gk::model::animation::FSecondaryMotionFreeSegmentAnchor nonFiniteParent = { Point(nan, 0.25, 1.0), Point(0.0, 0.0, -1.0), -1.0 };
+    const gk::model::animation::FSecondaryMotionFreeSegmentAnchor invalidCosine = { Point(1.0, 0.25, 1.0), Point(0.0, 0.0, -1.0), 1.0001 };
+    if (!RejectAtomic(zeroDirection, secondAnchor) || !RejectAtomic(firstAnchor, nonFiniteParent) || !RejectAtomic(firstAnchor, invalidCosine))
+        return Fail("invalid anchored projection input was accepted or changed an endpoint");
+    return true;
+}
+
+/**
  * 準備済み形状でroot例外と複数shapeを保ち、raw経路と同じ座標へ投影する。
  */
 bool TestPreparedPointContactsReuseAndRootException()
@@ -1944,8 +2073,8 @@ bool TestFloatRoundingPreservesLengthAndAngle()
 
 int main()
 {
-    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
-    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
+    bool (*tests[])(void) = { TestSphereAndCapsulePointProjection, TestInsideCenterAndAxisFallback, TestSpanningSegmentContact, TestContactToleranceFraction, TestLongCapsuleFixedLengthAvoidance, TestCollisionSegmentBoundsFastPath, TestShapePreparationBudget, TestSolverPreparedShapeBudget, TestFarColliderContactCheckBudget, TestRootInsideFirstSpanException, TestRootInsideFirstSpanSolverEndpointOnly, TestMultipleContacts, TestInvalidShapesAndAtomicProjection, TestNoColliderMatchesLegacyStep, TestCollisionShapeExpansionReuseBudget, TestReferenceCalculationBudgetAndStateInvariance, TestReferenceCalculationSkippedOnInvalidCollisionInput, TestFeasibleContactWithLengthAndAngle, TestSolverPointRadiusKeepsBoneSphereClear, TestShortCapsuleLengthAndAngleFeasibility, TestInfeasibleContactPreservesState, TestMovingColliderUsesCurrentGeometry, TestHumanoidContactDiagnosticFixture, TestCollisionShapeValidationIsAtomic, TestEmptyStateInitializationResolvesContact, TestZeroDeltaPoseChangeResolvesCurrentContact, TestHitchAndTeleportInfeasibleContactsAreAtomic, TestFloatRoundingDoesNotHideSmallColliderPenetration, TestExpandCollisionShapesForPointRadius, TestFloatRoundingPreservesLengthAndAngle, TestFreeSegmentSphereAndCapsuleContacts, TestFreeSegmentMultipleShapesAndDegenerateCases, TestFreeSegmentValidationAndAtomicity, TestPreparedFreeSegmentShapeReuseAndAtomicity, TestPreparedFreeSegmentToleranceBoundaryRoundTrip, TestPreparedFreeSegmentPenetrationMeasurement, TestAnchoredPreparedFreeSegmentProjection, TestPreparedPointContactsReuseAndRootException, TestPreparedPointContactsValidationAndAtomicity, TestStepShapeCacheReuseAndAtomicity, TestStepShapeCacheAllocationFailureAtomicity, TestPreparedCollisionStepMatchesRawAndRejectsInvalidViews, TestPreparedProjectionFailureSkipsReferenceWork, TestDistanceProjectionRigidSoftAndCoincident, TestDistanceProjectionValidationAndAtomicity };
+    const char* names[] = { "sphere and capsule projection", "inside fallback", "spanning segment", "contact tolerance fraction", "long-capsule fixed-length avoidance", "collision bounds fast path", "shape preparation budget", "solver prepared-shape budget", "far-collider contact-check budget", "root-inside exception", "root-inside solver endpoint-only", "multiple contacts", "invalid input atomicity", "legacy equivalence", "shape expansion reuse budget", "reference calculation budget", "reference calculation validation order", "feasible contact", "bone sphere contact", "short capsule feasibility", "infeasible atomicity", "moving collider", "humanoid contact fixture", "collision shape validation", "empty state initialization", "zero-delta pose change", "hitch and teleport atomicity", "float contact rounding", "point-radius collider expansion", "float constraint rounding", "free segment sphere and capsule", "free segment multiple shapes and degenerate cases", "free segment validation and atomicity", "prepared free-segment reuse and atomicity", "prepared free-segment FK tolerance boundary", "prepared free-segment penetration measurement", "anchored prepared free-segment projection", "prepared point-contact reuse and root exception", "prepared point-contact validation and atomicity", "step-shape cache reuse and atomicity", "step-shape cache allocation atomicity", "prepared collision step raw equivalence", "prepared projection failure skips reference work", "distance projection rigid soft and coincident", "distance projection validation and atomicity" };
     bool succeeded = true;
     for (uint32_t index = 0; index < sizeof(tests) / sizeof(tests[0]); ++index)
     {
