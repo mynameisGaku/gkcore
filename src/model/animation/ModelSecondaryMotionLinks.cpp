@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionAttachments.h"
 #include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/FModelSecondaryMotionStepShapeCache.h"
@@ -53,6 +54,27 @@ struct FResolvedSecondaryMotionDistance
     uint32_t secondChain = 0;
     // 終点の鎖内の自由節番号。
     uint32_t secondPoint = 0;
+};
+
+/**
+ * 1回の更新中だけ保持する骨接触の鎖内端点、基準姿勢、形状位置。
+ */
+struct FResolvedSecondaryMotionContactLink
+{
+    // 1つ目の接触点を所有する鎖番号。
+    uint32_t firstChain = 0;
+    // 1つ目の接触点に対応する自由節番号。
+    uint32_t firstPoint = 0;
+    // 2つ目の接触点を所有する鎖番号。
+    uint32_t secondChain = 0;
+    // 2つ目の接触点に対応する自由節番号。
+    uint32_t secondPoint = 0;
+    // 準備形状配列内でこの線分が使う先頭位置。
+    uint32_t shapeOffset = 0;
+    // 基準方向、変換済みoffset、曲げ角を含む1つ目の接触骨。
+    animation::FSecondaryMotionAttachmentDefinition firstDefinition{};
+    // 基準方向、変換済みoffset、曲げ角を含む2つ目の接触骨。
+    animation::FSecondaryMotionAttachmentDefinition secondDefinition{};
 };
 
 /**
@@ -126,6 +148,130 @@ bool ResolveDistance(const FModelSecondaryMotionState& state, const FModelSecond
 }
 
 /**
+ * 骨接触を登録済みの自由節へ対応付け、所属鎖の組を検査する。
+ */
+bool ResolveContactLink(const FModelSecondaryMotionState& state, const FModelSecondaryMotionContactLink& contact, uint32_t& firstChain, uint32_t& firstPoint, uint32_t& secondChain, uint32_t& secondPoint, String& error)
+{
+    if (!isfinite(contact.radius) || contact.radius < 0.0f || !isfinite(contact.firstOffset.x) || !isfinite(contact.firstOffset.y) || !isfinite(contact.firstOffset.z) || !isfinite(contact.secondOffset.x) || !isfinite(contact.secondOffset.y) || !isfinite(contact.secondOffset.z) || !ResolvePoint(state, contact.firstBone, firstChain, firstPoint) || !ResolvePoint(state, contact.secondBone, secondChain, secondPoint) || (contact.firstBone != contact.secondBone && firstChain == secondChain))
+    {
+        error.Assign("secondary contact links require finite offsets and free bones in separate chains");
+        return false;
+    }
+    return true;
+}
+
+/**
+ * base FKから骨ローカル接触点を基準方向とmodel空間offsetへ変換する。
+ */
+bool BuildContactAttachmentDefinition(const FModelSecondaryMotionState& state, const Array<float>& baseMatrices, uint32_t chainIndex, uint32_t pointIndex, uint32_t bone, const Vec3& localOffset, animation::FSecondaryMotionAttachmentDefinition& output, String& error)
+{
+    if (chainIndex >= state.chains.Count() || !state.chains.At(chainIndex) || pointIndex == 0 || pointIndex + 1u >= state.chains.At(chainIndex)->simulation.previousTargets.Count() || pointIndex + 1u >= state.chains.At(chainIndex)->simulation.points.Count() || !isfinite(state.chains.At(chainIndex)->settings.maxAngleDegrees) || state.chains.At(chainIndex)->settings.maxAngleDegrees < 0.0f || state.chains.At(chainIndex)->settings.maxAngleDegrees > 180.0f)
+    {
+        error.Assign("secondary contact link chain reference or angle is invalid");
+        return false;
+    }
+    // 対応骨の16 float行列先頭。
+    const uint64_t matrixOffset = static_cast<uint64_t>(bone) * 16u;
+    if (matrixOffset + 15u >= baseMatrices.Count())
+    {
+        error.Assign("secondary contact link base pose matrix is missing");
+        return false;
+    }
+    for (uint32_t element = 0; element < 16; ++element)
+    {
+        if (!isfinite(baseMatrices.At(static_cast<uint32_t>(matrixOffset + element))))
+        {
+            error.Assign("secondary contact link base pose matrix is not finite");
+            return false;
+        }
+    }
+    // bone原点からoutgoing childへ向かう基準方向。
+    const auto& parent = state.chains.At(chainIndex)->simulation.previousTargets.At(pointIndex);
+    const auto& child = state.chains.At(chainIndex)->simulation.previousTargets.At(pointIndex + 1u);
+    const double dx = static_cast<double>(child.x) - parent.x;
+    const double dy = static_cast<double>(child.y) - parent.y;
+    const double dz = static_cast<double>(child.z) - parent.z;
+    const double length = sqrt(dx * dx + dy * dy + dz * dz);
+    if (!(length > 0.0) || !isfinite(length))
+    {
+        error.Assign("secondary contact link base bone direction is degenerate");
+        return false;
+    }
+    // 基準FKの線形部分をoffsetへ適用する。
+    const double offsetX = baseMatrices.At(static_cast<uint32_t>(matrixOffset)) * static_cast<double>(localOffset.x) + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 4u)) * localOffset.y + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 8u)) * localOffset.z;
+    const double offsetY = baseMatrices.At(static_cast<uint32_t>(matrixOffset + 1u)) * static_cast<double>(localOffset.x) + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 5u)) * localOffset.y + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 9u)) * localOffset.z;
+    const double offsetZ = baseMatrices.At(static_cast<uint32_t>(matrixOffset + 2u)) * static_cast<double>(localOffset.x) + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 6u)) * localOffset.y + baseMatrices.At(static_cast<uint32_t>(matrixOffset + 10u)) * localOffset.z;
+    if (!isfinite(offsetX) || !isfinite(offsetY) || !isfinite(offsetZ) || fabs(offsetX) > FLT_MAX || fabs(offsetY) > FLT_MAX || fabs(offsetZ) > FLT_MAX)
+    {
+        error.Assign("secondary contact link base offset exceeds the float range");
+        return false;
+    }
+    // 候補を完成してから呼出側の値を置き換える。
+    animation::FSecondaryMotionAttachmentDefinition candidate{};
+    candidate.direction = { { dx / length, dy / length, dz / length } };
+    candidate.offset = { { offsetX, offsetY, offsetZ } };
+    candidate.cosineLimit = cos(static_cast<double>(state.chains.At(chainIndex)->settings.maxAngleDegrees) * (3.1415926535897932384626433832795 / 180.0));
+    if (!isfinite(candidate.cosineLimit))
+    {
+        error.Assign("secondary contact link angle is invalid");
+        return false;
+    }
+    output = candidate;
+    return true;
+}
+
+/**
+ * 骨接触の基準姿勢と線分半径別の身体形状を1回の更新向けに準備する。
+ */
+bool PrepareContactLinks(const FModelSecondaryMotionState& state, const Array<float>& baseMatrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, Array<FResolvedSecondaryMotionContactLink>& links, Array<animation::FPreparedSecondaryMotionCollisionShape>& preparedShapes, String& error)
+{
+    if (shapeCount > 64 || baseMatrices.Count() % 16u != 0u || state.contactLinks.Count() > MaximumLinks || !links.Reserve(state.contactLinks.Count()))
+    {
+        error.Assign("secondary contact link preparation count or allocation is invalid");
+        return false;
+    }
+    // 同じ線分半径で用意した身体形状を共有する。
+    Array<FLinkShapeGroup> groups;
+    for (uint32_t index = 0; index < state.contactLinks.Count(); ++index)
+    {
+        const auto& contact = state.contactLinks.At(index);
+        FResolvedSecondaryMotionContactLink resolved{};
+        if (!ResolveContactLink(state, contact, resolved.firstChain, resolved.firstPoint, resolved.secondChain, resolved.secondPoint, error) || !BuildContactAttachmentDefinition(state, baseMatrices, resolved.firstChain, resolved.firstPoint, contact.firstBone, contact.firstOffset, resolved.firstDefinition, error) || !BuildContactAttachmentDefinition(state, baseMatrices, resolved.secondChain, resolved.secondPoint, contact.secondBone, contact.secondOffset, resolved.secondDefinition, error))
+        {
+            return false;
+        }
+        bool foundGroup = false;
+        for (uint32_t group = 0; group < groups.Count(); ++group)
+        {
+            if (groups.At(group).radius == contact.radius)
+            {
+                resolved.shapeOffset = groups.At(group).offset;
+                foundGroup = true;
+                break;
+            }
+        }
+        if (!foundGroup)
+        {
+            Array<animation::FPreparedSecondaryMotionCollisionShape> preparedGroup;
+            if (!animation::PrepareSecondaryMotionFreeSegmentShapes(shapes, shapeCount, contact.radius, preparedGroup, error))
+                return false;
+            resolved.shapeOffset = preparedShapes.Count();
+            if (!preparedShapes.AppendRange(preparedGroup.Data(), preparedGroup.Count()) || !groups.Append(FLinkShapeGroup{ contact.radius, resolved.shapeOffset }))
+            {
+                error.Assign("secondary contact link prepared shape allocation failed");
+                return false;
+            }
+        }
+        if (!links.Append(resolved))
+        {
+            error.Assign("secondary contact link allocation failed");
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
  * 接続設定の何番目で失敗したかを診断へ加える。
  */
 void LinkFailure(uint32_t index, String& error)
@@ -141,6 +287,16 @@ void LinkFailure(uint32_t index, String& error)
 void DistanceFailure(uint32_t index, String& error)
 {
     error.Append(" (secondary distance: ");
+    error.AppendUnsigned(index);
+    error.Append(")");
+}
+
+/**
+ * 骨接触設定の何番目で失敗したかを診断へ加える。
+ */
+void ContactLinkFailure(uint32_t index, String& error)
+{
+    error.Append(" (secondary contact link: ");
     error.AppendUnsigned(index);
     error.Append(")");
 }
@@ -259,7 +415,7 @@ bool PrepareLinks(const FModelSecondaryMotionState& state, const animation::FMod
 /**
  * 全線分を検査し、不成立線分の両端鎖を次の復元対象へ予約する。
  */
-bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<FResolvedSecondaryMotionDistance>& distances, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, uint32_t shapeCount, Array<uint8_t>& restorePending, String& error)
+bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolvedSecondaryMotionLink>& links, const Array<FResolvedSecondaryMotionDistance>& distances, const Array<FResolvedSecondaryMotionContactLink>& contactLinks, const Array<animation::FPreparedSecondaryMotionCollisionShape>& shapes, const Array<animation::FPreparedSecondaryMotionCollisionShape>& contactShapes, uint32_t shapeCount, uint32_t contactShapeCount, Array<uint8_t>& restorePending, String& error)
 {
     // 最初の失敗をerrorに保ち、残りの制約も次の反復へ必要な鎖を集める。
     bool clear = true;
@@ -295,6 +451,27 @@ bool CheckCandidate(const FModelSecondaryMotionState& state, const Array<FResolv
             {
                 LinkFailure(index, error);
             }
+            clear = false;
+        }
+    }
+    for (uint32_t index = 0; index < contactLinks.Count(); ++index)
+    {
+        const auto& contact = contactLinks.At(index);
+        const auto& firstChain = *state.chains.At(contact.firstChain);
+        const auto& secondChain = *state.chains.At(contact.secondChain);
+        const auto& firstParent = firstChain.simulation.points.At(contact.firstPoint).position;
+        const auto& firstChild = firstChain.simulation.points.At(contact.firstPoint + 1u).position;
+        const auto& secondParent = secondChain.simulation.points.At(contact.secondPoint).position;
+        const auto& secondChild = secondChain.simulation.points.At(contact.secondPoint + 1u).position;
+        animation::FSecondaryMotionAttachmentEvaluation firstEvaluation{};
+        animation::FSecondaryMotionAttachmentEvaluation secondEvaluation{};
+        String& diagnostic = clear ? error : remainingError;
+        if (!animation::EvaluateSecondaryMotionAttachment(contact.firstDefinition, { { firstParent.x, firstParent.y, firstParent.z } }, { { firstChild.x, firstChild.y, firstChild.z } }, firstEvaluation, diagnostic) || !animation::EvaluateSecondaryMotionAttachment(contact.secondDefinition, { { secondParent.x, secondParent.y, secondParent.z } }, { { secondChild.x, secondChild.y, secondChild.z } }, secondEvaluation, diagnostic) || !animation::CheckPreparedSecondaryMotionFreeSegmentContacts(contactShapes.Data() + contact.shapeOffset, contactShapeCount, firstEvaluation.position, secondEvaluation.position, diagnostic, CandidateContactToleranceFraction))
+        {
+            restorePending.At(contact.firstChain) = 1;
+            restorePending.At(contact.secondChain) = 1;
+            if (clear)
+                ContactLinkFailure(index, error);
             clear = false;
         }
     }
@@ -543,11 +720,14 @@ uint64_t GetSecondaryMotionLinkChainConstraintCount()
 }
 #endif
 
-bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error)
+bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error, const Array<float>* baseMatrices)
 {
     const bool activeLinks = candidate.links.Count() > 0 && shapeCount > 0;
     const bool activeDistances = candidate.distanceConstraints.Count() > 0;
-    if (!activeLinks && !activeDistances)
+    const bool activeContactLinks = candidate.contactLinks.Count() > 0 && shapeCount > 0;
+    if (candidate.contactLinks.Count() > 0 && !ValidateSecondaryMotionContactLinks(candidate, error))
+        return false;
+    if (!activeLinks && !activeDistances && !activeContactLinks)
     {
         error.Clear();
         return true;
@@ -565,6 +745,18 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
     {
         return false;
     }
+    Array<FResolvedSecondaryMotionContactLink> resolvedContactLinks;
+    Array<animation::FPreparedSecondaryMotionCollisionShape> preparedContactShapes;
+    if (activeContactLinks)
+    {
+        if (!baseMatrices)
+        {
+            error.Assign("secondary contact links require the unmodified base pose matrices");
+            return false;
+        }
+        if (!PrepareContactLinks(candidate, *baseMatrices, shapes, shapeCount, resolvedContactLinks, preparedContactShapes, error))
+            return false;
+    }
     // 距離制約の端点も更新中に一度だけ鎖内位置へ解決する。
     Array<FResolvedSecondaryMotionDistance> resolvedDistances;
     if (!resolvedDistances.Reserve(candidate.distanceConstraints.Count()))
@@ -573,14 +765,15 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
         return false;
     }
     Array<uint8_t> distanceChains;
-    if (!distanceChains.Reserve(candidate.chains.Count()))
+    Array<uint8_t> contactChains;
+    if (!distanceChains.Reserve(candidate.chains.Count()) || (activeContactLinks && !contactChains.Reserve(candidate.chains.Count())))
     {
         error.Assign("secondary distance chain allocation failed");
         return false;
     }
     for (uint32_t chain = 0; chain < candidate.chains.Count(); ++chain)
     {
-        if (!distanceChains.Append(0))
+        if (!distanceChains.Append(0) || (activeContactLinks && !contactChains.Append(0)))
         {
             error.Assign("secondary distance chain allocation failed");
             return false;
@@ -628,6 +821,13 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
                 return false;
             }
         }
+    }
+    for (uint32_t index = 0; index < resolvedContactLinks.Count(); ++index)
+    {
+        affected.At(resolvedContactLinks.At(index).firstChain) = 1;
+        affected.At(resolvedContactLinks.At(index).secondChain) = 1;
+        contactChains.At(resolvedContactLinks.At(index).firstChain) = 1;
+        contactChains.At(resolvedContactLinks.At(index).secondChain) = 1;
     }
 #if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
     const bool traceSecondaryConstraints = IsSecondaryMotionConstraintTraceEnabled();
@@ -725,6 +925,66 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
                 restorePending.At(link.secondChain) = 1;
             }
         }
+        for (uint32_t index = 0; index < resolvedContactLinks.Count(); ++index)
+        {
+            const auto& contact = resolvedContactLinks.At(index);
+            auto& firstState = candidate.chains.At(contact.firstChain)->simulation;
+            auto& secondState = candidate.chains.At(contact.secondChain)->simulation;
+            const Vec3 firstBefore = firstState.points.At(contact.firstPoint + 1u).position;
+            const Vec3 secondBefore = secondState.points.At(contact.secondPoint + 1u).position;
+            const auto& firstParent = firstState.points.At(contact.firstPoint).position;
+            const auto& secondParent = secondState.points.At(contact.secondPoint).position;
+            FVector3d pointValues[4] = { { { firstParent.x, firstParent.y, firstParent.z } }, { { firstBefore.x, firstBefore.y, firstBefore.z } }, { { secondParent.x, secondParent.y, secondParent.z } }, { { secondBefore.x, secondBefore.y, secondBefore.z } } };
+            FVector3d* pointPointers[4] = { &pointValues[0], &pointValues[1], &pointValues[2], &pointValues[3] };
+            const bool sameBone = contact.firstChain == contact.secondChain && contact.firstPoint == contact.secondPoint;
+            if (sameBone)
+            {
+                pointPointers[2] = pointPointers[0];
+                pointPointers[3] = pointPointers[1];
+            }
+            if (!animation::ProjectSecondaryMotionAttachmentContacts(preparedContactShapes.Data() + contact.shapeOffset, shapeCount, contact.firstDefinition, contact.secondDefinition, pointPointers, error))
+            {
+#if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
+                // 未収束の入力を保存し、GPU再生と同じ幾何条件を独立に再現する。
+                if (getenv("GKCORE_CAPTURE_ATTACHMENT_FAILURE"))
+                {
+                    fprintf(stderr, "attachment-failure pass=%u contact=%u shared=%u\n", pass, index, sameBone ? 1u : 0u);
+                    for (uint32_t endpoint = 0; endpoint < 2; ++endpoint)
+                    {
+                        const auto& definition = endpoint == 0 ? contact.firstDefinition : contact.secondDefinition;
+                        fprintf(stderr, "attachment-definition %u direction=(%.17g,%.17g,%.17g) offset=(%.17g,%.17g,%.17g) cosine=%.17g\n", endpoint, definition.direction.value[0], definition.direction.value[1], definition.direction.value[2], definition.offset.value[0], definition.offset.value[1], definition.offset.value[2], definition.cosineLimit);
+                    }
+                    for (uint32_t point = 0; point < 4; ++point)
+                    {
+                        fprintf(stderr, "attachment-point %u (%.17g,%.17g,%.17g)\n", point, pointPointers[point]->value[0], pointPointers[point]->value[1], pointPointers[point]->value[2]);
+                    }
+                    for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+                    {
+                        const auto& shape = preparedContactShapes.At(contact.shapeOffset + shapeIndex);
+                        fprintf(stderr, "attachment-shape %u start=(%.17g,%.17g,%.17g) end=(%.17g,%.17g,%.17g) radius=%.17g tolerance=%.17g\n", shapeIndex, shape.start.value[0], shape.start.value[1], shape.start.value[2], shape.end.value[0], shape.end.value[1], shape.end.value[2], shape.radius, shape.tolerance);
+                    }
+                }
+#endif
+                ContactLinkFailure(index, error);
+                return false;
+            }
+            Vec3 storedFirst = firstBefore;
+            Vec3 storedSecond = secondBefore;
+            if (!StorePosition(pointValues[1], storedFirst, error) || (!sameBone && !StorePosition(pointValues[3], storedSecond, error)))
+            {
+                ContactLinkFailure(index, error);
+                return false;
+            }
+            firstState.points.At(contact.firstPoint + 1u).position = storedFirst;
+            if (!sameBone)
+                secondState.points.At(contact.secondPoint + 1u).position = storedSecond;
+            affected.At(contact.firstChain) = 1;
+            affected.At(contact.secondChain) = 1;
+            if (memcmp(&firstBefore, &storedFirst, sizeof(firstBefore)) != 0)
+                restorePending.At(contact.firstChain) = 1;
+            if (!sameBone && memcmp(&secondBefore, &storedSecond, sizeof(secondBefore)) != 0)
+                restorePending.At(contact.secondChain) = 1;
+        }
 #if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
         if (captureConstraintPass)
         {
@@ -748,7 +1008,8 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
 #if defined(GKCORE_TESTING)
             ++secondaryMotionLinkChainConstraintCount;
 #endif
-            const bool restored = distanceChains.At(chain) ? animation::RestoreSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error) : animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error);
+            const bool useRestore = distanceChains.At(chain) || (activeContactLinks && contactChains.At(chain));
+            const bool restored = useRestore ? animation::RestoreSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error) : animation::StepSecondaryMotionChainWithPreparedCollisions(entry.simulation.previousTargets.Data(), entry.simulation.previousTargets.Count(), entry.settings, chainShapes, solverWorkspace, entry.simulation, error);
             if (!restored)
             {
                 return false;
@@ -761,7 +1022,7 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             CaptureSecondaryMotionConstraintStage(pass, candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, constraintTrace[pass & 1u][2]);
         }
 #endif
-        if (CheckCandidate(candidate, resolvedLinks, resolvedDistances, preparedShapes, activeLinks ? shapeCount : 0u, restorePending, error))
+        if (CheckCandidate(candidate, resolvedLinks, resolvedDistances, resolvedContactLinks, preparedShapes, preparedContactShapes, activeLinks ? shapeCount : 0u, activeContactLinks ? shapeCount : 0u, restorePending, error))
         {
             // 距離制約はframe-level solve、それ以外は既存substepの秒数で速度へ補正を戻す。
             const double step = activeDistances ? (delta > 0.0 && delta < 0.25 ? delta : 0.0) : (delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0);
@@ -800,7 +1061,7 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
         }
     }
     if (error.Empty())
-        error.Assign(activeDistances ? "secondary links and distances could not preserve body contact and chain constraints together" : "secondary links could not preserve body contact and chain constraints together");
+        error.Assign(activeContactLinks ? "secondary attachment contacts could not preserve body contact and chain constraints together" : (activeDistances ? "secondary links and distances could not preserve body contact and chain constraints together" : "secondary links could not preserve body contact and chain constraints together"));
     else if (activeDistances)
         error.Append(" (secondary constraints did not converge)");
 #if defined(GKCORE_TESTING) || defined(GKCORE_TEST_FRAME_CAPTURE)
@@ -857,4 +1118,95 @@ bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, 
     }
     return true;
 }
+bool ValidateSecondaryMotionContactLinks(const FModelSecondaryMotionState& state, String& error)
+{
+    if (state.contactLinks.Count() == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    if (state.contactLinks.Count() > MaximumLinks || state.linkIterations == 0 || state.linkIterations > 32)
+    {
+        error.Assign("secondary contact link count or iteration limit is invalid");
+        return false;
+    }
+    for (uint32_t index = 0; index < state.contactLinks.Count(); ++index)
+    {
+        const auto& contact = state.contactLinks.At(index);
+        uint32_t firstChain = 0;
+        uint32_t firstPoint = 0;
+        uint32_t secondChain = 0;
+        uint32_t secondPoint = 0;
+        if (!ResolveContactLink(state, contact, firstChain, firstPoint, secondChain, secondPoint, error))
+        {
+            ContactLinkFailure(index, error);
+            return false;
+        }
+        for (uint32_t previousIndex = 0; previousIndex < index; ++previousIndex)
+        {
+            const auto& previousContact = state.contactLinks.At(previousIndex);
+            const bool sameOrder = previousContact.firstBone == contact.firstBone && previousContact.secondBone == contact.secondBone && previousContact.firstOffset.x == contact.firstOffset.x && previousContact.firstOffset.y == contact.firstOffset.y && previousContact.firstOffset.z == contact.firstOffset.z && previousContact.secondOffset.x == contact.secondOffset.x && previousContact.secondOffset.y == contact.secondOffset.y && previousContact.secondOffset.z == contact.secondOffset.z;
+            const bool reverseOrder = previousContact.firstBone == contact.secondBone && previousContact.secondBone == contact.firstBone && previousContact.firstOffset.x == contact.secondOffset.x && previousContact.firstOffset.y == contact.secondOffset.y && previousContact.firstOffset.z == contact.secondOffset.z && previousContact.secondOffset.x == contact.firstOffset.x && previousContact.secondOffset.y == contact.firstOffset.y && previousContact.secondOffset.z == contact.firstOffset.z;
+            if (sameOrder || reverseOrder)
+            {
+                error.Assign("secondary contact links contain duplicate attachment endpoints");
+                ContactLinkFailure(index, error);
+                return false;
+            }
+        }
+    }
+    error.Clear();
+    return true;
+}
+
+bool CheckRenderedSecondaryMotionContactLinks(const FModelSecondaryMotionState& state, const Array<float>& matrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, String& error)
+{
+    if (!ValidateSecondaryMotionContactLinks(state, error))
+        return false;
+    if (state.contactLinks.Count() == 0 || shapeCount == 0)
+    {
+        error.Clear();
+        return true;
+    }
+    if (!shapes || shapeCount > 64 || matrices.Count() % 16u != 0u)
+    {
+        error.Assign("secondary contact link rendered collision shapes are invalid");
+        return false;
+    }
+    for (uint32_t index = 0; index < state.contactLinks.Count(); ++index)
+    {
+        const auto& contact = state.contactLinks.At(index);
+        const uint64_t firstOffset = static_cast<uint64_t>(contact.firstBone) * 16u;
+        const uint64_t secondOffset = static_cast<uint64_t>(contact.secondBone) * 16u;
+        if (firstOffset + 15u >= matrices.Count() || secondOffset + 15u >= matrices.Count())
+        {
+            error.Assign("secondary contact link rendered bone is outside pose matrices");
+            ContactLinkFailure(index, error);
+            return false;
+        }
+        for (uint32_t element = 0; element < 16; ++element)
+        {
+            if (!isfinite(matrices.At(static_cast<uint32_t>(firstOffset + element))) || !isfinite(matrices.At(static_cast<uint32_t>(secondOffset + element))))
+            {
+                error.Assign("secondary contact link rendered matrix is not finite");
+                ContactLinkFailure(index, error);
+                return false;
+            }
+        }
+        // 実FK行列の線形部分と平行移動を端点へ適用する。
+        const Vec3 firstOffsetValue = contact.firstOffset;
+        const Vec3 secondOffsetValue = contact.secondOffset;
+        const FVector3d firstPosition{ { matrices.At(static_cast<uint32_t>(firstOffset + 12u)) + matrices.At(static_cast<uint32_t>(firstOffset)) * static_cast<double>(firstOffsetValue.x) + matrices.At(static_cast<uint32_t>(firstOffset + 4u)) * firstOffsetValue.y + matrices.At(static_cast<uint32_t>(firstOffset + 8u)) * firstOffsetValue.z, matrices.At(static_cast<uint32_t>(firstOffset + 13u)) + matrices.At(static_cast<uint32_t>(firstOffset + 1u)) * static_cast<double>(firstOffsetValue.x) + matrices.At(static_cast<uint32_t>(firstOffset + 5u)) * firstOffsetValue.y + matrices.At(static_cast<uint32_t>(firstOffset + 9u)) * firstOffsetValue.z, matrices.At(static_cast<uint32_t>(firstOffset + 14u)) + matrices.At(static_cast<uint32_t>(firstOffset + 2u)) * static_cast<double>(firstOffsetValue.x) + matrices.At(static_cast<uint32_t>(firstOffset + 6u)) * firstOffsetValue.y + matrices.At(static_cast<uint32_t>(firstOffset + 10u)) * firstOffsetValue.z } };
+        const FVector3d secondPosition{ { matrices.At(static_cast<uint32_t>(secondOffset + 12u)) + matrices.At(static_cast<uint32_t>(secondOffset)) * static_cast<double>(secondOffsetValue.x) + matrices.At(static_cast<uint32_t>(secondOffset + 4u)) * secondOffsetValue.y + matrices.At(static_cast<uint32_t>(secondOffset + 8u)) * secondOffsetValue.z, matrices.At(static_cast<uint32_t>(secondOffset + 13u)) + matrices.At(static_cast<uint32_t>(secondOffset + 1u)) * static_cast<double>(secondOffsetValue.x) + matrices.At(static_cast<uint32_t>(secondOffset + 5u)) * secondOffsetValue.y + matrices.At(static_cast<uint32_t>(secondOffset + 9u)) * secondOffsetValue.z, matrices.At(static_cast<uint32_t>(secondOffset + 14u)) + matrices.At(static_cast<uint32_t>(secondOffset + 2u)) * static_cast<double>(secondOffsetValue.x) + matrices.At(static_cast<uint32_t>(secondOffset + 6u)) * secondOffsetValue.y + matrices.At(static_cast<uint32_t>(secondOffset + 10u)) * secondOffsetValue.z } };
+        if (!animation::CheckSecondaryMotionFreeSegmentContacts(shapes, shapeCount, contact.radius, firstPosition, secondPosition, error))
+        {
+            ContactLinkFailure(index, error);
+            error.Append(" (rendered contact link)");
+            return false;
+        }
+    }
+    error.Clear();
+    return true;
+}
+
 }

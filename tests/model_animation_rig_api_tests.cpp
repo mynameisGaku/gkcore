@@ -3236,6 +3236,291 @@ static bool TestSecondaryMotionLinkConstraintOnlyChangedChains()
 }
 
 /**
+ * 衣服側の骨ローカル接触点を解き、実FKで同じ接触とpivot保持を確かめる。
+ */
+static bool TestSecondaryMotionContactLinkOutgoingBoneFk()
+{
+    using namespace gk::model::animation;
+    gk::model::FModelSecondaryMotionState state;
+    gk::model::FModelSecondaryMotionState previous;
+    if (!MakeSelectiveLinkConstraintFixture(state, 2))
+        return false;
+    state.links.Clear();
+    const gk::FModelSecondaryMotionContactLink contact{ 1, { 0.0f, 0.5f, 0.0f }, 1, { 0.0f, 0.5f, 0.0f }, 0.01f };
+    if (!state.contactLinks.Append(contact))
+        return false;
+    FModelSkeleton skeleton;
+    for (uint32_t bone = 0; bone < 4; ++bone)
+    {
+        FModelBoneTransform transform;
+        transform.position[0] = 1.0f;
+        transform.position[1] = bone == 2u ? 1.0f : 0.0f;
+        if (!skeleton.parents.Append(bone % 2u ? static_cast<int32_t>(bone - 1u) : -1) || !skeleton.restLocalTransforms.Append(transform))
+            return false;
+    }
+    FModelPose base;
+    gk::Array<float> baseMatrices;
+    gk::String error;
+    if (!InitializeModelPose(skeleton, base, error) || !EvaluateModelPose(skeleton, base, baseMatrices, error))
+        return false;
+    const FModelSecondaryMotionCollisionShape body{ { 2.0f, 0.5f, 0.0f }, { 2.0f, 0.5f, 0.0f }, 0.2f };
+    const gk::Vec3 pivotBefore = state.chains.At(0)->simulation.points.At(1).position;
+    if (!gk::model::ConstrainSecondaryMotionLinks(state, previous, &body, 1, 0.0, error, &baseMatrices))
+    {
+        fprintf(stderr, "offset contact link failed: %s\n", error.CStr());
+        return false;
+    }
+    const auto& chain = *state.chains.At(0);
+    if (memcmp(&pivotBefore, &chain.simulation.points.At(1).position, sizeof(pivotBefore)) != 0)
+    {
+        fprintf(stderr, "offset response moved its attachment pivot instead of the outgoing child\n");
+        return false;
+    }
+    const gk::Vec3 points[3] = { chain.simulation.points.At(0).position, chain.simulation.points.At(1).position, chain.simulation.points.At(2).position };
+    FModelPose result;
+    gk::Array<float> matrices;
+    if (!OrientModelPoseChain(skeleton, base, chain.bones.Data(), 2, chain.settings.endOffset, points, result, error) || !EvaluateModelPose(skeleton, result, matrices, error) || !gk::model::CheckRenderedSecondaryMotionContactLinks(state, matrices, &body, 1, error))
+    {
+        fprintf(stderr, "offset contact response did not match rendered FK: %s\n", error.CStr());
+        return false;
+    }
+    // 描画行列で変換した球中心を、試験側の独立距離で検査する。
+    const double x = matrices.At(28) + matrices.At(20) * 0.5;
+    const double y = matrices.At(29) + matrices.At(21) * 0.5;
+    const double z = matrices.At(30) + matrices.At(22) * 0.5;
+    const double distance = sqrt((x - 2.0) * (x - 2.0) + (y - 0.5) * (y - 0.5) + z * z);
+    return distance >= (static_cast<double>(body.radius) + contact.radius) * 0.999 && matrices.At(28) == 2.0f && matrices.At(29) == 0.0f && matrices.At(30) == 0.0f;
+}
+
+/**
+ * public contact-link setterの複製、検証、置換、解除、instance寿命を確かめる。
+ */
+static bool TestSecondaryMotionContactLinkApiLifecycle()
+{
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+    {
+        return false;
+    }
+    auto* source = new AAnimationRigTestSource;
+    source->boneCount = 7;
+    const int32_t parents[7] = { -1, 0, 1, 0, 3, 1, 5 };
+    gk::model::animation::FModelBoneTransform rest[7]{};
+    rest[1].position[0] = 1.0f;
+    rest[3].position[1] = -1.0f;
+    rest[4].position[1] = 1.0f;
+    rest[5].position[1] = 1.0f;
+    rest[6].position[1] = 1.0f;
+    if (!source->skeleton.parents.AppendRange(parents, 7) || !source->skeleton.restLocalTransforms.AppendRange(rest, 7))
+    {
+        delete source;
+        gk::Release(&resource->reference);
+        return false;
+    }
+    gk::String error;
+    resource->animation = gk::model::CreateModelAnimationAsset(source, error);
+    gk::detail::ModelVertex vertices[7]{};
+    if (!resource->animation || !resource->vertices.AppendRange(vertices, 7))
+    {
+        gk::Release(&resource->reference);
+        return false;
+    }
+    const auto model = gk::detail::RegisterModelResource(resource, error);
+    gk::detail::ModelTransform baseTransform{};
+    baseTransform.handle = model;
+    baseTransform.scale = { 1.0f, 1.0f, 1.0f };
+    const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
+    const auto firstInstance = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    const auto secondInstance = firstInstance.IsValid() ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    if (!firstInstance.IsValid() || !secondInstance.IsValid())
+    {
+        if (firstInstance.IsValid())
+        {
+            gk::DeleteModel(firstInstance);
+        }
+        if (secondInstance.IsValid())
+        {
+            gk::DeleteModel(secondInstance);
+        }
+        if (model.IsValid())
+        {
+            gk::DeleteModel(model);
+        }
+        else
+        {
+            gk::Release(&resource->reference);
+        }
+        fprintf(stderr, "contact-link lifecycle fixture creation failed: %s\n", error.CStr());
+        return false;
+    }
+
+    const uint32_t firstChain[3] = { 1, 5, 6 };
+    const uint32_t secondChain[2] = { 3, 4 };
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.frequencyHz = 6.0f;
+    settings.dampingRatio = 0.8f;
+    settings.gravity = {};
+    settings.windAcceleration = {};
+    settings.endOffset = { 0.0f, 0.2f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    settings.constraintIterations = 8;
+    const int firstChainResult = gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings);
+    const int firstSiblingChainResult = gk::SetModelSecondaryMotionChain(firstInstance, secondChain, 2, settings);
+    const int secondChainResult = gk::SetModelSecondaryMotionChain(secondInstance, firstChain, 3, settings);
+    const int secondSiblingChainResult = gk::SetModelSecondaryMotionChain(secondInstance, secondChain, 2, settings);
+    bool passed = firstChainResult == 0 && firstSiblingChainResult == 0 && secondChainResult == 0 && secondSiblingChainResult == 0;
+    const auto ReadState = [](gk::ModelHandle handle)
+    {
+        auto* transform = gk::detail::FindModelTransform(handle);
+        return transform && transform->playback ? transform->playback->secondaryMotion : nullptr;
+    };
+    const auto FindChainByRoot = [](gk::model::FModelSecondaryMotionState* state, uint32_t rootBone) -> const gk::model::FModelSecondaryMotionChain*
+    {
+        if (!state)
+        {
+            return nullptr;
+        }
+        for (uint32_t index = 0; index < state->chains.Count(); ++index)
+        {
+            const auto* chain = state->chains.At(index);
+            if (chain && chain->bones.Count() > 0 && chain->bones.At(0) == rootBone)
+            {
+                return chain;
+            }
+        }
+        return nullptr;
+    };
+    bool firstFailureReported = false;
+    const auto Checkpoint = [&](const char* stage, bool condition)
+    {
+        if (!condition && !firstFailureReported)
+        {
+            fprintf(stderr, "contact-link lifecycle first failed stage: %s; apiError=%s; fixtureError=%s\n", stage, gk::GetLastErrorMessage(), error.CStr());
+            firstFailureReported = true;
+        }
+        return condition;
+    };
+    passed = Checkpoint("first instance registers chain [1,5,6]", firstChainResult == 0) && passed;
+    passed = Checkpoint("first instance registers chain [3,4]", firstSiblingChainResult == 0) && passed;
+    passed = Checkpoint("second instance registers chain [1,5,6]", secondChainResult == 0) && passed;
+    passed = Checkpoint("second instance registers chain [3,4]", secondSiblingChainResult == 0) && passed;
+    gk::FModelSecondaryMotionLink existingLink{ 6, 4, 0.01f };
+    gk::FModelSecondaryMotionDistanceConstraint existingDistance{ 6, 4, 0.0f, 0.001f };
+    const int existingLinkResult = gk::SetModelSecondaryMotionLinks(firstInstance, &existingLink, 1, 18);
+    passed = Checkpoint("legacy link setting remains accepted", existingLinkResult == 0) && passed;
+    const int existingDistanceResult = gk::SetModelSecondaryMotionDistanceConstraints(firstInstance, &existingDistance, 1, 20);
+    passed = Checkpoint("distance setting remains accepted", existingDistanceResult == 0) && passed;
+    gk::FModelSecondaryMotionContactLink sourceContact{ 6, { 0.0f, 0.1f, 0.0f }, 4, { 0.0f, 0.1f, 0.0f }, 0.015f };
+    const int32_t debugCountBeforeContact = gk::GetModelSecondaryMotionDebugShapes(firstInstance, nullptr, 0);
+    const int contactRegistrationResult = gk::SetModelSecondaryMotionContactLinks(firstInstance, &sourceContact, 1, 12);
+    passed = Checkpoint("cross-chain contact link registers after link and distance settings", contactRegistrationResult == 0) && passed;
+    auto* firstState = ReadState(firstInstance);
+    const bool registered = firstState && firstState->chains.Count() == 2 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4 && firstState->contactLinks.At(0).firstOffset.y == 0.1f && firstState->contactLinks.At(0).radius == 0.015f && firstState->links.Count() == 1 && firstState->distanceConstraints.Count() == 1 && firstState->linkIterations == 12;
+    sourceContact.firstBone = 4;
+    sourceContact.secondBone = 6;
+    sourceContact.radius = 0.5f;
+    firstState = ReadState(firstInstance);
+    const bool copied = firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4 && firstState->contactLinks.At(0).radius == 0.015f;
+    const int32_t debugCountWithContact = gk::GetModelSecondaryMotionDebugShapes(firstInstance, nullptr, 0);
+    passed = Checkpoint("registration, deep copy, and debug shape count", registered && copied && debugCountBeforeContact >= 0 && debugCountWithContact == debugCountBeforeContact + 1) && passed;
+
+    // 同じ自由boneを両端に置く接触線分も、公開設定として受け入れる。
+    const gk::FModelSecondaryMotionContactLink sameBoneContact{ 6, { 0.0f, 0.1f, 0.0f }, 6, { 0.0f, -0.1f, 0.0f }, 0.01f };
+    passed = gk::SetModelSecondaryMotionContactLinks(firstInstance, &sameBoneContact, 1, 24) == 0 && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("same-bone contact registration", firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 6 && firstState->linkIterations == 24) && passed;
+    const gk::FModelSecondaryMotionContactLink validContact{ 6, { 0.0f, 0.1f, 0.0f }, 4, { 0.0f, 0.1f, 0.0f }, 0.015f };
+    passed = gk::SetModelSecondaryMotionContactLinks(firstInstance, &validContact, 1, 12) == 0 && passed;
+    firstState = ReadState(firstInstance);
+
+    const gk::FModelSecondaryMotionContactLink nanOffset{ 6, { std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f }, 4, {}, 0.01f };
+    const gk::FModelSecondaryMotionContactLink negativeRadius{ 6, {}, 4, {}, -0.01f };
+    const gk::FModelSecondaryMotionContactLink invalidBone{ 6, {}, 99, {}, 0.01f };
+    const gk::FModelSecondaryMotionContactLink fixedRoot{ 1, {}, 4, {}, 0.01f };
+    const gk::FModelSecondaryMotionContactLink sameChain{ 5, {}, 6, {}, 0.01f };
+    const gk::FModelSecondaryMotionContactLink reversedDuplicates[2] = { validContact, { 4, validContact.secondOffset, 6, validContact.firstOffset, validContact.radius } };
+    gk::FModelSecondaryMotionContactLink tooMany[1025]{};
+    for (uint32_t index = 0; index < 1025; ++index)
+    {
+        tooMany[index] = validContact;
+    }
+    const auto RejectWithoutReplacing = [&](const char* stage, const gk::FModelSecondaryMotionContactLink* candidate, uint32_t count, uint32_t iterations)
+    {
+        const auto* beforeState = ReadState(firstInstance);
+        const auto* beforeData = beforeState ? beforeState->contactLinks.Data() : nullptr;
+        const bool rejected = gk::SetModelSecondaryMotionContactLinks(firstInstance, candidate, count, iterations) == -1;
+        const auto* afterState = ReadState(firstInstance);
+        const bool preserved = rejected && afterState == beforeState && afterState && afterState->contactLinks.Count() == 1 && afterState->contactLinks.Data() == beforeData && memcmp(afterState->contactLinks.Data(), &validContact, sizeof(validContact)) == 0 && afterState->linkIterations == 12;
+        return Checkpoint(stage, preserved);
+    };
+    passed = RejectWithoutReplacing("null descriptor rejection is atomic", nullptr, 1, 12) && RejectWithoutReplacing("excess count rejection is atomic", tooMany, 1025, 12) && RejectWithoutReplacing("invalid bone rejection is atomic", &invalidBone, 1, 12) && RejectWithoutReplacing("fixed root rejection is atomic", &fixedRoot, 1, 12) && RejectWithoutReplacing("same-chain rejection is atomic", &sameChain, 1, 12) && RejectWithoutReplacing("reversed duplicate rejection is atomic", reversedDuplicates, 2, 12) && RejectWithoutReplacing("NaN offset rejection is atomic", &nanOffset, 1, 12) && RejectWithoutReplacing("negative radius rejection is atomic", &negativeRadius, 1, 12) && RejectWithoutReplacing("zero iteration rejection is atomic", &validContact, 1, 0) && RejectWithoutReplacing("excess iteration rejection is atomic", &validContact, 1, 33) && passed;
+
+    // 一時的な確保失敗では設定配列とownerを保ち、後の再試行を許す。
+    firstState = ReadState(firstInstance);
+    const auto* allocationFailureOwner = firstState;
+    const auto* allocationFailureData = firstState ? firstState->contactLinks.Data() : nullptr;
+    gk::SetAllocationFailureAfterForTesting(0);
+    const int allocationFailureResult = gk::SetModelSecondaryMotionContactLinks(firstInstance, &sameBoneContact, 1, 24);
+    gk::ResetAllocationFailureForTesting();
+    firstState = ReadState(firstInstance);
+    const bool allocationFailureAtomic = allocationFailureResult == -1 && firstState == allocationFailureOwner && firstState && firstState->contactLinks.Data() == allocationFailureData && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4 && firstState->linkIterations == 12;
+    passed = Checkpoint("allocation failure is atomic and retry succeeds", allocationFailureAtomic && gk::SetModelSecondaryMotionContactLinks(firstInstance, &validContact, 1, 12) == 0) && passed;
+
+    // body shapeの追加・解除、鎖の再登録、Resetは接触設定を保つ。
+    gk::FModelSecondaryMotionCollider body{};
+    body.bone = 0;
+    body.start = { 10.0f, 0.0f, 0.0f };
+    body.end = body.start;
+    body.radius = 0.1f;
+    passed = gk::SetModelSecondaryMotionColliders(firstInstance, &body, 1, 0.0f) == 0 && passed;
+    firstState = ReadState(firstInstance);
+    const bool bodyAddedPreserves = firstState && firstState->colliders.Count() == 1 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->contactLinks.At(0).secondBone == 4;
+    passed = Checkpoint("body collider registration preserves contact links", bodyAddedPreserves) && passed;
+    passed = gk::SetModelSecondaryMotionColliders(firstInstance, nullptr, 0) == 0 && passed;
+    passed = gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings) == 0 && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("body clear and chain re-registration preserve contact links", firstState && firstState->colliders.Count() == 0 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->linkIterations == 12) && passed;
+    const uint32_t shortenedChain[2] = { 1, 5 };
+    const auto* beforeMissingEndpoint = firstState;
+    const bool missingEndpointRejected = gk::SetModelSecondaryMotionChain(firstInstance, shortenedChain, 2, settings) == -1;
+    firstState = ReadState(firstInstance);
+    const auto* retainedFirstChain = FindChainByRoot(firstState, firstChain[0]);
+    passed = Checkpoint("chain replacement losing an endpoint is atomic", bodyAddedPreserves && missingEndpointRejected && firstState == beforeMissingEndpoint && firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).secondBone == 4 && retainedFirstChain && retainedFirstChain->bones.Count() == 3) && passed;
+    const int resetResult = gk::ResetModelSecondaryMotion(firstInstance);
+    passed = Checkpoint("reset retains contact-link metadata", resetResult == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6 && firstState->linkIterations == 12 && passed;
+    const int updateResult = gk::UpdateModelSecondaryMotion(firstInstance, 0.0);
+    passed = Checkpoint("zero-delta update succeeds after reset", updateResult == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = firstState && firstState->contactLinks.Count() == 1 && firstState->links.Count() == 1 && firstState->distanceConstraints.Count() == 1 && passed;
+
+    // instanceごとにcontact link配列を分離し、count=0では接触設定だけ解除する。
+    auto* secondState = ReadState(secondInstance);
+    const bool secondInitiallyIndependent = secondState && secondState->contactLinks.Count() == 0 && secondState->chains.Count() == 2;
+    const gk::FModelSecondaryMotionContactLink secondContact{ 5, {}, 4, {}, 0.02f };
+    passed = gk::SetModelSecondaryMotionContactLinks(secondInstance, &secondContact, 1, 8) == 0 && passed;
+    secondState = ReadState(secondInstance);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("instances own independent contact-link arrays", secondInitiallyIndependent && secondState && secondState->contactLinks.Count() == 1 && secondState->contactLinks.At(0).firstBone == 5 && firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == 6) && passed;
+    passed = gk::SetModelSecondaryMotionContactLinks(firstInstance, nullptr, 0, 20) == 0 && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("count-zero clears only contact links", firstState && firstState->contactLinks.Count() == 0 && firstState->chains.Count() == 2 && firstState->links.Count() == 1 && firstState->distanceConstraints.Count() == 1 && firstState->linkIterations == 20) && passed;
+    passed = gk::DeleteModel(secondInstance) == 0 && passed;
+    secondState = nullptr;
+    firstState = ReadState(firstInstance);
+    passed = firstState && firstState->contactLinks.Count() == 0 && firstState->links.Count() == 1 && passed;
+
+    passed = Checkpoint("clear releases secondary-motion state", gk::ClearModelSecondaryMotion(firstInstance) == 0 && ReadState(firstInstance) == nullptr) && passed;
+    passed = gk::DeleteModel(firstInstance) == 0 && gk::DeleteModel(model) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "secondary contact-link public lifecycle or atomicity contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
  * body接触後の鎖復元と距離制約が有限反復で両立する既知可行姿勢を確かめる。
  */
 static bool TestSecondaryMotionLinkLocalStallFeasiblePose()
@@ -3560,5 +3845,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

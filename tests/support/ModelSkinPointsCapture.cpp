@@ -57,6 +57,11 @@ void EmitDetailError(uint32_t frame, const char* message);
  * 選択したframeの侵入点と骨の寄与を記録する。
  */
 void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::model::FModelSecondaryMotionState* secondary);
+bool EmitSkinBindingDump(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::FModelSecondaryMotionState* secondary, gk::String& error);
+/**
+ * 元の点選択を保ち、描画位置の身体接触をmeshごとに記録する。
+ */
+bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FVector3d>& positions, const gk::model::FModelSecondaryMotionState& secondary);
 
 }
 
@@ -235,6 +240,16 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
     uint32_t pointShapeContactCount = 0;
     double maximumPenetrationDepth = 0.0;
     const gk::model::FModelSecondaryMotionState* secondary = playback ? playback->secondaryMotion : nullptr;
+    const char* bindingDumpFlag = getenv("GKCORE_DUMP_SKIN_BINDINGS");
+    static bool bindingDumpAttempted = false;
+    if (frame == 0 && bindingDumpFlag && strcmp(bindingDumpFlag, "1") == 0 && !bindingDumpAttempted)
+    {
+        bindingDumpAttempted = true;
+        if (!EmitSkinBindingDump(frame, *source, *geometry, selectedIds, secondary, error))
+        {
+            fprintf(stderr, "model skin binding dump: %s\n", error.Empty() ? "binding dump failed" : error.CStr());
+        }
+    }
     const uint32_t shapeCount = secondary ? secondary->previousCollisionShapes.Count() : 0;
     const bool contactTested = shapeCount > 0;
     if (contactTested)
@@ -266,6 +281,11 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
     }
     const bool contactClear = contactTested && pointPenetrationCount == 0;
     EmitReport(frame, evaluatedPoints.Count(), eligibleCount, shapeCount, maximumError, pointPenetrationCount, pointShapeContactCount, maximumPenetrationDepth, contactTested, contactClear, matchesReference);
+    if (contactTested && getenv("GKCORE_SKIN_POINT_MESH_SUMMARY") && !EmitMeshContactReports(frame, *source, *geometry, selectedIds, evaluatedPoints, *secondary))
+    {
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_mesh_frame_error\",\"frame\":%u,\"valid\":false,\"message\":\"mesh contact classification failed\"}\n", frame);
+        return 0;
+    }
     const char* detailFrameValue = getenv("GKCORE_SKIN_POINT_DETAIL_FRAME");
     if (detailFrameValue && detailFrameValue[0])
     {
@@ -460,6 +480,19 @@ struct FDiagnosticBoneWeight
 };
 
 /**
+ * bind位置を同じboneへまとめるskin binding出力用の集計値。
+ */
+struct FBindingBoneWeight
+{
+    // 共通骨格内のbone番号。
+    uint32_t bone;
+    // 全influenceを正規化する前の、このboneのweight合計。
+    double weight;
+    // geometryToBoneで変換したbind位置のweight合計。
+    double localPositionSum[3];
+};
+
+/**
  * 身体形状へ入った点と、最も深い接触を保持する。
  */
 struct FDiagnosticPoint
@@ -474,6 +507,19 @@ struct FDiagnosticPoint
     double distance;
     // 身体形状の半径から距離を引いた侵入深さ。
     double depth;
+};
+
+/**
+ * mesh segmentごとのskin点数と身体形状への侵入を数える。
+ */
+struct FMeshContactSummary
+{
+    // 対象mesh segmentに分類できた選択点数。
+    uint32_t pointCount;
+    // 身体形状へ侵入した選択点数。
+    uint32_t pointPenCount;
+    // このmesh segment内で最も深い侵入。
+    double maxDepth;
 };
 
 /**
@@ -501,6 +547,65 @@ bool FindPointSegment(const FModelGpuSkinningGeometry& geometry, uint32_t positi
         found = true;
     }
     return found;
+}
+
+bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FVector3d>& positions, const gk::model::FModelSecondaryMotionState& secondary)
+{
+    gk::Array<FMeshContactSummary> summaries;
+    if (positions.Count() != selectedIds.Count() || !summaries.Reserve(geometry.segments.Count()))
+    {
+        return false;
+    }
+    for (uint32_t segmentIndex = 0; segmentIndex < geometry.segments.Count(); ++segmentIndex)
+    {
+        if (!summaries.Append({}))
+        {
+            return false;
+        }
+    }
+    for (uint32_t sample = 0; sample < selectedIds.Count(); ++sample)
+    {
+        uint32_t segmentIndex = 0;
+        if (!FindPointSegment(geometry, selectedIds.At(sample), segmentIndex))
+        {
+            return false;
+        }
+        auto& summary = summaries.At(segmentIndex);
+        ++summary.pointCount;
+        double maximumDepth = 0.0;
+        for (uint32_t shapeIndex = 0; shapeIndex < secondary.previousCollisionShapes.Count(); ++shapeIndex)
+        {
+            double distance = 0.0;
+            const auto& shape = secondary.previousCollisionShapes.At(shapeIndex);
+            if (!DistanceToShape(positions.At(sample), shape, distance))
+            {
+                return false;
+            }
+            maximumDepth = fmax(maximumDepth, static_cast<double>(shape.radius) - distance);
+        }
+        if (maximumDepth > 0.0)
+        {
+            ++summary.pointPenCount;
+            summary.maxDepth = fmax(summary.maxDepth, maximumDepth);
+        }
+    }
+    for (uint32_t segmentIndex = 0; segmentIndex < summaries.Count(); ++segmentIndex)
+    {
+        const auto& summary = summaries.At(segmentIndex);
+        const auto& segment = geometry.segments.At(segmentIndex);
+        if (segment.nodeIndex >= source.Skeleton().parents.Count() || !source.BoneName(segment.nodeIndex))
+        {
+            return false;
+        }
+        if (summary.pointCount == 0)
+        {
+            continue;
+        }
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_mesh_frame\",\"frame\":%u,\"segmentIndex\":%u,\"meshNode\":%u,\"positionSource\":\"rendered skin\",\"meshName\":", frame, segmentIndex, segment.nodeIndex);
+        EmitJsonString(source.BoneName(segment.nodeIndex));
+        fprintf(stderr, ",\"pointCount\":%u,\"pointPenCount\":%u,\"maxDepth\":%.17g,\"valid\":true}\n", summary.pointCount, summary.pointPenCount, summary.maxDepth);
+    }
+    return true;
 }
 
 /**
@@ -639,6 +744,119 @@ bool CollectPointWeights(const gk::model::AModelAnimationSource& source, const F
 }
 
 /**
+ * 選択頂点の正weightをbone単位でまとめ、bind位置とbone-local bind座標をJSONへ出す。
+ */
+bool EmitSkinBindingDump(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::FModelSecondaryMotionState* secondary, gk::String& error)
+{
+    fprintf(stderr, "{\"type\":\"gkcore_skin_binding_dump\",\"frame\":%u,\"pointCount\":%u}\n", frame, selectedIds.Count());
+    for (uint32_t sample = 0; sample < selectedIds.Count(); ++sample)
+    {
+        const uint32_t positionId = selectedIds.At(sample);
+        if (positionId >= geometry.positions.Count() || positionId >= geometry.influenceRanges.Count())
+        {
+            error.Assign("binding dump position id is outside geometry arrays");
+            return false;
+        }
+        const auto& range = geometry.influenceRanges.At(positionId);
+        if (range.firstInfluence > geometry.influences.Count() || range.influenceCount > geometry.influences.Count() - range.firstInfluence)
+        {
+            error.Assign("binding dump influence range is invalid");
+            return false;
+        }
+        gk::Array<FBindingBoneWeight> bindings;
+        if (!bindings.Reserve(range.influenceCount))
+        {
+            error.Assign("binding dump bone allocation failed");
+            return false;
+        }
+        double totalWeight = 0.0;
+        for (uint32_t influenceOffset = 0; influenceOffset < range.influenceCount; ++influenceOffset)
+        {
+            const auto& influence = geometry.influences.At(range.firstInfluence + influenceOffset);
+            if (!isfinite(influence.weight) || influence.weight < 0.0 || influence.clusterIndex >= geometry.clusters.Count())
+            {
+                error.Assign("binding dump contains an invalid influence");
+                return false;
+            }
+            if (!(influence.weight > 0.0))
+            {
+                continue;
+            }
+            const auto& cluster = geometry.clusters.At(influence.clusterIndex);
+            if (cluster.nodeIndex >= source.Skeleton().parents.Count())
+            {
+                error.Assign("binding dump cluster references an invalid bone");
+                return false;
+            }
+            const auto& position = geometry.positions.At(positionId);
+            const double localPosition[3] = { cluster.geometryToBone[0] * position.value[0] + cluster.geometryToBone[3] * position.value[1] + cluster.geometryToBone[6] * position.value[2] + cluster.geometryToBone[9], cluster.geometryToBone[1] * position.value[0] + cluster.geometryToBone[4] * position.value[1] + cluster.geometryToBone[7] * position.value[2] + cluster.geometryToBone[10], cluster.geometryToBone[2] * position.value[0] + cluster.geometryToBone[5] * position.value[1] + cluster.geometryToBone[8] * position.value[2] + cluster.geometryToBone[11] };
+            if (!isfinite(localPosition[0]) || !isfinite(localPosition[1]) || !isfinite(localPosition[2]))
+            {
+                error.Assign("binding dump bind-local position is non-finite");
+                return false;
+            }
+            uint32_t bindingIndex = bindings.Count();
+            for (uint32_t index = 0; index < bindings.Count(); ++index)
+            {
+                if (bindings.At(index).bone == cluster.nodeIndex)
+                {
+                    bindingIndex = index;
+                    break;
+                }
+            }
+            if (bindingIndex == bindings.Count())
+            {
+                const FBindingBoneWeight emptyBinding{};
+                if (!bindings.Append(emptyBinding))
+                {
+                    error.Assign("binding dump bone append failed");
+                    return false;
+                }
+                bindings.At(bindingIndex).bone = cluster.nodeIndex;
+            }
+            FBindingBoneWeight& binding = bindings.At(bindingIndex);
+            binding.weight += influence.weight;
+            for (uint32_t axis = 0; axis < 3; ++axis)
+            {
+                binding.localPositionSum[axis] += localPosition[axis] * influence.weight;
+            }
+            totalWeight += influence.weight;
+            if (!isfinite(binding.weight) || !isfinite(totalWeight) || !isfinite(binding.localPositionSum[0]) || !isfinite(binding.localPositionSum[1]) || !isfinite(binding.localPositionSum[2]))
+            {
+                error.Assign("binding dump weight accumulation overflowed");
+                return false;
+            }
+        }
+        if (!(totalWeight > 0.0))
+        {
+            error.Assign("binding dump point has no positive influence weight");
+            return false;
+        }
+        const auto& bindPosition = geometry.positions.At(positionId);
+        fprintf(stderr, "{\"type\":\"gkcore_skin_binding_point\",\"frame\":%u,\"positionId\":%u,\"bindPosition\":[%.17g,%.17g,%.17g],\"bindings\":[", frame, positionId, bindPosition.value[0], bindPosition.value[1], bindPosition.value[2]);
+        for (uint32_t index = 0; index < bindings.Count(); ++index)
+        {
+            if (index > 0)
+            {
+                fputc(',', stderr);
+            }
+            const FBindingBoneWeight& binding = bindings.At(index);
+            const char* group = "other";
+            if (secondary)
+            {
+                const uint32_t role = GetSkirtChainBoneRole(source, *secondary, binding.bone);
+                group = role == 1 ? "skirtRoot" : (role == 2 ? "skirtChild" : (IsBodyShapeBone(source, *secondary, binding.bone) ? "bodyShapeAncestor" : "other"));
+            }
+            fprintf(stderr, "{\"bone\":%u,\"name\":", binding.bone);
+            EmitJsonString(source.BoneName(binding.bone));
+            fprintf(stderr, ",\"group\":\"%s\",\"weight\":%.17g,\"localPosition\":[%.17g,%.17g,%.17g]}", group, binding.weight / totalWeight, binding.localPositionSum[0] / binding.weight, binding.localPositionSum[1] / binding.weight, binding.localPositionSum[2] / binding.weight);
+        }
+        fprintf(stderr, "]}\n");
+    }
+    return true;
+}
+
+/**
  * 指定boneのcluster変形位置をweight平均し、有限値なら返す。
  */
 bool GetBoneTransformedCentroid(const FModelGpuSkinningGeometry& geometry, const gk::Array<FModelGpuSkinningGeometry::FMatrix>& matrices, uint32_t positionId, uint32_t bone, double output[3])
@@ -741,6 +959,24 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
         return;
     }
     uint32_t penetratingPointCount = 0;
+    gk::Array<FMeshContactSummary> meshSummaries;
+    bool meshSummaryValid = meshSummaries.Reserve(geometry.segments.Count());
+    if (meshSummaryValid)
+    {
+        for (uint32_t segmentIndex = 0; segmentIndex < geometry.segments.Count(); ++segmentIndex)
+        {
+            const FMeshContactSummary emptySummary{};
+            if (!meshSummaries.Append(emptySummary))
+            {
+                meshSummaryValid = false;
+                break;
+            }
+        }
+    }
+    if (!meshSummaryValid)
+    {
+        EmitDetailError(frame, "mesh contact summary allocation failed");
+    }
     for (uint32_t sample = 0; sample < selectedIds.Count(); ++sample)
     {
         const uint32_t positionId = selectedIds.At(sample);
@@ -769,6 +1005,34 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
                 candidate.shapeIndex = shapeIndex;
                 candidate.distance = distance;
                 candidate.depth = depth;
+            }
+        }
+        if (meshSummaryValid)
+        {
+            uint32_t segmentIndex = 0;
+            if (!FindPointSegment(geometry, positionId, segmentIndex) || segmentIndex >= meshSummaries.Count())
+            {
+                meshSummaryValid = false;
+                EmitDetailError(frame, "a selected skin point could not be assigned to exactly one mesh segment");
+            }
+            else
+            {
+                const auto& segment = geometry.segments.At(segmentIndex);
+                if (segment.nodeIndex >= source.Skeleton().parents.Count() || !source.BoneName(segment.nodeIndex))
+                {
+                    meshSummaryValid = false;
+                    EmitDetailError(frame, "a mesh segment has no valid skeleton bone name");
+                }
+                else
+                {
+                    auto& summary = meshSummaries.At(segmentIndex);
+                    ++summary.pointCount;
+                    if (candidate.depth > 0.0)
+                    {
+                        ++summary.pointPenCount;
+                        summary.maxDepth = fmax(summary.maxDepth, candidate.depth);
+                    }
+                }
             }
         }
         if (!(candidate.depth > 0.0))
@@ -817,6 +1081,14 @@ void EmitPointDetails(gk::ModelHandle model, uint32_t frame, const gk::model::AM
     }
 
     fprintf(stderr, "{\"type\":\"gkcore_model_skin_point_detail\",\"frame\":%u,\"vertexContactsEnabled\":%s,\"pointPositionSource\":\"pre-contact sparse skin\",\"spherePositionSource\":\"current drawing FK\",\"bodyWeightMeaning\":\"collider attachments and their skeleton ancestors\",\"scannedPoints\":%u,\"penetratingPointsBeforeContact\":%u,\"reportedPoints\":%u,\"maxReportedPoints\":32}\n", frame, secondary->skinPointContactsEnabled ? "true" : "false", selectedIds.Count(), penetratingPointCount, details.Count());
+    fprintf(stderr, "{\"type\":\"gkcore_model_skin_mesh_contact_summary\",\"frame\":%u,\"valid\":%s,\"meshCount\":%u}\n", frame, meshSummaryValid ? "true" : "false", geometry.segments.Count());
+    for (uint32_t segmentIndex = 0; segmentIndex < meshSummaries.Count(); ++segmentIndex)
+    {
+        const auto& segment = geometry.segments.At(segmentIndex);
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_mesh_contact\",\"frame\":%u,\"meshNode\":%u,\"meshName\":", frame, segment.nodeIndex);
+        EmitJsonString(segment.nodeIndex < source.Skeleton().parents.Count() ? source.BoneName(segment.nodeIndex) : nullptr);
+        fprintf(stderr, ",\"pointCount\":%u,\"pointPenCount\":%u,\"maxDepth\":%.17g}\n", meshSummaries.At(segmentIndex).pointCount, meshSummaries.At(segmentIndex).pointPenCount, meshSummaries.At(segmentIndex).maxDepth);
+    }
     gk::Array<FDiagnosticBoneWeight> boneWeights;
     for (uint32_t detailIndex = 0; detailIndex < details.Count(); ++detailIndex)
     {

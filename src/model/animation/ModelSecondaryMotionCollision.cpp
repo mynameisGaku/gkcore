@@ -1708,6 +1708,61 @@ bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMot
     return CheckFreeSegmentPrepared(shapes, shapeCount, first, second, error, toleranceFraction);
 }
 
+bool QueryPreparedSecondaryMotionFreeSegmentContact(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second, double& penetration, double& spanAmount, gk::FVector3d& normal, gk::String& error, double toleranceFraction)
+{
+    error.Clear();
+    if (!isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
+    {
+        error.Assign("Secondary motion free-segment tolerance fraction is invalid");
+        return false;
+    }
+    const uintptr_t penetrationAddress = reinterpret_cast<uintptr_t>(&penetration);
+    const uintptr_t spanAddress = reinterpret_cast<uintptr_t>(&spanAmount);
+    const uintptr_t normalAddress = reinterpret_cast<uintptr_t>(&normal);
+    const uintptr_t shapeAddress = reinterpret_cast<uintptr_t>(&shape);
+    const uintptr_t firstAddress = reinterpret_cast<uintptr_t>(&first);
+    const uintptr_t secondAddress = reinterpret_cast<uintptr_t>(&second);
+    const bool outputsOverlap = (penetrationAddress <= spanAddress ? spanAddress - penetrationAddress < sizeof(penetration) : penetrationAddress - spanAddress < sizeof(spanAmount)) || (penetrationAddress <= normalAddress ? normalAddress - penetrationAddress < sizeof(penetration) : penetrationAddress - normalAddress < sizeof(normal)) || (spanAddress <= normalAddress ? normalAddress - spanAddress < sizeof(spanAmount) : spanAddress - normalAddress < sizeof(normal));
+    const bool inputsOverlap = (penetrationAddress <= shapeAddress ? shapeAddress - penetrationAddress < sizeof(penetration) : penetrationAddress - shapeAddress < sizeof(shape)) || (spanAddress <= shapeAddress ? shapeAddress - spanAddress < sizeof(spanAmount) : spanAddress - shapeAddress < sizeof(shape)) || (normalAddress <= shapeAddress ? shapeAddress - normalAddress < sizeof(normal) : normalAddress - shapeAddress < sizeof(shape)) || (penetrationAddress <= firstAddress ? firstAddress - penetrationAddress < sizeof(penetration) : penetrationAddress - firstAddress < sizeof(first)) || (spanAddress <= firstAddress ? firstAddress - spanAddress < sizeof(spanAmount) : spanAddress - firstAddress < sizeof(first)) || (normalAddress <= firstAddress ? firstAddress - normalAddress < sizeof(normal) : normalAddress - firstAddress < sizeof(first)) || (penetrationAddress <= secondAddress ? secondAddress - penetrationAddress < sizeof(penetration) : penetrationAddress - secondAddress < sizeof(second)) || (spanAddress <= secondAddress ? secondAddress - spanAddress < sizeof(spanAmount) : spanAddress - secondAddress < sizeof(second)) || (normalAddress <= secondAddress ? secondAddress - normalAddress < sizeof(normal) : normalAddress - secondAddress < sizeof(second));
+    if (outputsOverlap || inputsOverlap)
+    {
+        error.Assign("Secondary motion contact query output overlaps its inputs or another output");
+        return false;
+    }
+    bool boundsValid = true;
+    for (uint32_t axis = 0; axis < 3; ++axis)
+        boundsValid = boundsValid && isfinite(shape.boundsLow[axis]) && isfinite(shape.boundsHigh[axis]) && shape.boundsLow[axis] <= shape.boundsHigh[axis];
+    if (!ValidateFreeSegmentEndpoints(first, second, error) || !IsFinite(shape.start) || !IsFinite(shape.end) || !IsFinite(shape.axis) || !isfinite(shape.axisLengthSquared) || shape.axisLengthSquared < 0.0 || !isfinite(shape.radius) || shape.radius < 0.0 || !isfinite(shape.tolerance) || shape.tolerance < 0.0 || !boundsValid)
+    {
+        if (error.Empty())
+            error.Assign("Secondary motion prepared contact shape is invalid");
+        return false;
+    }
+    // 最近位置、線分上の割合、軸上位置を既存分岐で求める。
+    double candidateSpanAmount = 0.0;
+    double axisAmount = 0.0;
+    gk::FVector3d spanPoint{};
+    gk::FVector3d axisPoint{};
+    ClosestSegmentPairWithAxis(first, second, shape.start, shape.axis, shape.axisLengthSquared, candidateSpanAmount, axisAmount, spanPoint, axisPoint);
+    (void)axisAmount;
+    const gk::FVector3d separation = Subtract(spanPoint, axisPoint);
+    const double distance = Length(separation);
+    const double candidatePenetration = shape.radius - shape.tolerance * toleranceFraction - distance;
+    gk::FVector3d candidateNormal = separation;
+    if (!Normalize(candidateNormal))
+        candidateNormal = FallbackNormal(spanPoint, axisPoint, shape.axis, Subtract(second, first));
+    if (!isfinite(distance) || !isfinite(candidatePenetration) || !isfinite(candidateSpanAmount) || !IsFinite(candidateNormal))
+    {
+        error.Assign("Secondary motion prepared contact query is outside the numeric range");
+        return false;
+    }
+    penetration = candidatePenetration;
+    spanAmount = candidateSpanAmount;
+    normal = candidateNormal;
+    error.Clear();
+    return true;
+}
+
 bool CheckPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* positions, uint32_t pointCount, gk::String& error, double toleranceFraction)
 {
 #if defined(GKCORE_TESTING)

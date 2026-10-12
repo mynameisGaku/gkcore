@@ -81,6 +81,11 @@ bool ProjectPreparedSecondaryMotionFreeSegmentContactsWithAnchors(const FPrepare
 bool CheckPreparedSecondaryMotionFreeSegmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& first, const gk::FVector3d& second, gk::String& error, double toleranceFraction = 1.0);
 
 /**
+ * 準備済み形状と線分の接触量を調べる。失敗時は出力値を保つ。
+ */
+bool QueryPreparedSecondaryMotionFreeSegmentContact(const FPreparedSecondaryMotionCollisionShape& shape, const gk::FVector3d& first, const gk::FVector3d& second, double& penetration, double& spanAmount, gk::FVector3d& normal, gk::String& error, double toleranceFraction = 0.5);
+
+/**
  * 準備済み形状で節位置を投影する。失敗時はpositionsを保つ。
  */
 bool ProjectPreparedSecondaryMotionContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d* referenceTargets, uint32_t pointCount, gk::Array<gk::FVector3d>& positions, gk::String& error);

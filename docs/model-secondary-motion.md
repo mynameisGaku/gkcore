@@ -14,6 +14,10 @@
 
 複数の鎖の自由boneを線分で結ぶには、`SetModelSecondaryMotionLinks`へ`FModelSecondaryMotionLink`配列を渡します。各端点は別々に登録した鎖の自由boneで、固定rootや仮想末端は指定できません。最大1024本、半径はmodel空間の有限な0以上、反復数は1〜32です。端点の順序を反転した重複も拒否します。既定の反復数は32で、`nullptr, 0`は接続線分だけを解除し、鎖や身体形状は保持します。`ResetModelSecondaryMotion`と鎖の再登録後も接続線分と反復数を保持し、次の明示更新で接触を解きます。
 
+skin weightに近い位置へ骨接触線分を置くには、`SetModelSecondaryMotionContactLinks`へ`FModelSecondaryMotionContactLink`配列を渡します。両端はboneローカルの`firstOffset`と`secondOffset`、線分半径は有限な0以上のmodel空間値です。端点が同じboneにある設定も使えます。異なるboneを結ぶ場合は、各boneが別々の鎖に属する自由boneでなければなりません。固定root、仮想末端、同じ鎖にある異なるboneは指定できず、端点とoffsetが同じ線分の重複も拒否します。最大1024本で、既定32回、明示時は1〜32回の反復です。反復数は接続線分・距離制約と共有します。不正な設定のsetterは既存状態を保ちます。`nullptr, 0`はこの接触線分だけを解除します。
+
+この線分の位置に応じて、各boneのpivotを保ったまま後続boneの向きを回し、骨長と最大曲げ角を保つ姿勢を探します。身体接触や他の制約と同時に解けない場合、更新は失敗し、直前に確定した揺れ状態と姿勢を保ちます。基準方向と接触位置が正反対になるなど回転軸を一意に定められない特異な配置は解けない場合があります。これは骨に結び付けた接触proxyであり、skin weight、衣服の幅やmesh面全体の接触は保証しません。
+
 複数鎖の自由bone間の距離を保つには、`SetModelSecondaryMotionDistanceConstraints`へ`FModelSecondaryMotionDistanceConstraint`配列を渡します。各端点は別々に登録した鎖の自由boneで、最大1024組です。固定root・同じ鎖のbone・順序を反転した重複ペアは指定できません。`restDistance=0`は登録時の基準姿勢を測って距離として固定します。この基準姿勢は揺れを加える前のclip・blend・IK反映後の位置です。animationで毎frame基準距離を測り直す機能ではありません。正の`restDistance`はmodel空間の距離を直接指定します。`compliance=0`は距離を保ち、正の値は伸び縮みを許します。値が大きいほど柔らかく、両端は同じ動きやすさで補正します。
 
 距離は、柔らかさを時間刻みに合わせて扱うXPBDという位置補正で解きます。各Updateのframe末尾で連成処理を呼び、その制約反復内では補正の累計`lambda`を保持します。lambdaはUpdateごとに0へ戻します。時間刻み`h`は、0より大きく0.25秒未満のdeltaではそのdelta、deltaが0または0.25秒以上のhitchでは`1/120`秒です。検査する誤差は`abs(実距離 - 基準距離 - (compliance / h²) * lambda)`で、柔らかい設定では実距離そのものの伸びを拒否しません。候補は基準距離の0.05%、描画FKは0.1%を許容します。各鎖のsubstepと距離制約を同じ刻みで一緒に解く構成ではなく、更新頻度による動きの差は残ります。極端に短い距離や大きなfloat座標では必要な相対精度を保てず、更新が失敗する場合があります。
@@ -92,6 +96,8 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 身体接触には`--secondary-colliders <config-file>`を併用します。各設定行は端点6成分、半径、`|`、取付bone名の順です。bone名はモデルから検索され、節の余白`0.005` model unitが半径へ加わります。[従来の頂点接触用鎖設定](../samples/config/yumeka-secondary-contact-motion.txt)は髪・尻尾の3鎖を8回、スカート10鎖を32回反復し、節球は使いません。[骨の小球と身体カプセル用設定](../samples/config/yumeka-bone-contact-motion.txt)では髪・尻尾の節半径が`0.003`、スカートが`0.038` model unitです。骨の小球設定は[脚へ合わせて拡げた8個の身体形状](../samples/config/yumeka-bone-colliders.txt)、頂点接触の設定は[従来の身体形状](../samples/config/yumeka-secondary-colliders.txt)を使います。スカート鎖はどちらも32回反復します。
 
 鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。このoptionには`--secondary-colliders`が必要です。各行は`半径 | firstBone secondBone`で、半径はmodel空間です。設定ファイルは[スカート接続線分](../samples/config/yumeka-secondary-links.txt)を参照してください。接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
+
+骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。このoptionは揺れもの鎖と身体形状を設定した起動で使います。各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。空行と`#`コメントを無視します。YUMEKAの[衣服位置の球](../samples/config/yumeka-secondary-contact-links.txt)はSTART16の設定例です。同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
 
 骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。これは布面の非貫通や全設定の収束を保証するものではありません。
 

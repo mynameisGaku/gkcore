@@ -1597,3 +1597,24 @@ Native argsは前節と同じmodel/motion/config。GPUはGKCORE_TEST_WINDOW_VISI
 ゲーム構築用362ファイルをprepare_game_repository.pyで生成し、独立したmain treeの内容がmanifestと一致しました。Runtimeと5sampleのRelease build、SDK58ファイルのallowlist、更新DLLの外部consumer GPU Init→Present→Shutdownが成功。START CheckOnly、formatter/BOM/CRLF/diffも確認済みです。記録はcontact-workspace-game-{export,build,install,consumer-run}.log、contact-workspace-{game,sdk}-manifest.jsonとcontact-workspace-source-format.jsonです。
 
 最新Release24画像を画素一致のlossless PNGとして保持し、旧画像・PPM・重複Debug、一時probe source/build、比較script、使用済みexport stagingとPython cacheを片づけました。生成物の絶対pathと個々のSHA-256を照合してファイルを個別削除し、空folderだけ除去しています。元asset・現Native/CPU/game build・検証ログ・611 deltaを保持。比較/probe source本文と削除前hashはcontact-workspace-cleanup.jsonへ保存しました。この検証済みsliceをdevとゲーム構築用mainへ反映します。次は更新内で変わらない参照線分の再計算費用を調べます。
+
+
+## 衣服位置に合わせた骨接触と実モデルの連続再生
+
+2026-10-13のユーザー指示により、細かなFPS改善を中断し、実モデルのanimation・blend・IK・揺れ・身体接触を組み合わせた動作へ作業を切り替えました。参照線分cacheの未検証案は現ソースへ含めず、調査記録として分離しています。今回は速度改善を成果に含めません。
+
+FModelSecondaryMotionContactLinkとSetModelSecondaryMotionContactLinksを追加しました。骨ローカルoffsetの球・線分を登録し、取付boneのpivotとscaleを保持したまま後続boneの方向を変えて身体形状から離します。方向は節iからi+1へ対応させ、最後は実際の描画FK行列の端点で全接触を検査します。設定、clone、instance分離、clear、reset、allocation失敗、debug出力、CLI読み込みを検査しました。頂点接触はOFFで、Runtimeがskin頂点を押し出す方式ではありません。診断と設定生成のために開発用bind情報を読む処理は、Runtime SDKへ含めません。
+
+接触点評価の未実装契約でREDを取得後、最小回転と子位置に対する微分を実装し、独立な有限差分・既知の90度回転と照合しました。一次勾配が0でも回転で退避できる入力のREDを追加し、幾何的な脱出を実装しました。実機loop frame81の入力では全量補正後の骨長・曲げ角復元が接触を悪化させるため、補正後に全身体形状の実侵入を測り、改善する縮小候補だけ採用します。frame115と別motion frame30の局所停止入力も単体fixtureに保存し、許容角内の方向候補を探索する補正でGREENになりました。各fixtureには独立方向samplingで得た可行姿勢を厳密照会する前提検査もあります。失敗を成功扱いする経路は追加していません。
+
+229本の2骨capsule試験設定は、個々の接触を解けても後続の接触が同じ骨を動かして侵入を戻し、32回の全体反復が収束しないため採用しません。捕捉記録ではcontact18のown-projection後0、all-projections後0.011387 model unitの侵入へ戻りました。設定生成toolへ主skin寄与骨の球を作るmodeを追加し、weightを偽装せず残りの寄与を記録します。採用設定は355観測点から179球を作ったものです。他boneの寄与やpose変化を包む保証はなく、mesh全体の非貫通とは区別します。
+
+Windows 11 Pro build26200、RTX4070 SUPER / driver617.42（32.0.16.1742）、Runtime v142 / MSVC19.29、SDK10.0.22621.0で実行しました。YUMEKAへSilly Dancing・Capoeiraをexternal-blend-ikで適用し、13鎖、8身体形状、骨原点link10本、距離10組、179球、頂点接触OFFで0秒・3.35秒から各120frameをDebug/Release再生、480frameのGPU位置・法線、実skin1,314点が有効でした。点群はJacket443・Skirt440・Vest_Shirt431へ分類し、全点集計も保持しています。保存最後frameと全mesh集計はDebug/Releaseで一致しました。Skirt平均侵入点数は開始3.583→3.017、loop2.450→2.200ですが、loop最大侵入数は8→9、最大深さ0.023409は残り、品質合格とは判定しません。Vest_Shirtの固定骨寄与部分にも侵入が残ります。
+
+採用設定で以前の停止再現611 deltaをDebug/Release再生し、双方framesCompleted=611 / completed=trueを確認しました。Skinning Test・Swingingでもanimation・blend・IK・13鎖の揺れを身体接触なしでDebug/Release各120frame、計240frameのGPU位置・法線を検証しました。このmotionへ身体接触を加えた試験はframe30でSkirt_1の接触が失敗し、既知の残件です。接触なしの試験を身体接触の成功とは扱いません。START16は179球の接触表示、START17はSkinning Test・Swingingと揺れの接触なし再生です。Cで形状表示を切り替え、Rで揺れをresetできます。
+
+Native commandはgkcore_real_model_capture_tests.exe <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Silly Dancing.fbx> <Capoeira.fbx> --follow-motion --secondary-motion samples/config/yumeka-bone-contact-motion.txt --secondary-colliders samples/config/yumeka-bone-colliders.txt --secondary-links samples/config/yumeka-secondary-links.txt --secondary-distances samples/config/yumeka-secondary-distances.txt --secondary-contact-links samples/config/yumeka-secondary-contact-links.txt --materials <material-config.txt>。GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_VERIFY_GPU_SKINNING=1、GKCORE_VERIFY_SKIN_POINTS=Skirt、GKCORE_SKIN_POINT_MESH_SUMMARY=1、GKCORE_TEST_ANIMATION_FRAMES=120、START_SECONDS=0/3.35、STEP_SECONDS=1/60、CAPTURE_START_FRAME=119、CAPTURE_FRAMES=1です（後半5項目はGKCORE_TEST_ANIMATION_またはGKCORE_TEST_CAPTURE_を付与）。611再生はGKCORE_BENCHMARK_DELTA_REPLAY_PATH=constraint-buffer-green-deltas.txt、FRAMES=611、WARMUP=0、TEST_WINDOW_VISIBLE=0です。
+
+最終CPU Debug62/62（6.54秒）・Release62/62（5.18秒）成功、設定生成の8契約も含みます。実installで新header漏れのSDK REDを捕捉し、install対象へ追加後59ファイルがRuntime allowlistに一致しました。ゲーム構築用367ファイルからRuntimeと5sampleをビルドし、新APIをリンクする外部consumerでGPU Init・Present・Shutdownが成功。tests、開発記録、私有assetはゲーム用mainへ含めません。実機の高解像度画像で179球と脚capsuleの配置、通常表示を確認し、lossless PNGのpixel一致も検査しました。コメントは日本語、BOM/CRLF/formatter、START CheckOnlyを確認しています。
+
+記録はcontact-links-final-{debug,release}-{build,test}.log、contact-links-final-replay-{debug,release}.log、contact-links-functional-comparison.json、contact-links-quality-images.json、contact-links-{game,sdk}-manifest.json、contact-links-consumer-run.logです。次は複数接触・骨長・曲げ角を同時に満たせず停止する条件と、実際の布面侵入を改善します。細かなFPS計測へは戻りません。

@@ -511,6 +511,13 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --secondary-distances option\n");
         return 2;
     }
+    // bone-local接触線分の設定ファイルpath。
+    const char* secondaryContactLinkPath = nullptr;
+    if (!gk::examples::ParseSecondaryContactLinkOptions(argc, argv, secondaryContactLinkPath))
+    {
+        fprintf(stderr, "invalid or duplicate --secondary-contact-links option\n");
+        return 2;
+    }
     const char* secondaryMotionPath = nullptr;
     if (!gk::examples::ParseSecondaryMotionOptions(argc, argv, secondaryMotionPath))
     {
@@ -523,14 +530,14 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
-    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath))
+    if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath) || (secondaryContactLinkPath && (!secondaryColliderPath || !secondaryMotionPath)))
     {
-        fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders\n");
+        fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders; --secondary-contact-links require secondary motion chains and colliders\n");
         return 2;
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>]\n");
+        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--secondary-contact-links <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -763,6 +770,10 @@ int main(int argc, char** argv)
     if (passed && secondaryDistancePath)
     {
         passed = gk::examples::ApplySecondaryDistancePreview(model, secondaryDistancePath);
+    }
+    if (passed && secondaryContactLinkPath)
+    {
+        passed = gk::examples::ApplySecondaryContactLinkPreview(model, secondaryContactLinkPath);
     }
     if (passed && vertexContacts)
     {

@@ -18,7 +18,13 @@ bool VerifySecondaryMotionApiExports()
     const gk::FModelSecondaryMotionDistanceConstraint distanceConstraint{};
     if (gk::SetModelSecondaryMotionDistanceConstraints({}, &distanceConstraint, 1) != -1)
     {
-        return 1;
+        return false;
+    }
+    // 骨ローカル接触の値型とsetterも、配布物からリンクして呼び出す。
+    const gk::FModelSecondaryMotionContactLink contactLink{};
+    if (gk::SetModelSecondaryMotionContactLinks({}, &contactLink, 1) != -1)
+    {
+        return false;
     }
     const uint32_t bone = 0;
     if (gk::SetModelSecondaryMotionChain({}, &bone, 1, secondarySettings) != -1 || gk::UpdateModelSecondaryMotion({}, 1.0 / 60.0) != -1 || gk::ResetModelSecondaryMotion({}) != -1 || gk::ClearModelSecondaryMotion({}) != -1 || gk::SetModelSecondaryMotionColliders({}, &collider, 1) != -1 || gk::SetModelSecondaryMotionVertexContactsEnabled({}, true) != -1 || gk::SetModelSecondaryMotionChainCollisionRadius({}, 0, 0.01f) != -1 || gk::SetModelSecondaryMotionLinks({}, &link, 1) != -1 || gk::GetModelSecondaryMotionDebugShapes({}, nullptr, 0) != -1)

@@ -21,6 +21,7 @@ $yumekaSecondaryBoneContactPath = Join-Path $repositoryRoot 'samples\config\yume
 $yumekaBoneCollidersPath = Join-Path $repositoryRoot 'samples\config\yumeka-bone-colliders.txt'
 $yumekaLinksPath = Join-Path $repositoryRoot 'samples\config\yumeka-secondary-links.txt'
 $yumekaDistancesPath = Join-Path $repositoryRoot 'samples\config\yumeka-secondary-distances.txt'
+$yumekaContactLinksPath = Join-Path $repositoryRoot 'samples\config\yumeka-secondary-contact-links.txt'
 $yumekaSecondaryCollidersPath = Join-Path $repositoryRoot 'samples\config\yumeka-secondary-colliders.txt'
 $monkeyPath = Join-Path $env:USERPROFILE 'Downloads\monkey.obj'
 $cesiumPath = Join-Path $repositoryRoot 'build\local-assets\CesiumMan\CesiumMan.png.glb'
@@ -200,6 +201,11 @@ function Invoke-Viewer([string]$label, [string[]]$arguments)
     {
         $pathsToCheck += $arguments[$secondaryDistancesOptionIndex + 1]
     }
+    $secondaryContactLinksOptionIndex = [Array]::IndexOf($arguments, '--secondary-contact-links')
+    if ($secondaryContactLinksOptionIndex -ge 0)
+    {
+        $pathsToCheck += $arguments[$secondaryContactLinksOptionIndex + 1]
+    }
     $materialsOptionIndex = [Array]::IndexOf($arguments, '--materials')
     if ($materialsOptionIndex -ge 0)
     {
@@ -245,6 +251,8 @@ Write-Host ' 12. YUMEKAで外部blend + IK + 骨の小球と身体カプセル'
 Write-Host ' 13. YUMEKAで従来の身体接触設定に変形後頂点接触を追加（zero-morph FBX）'
 Write-Host ' 14. YUMEKAでスカート骨を結ぶ接触補助を表示'
 Write-Host ' 15. YUMEKAでスカート骨の間隔保持と身体接触を表示（試験設定）'
+Write-Host ' 16. YUMEKAで衣服位置に合わせた骨接触を表示'
+Write-Host ' 17. YUMEKAでSkinning Test・Swingingと揺れを再生（身体接触なし）'
 Write-Host '  0. 終了'
 if (-not (Test-RequiredFile 'Visual Studio solution' $solutionPath))
 {
@@ -286,6 +294,7 @@ if ($CheckOnly)
     if ($skinningTestPath -and $swingingPath)
     {
         $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging blend + IK' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging 揺れもの（身体接触なし）' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryPath, '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
     }
     else
     {
@@ -298,6 +307,7 @@ if ($CheckOnly)
         $allChecksPassed = (Invoke-Viewer 'YUMEKA 骨の小球と身体カプセル' $boneContactArguments) -and $allChecksPassed
         $allChecksPassed = (Invoke-Viewer 'YUMEKA スカート骨の接続補助' ($boneContactArguments + @('--secondary-links', $yumekaLinksPath))) -and $allChecksPassed
         $allChecksPassed = (Invoke-Viewer 'YUMEKA スカート骨の間隔保持' ($boneContactArguments + @('--secondary-links', $yumekaLinksPath, '--secondary-distances', $yumekaDistancesPath))) -and $allChecksPassed
+        $allChecksPassed = (Invoke-Viewer 'YUMEKA 衣服位置に合わせた骨接触' ($boneContactArguments + @('--secondary-links', $yumekaLinksPath, '--secondary-distances', $yumekaDistancesPath, '--secondary-contact-links', $yumekaContactLinksPath))) -and $allChecksPassed
         $vertexContactArguments = @($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryContactPath, '--secondary-colliders', $yumekaSecondaryCollidersPath, '--secondary-vertex-contact', '--materials', $yumekaMaterialsPath)
         $allChecksPassed = (Invoke-Viewer 'YUMEKA 従来設定の身体接触 + 変形後頂点接触' $vertexContactArguments) -and $allChecksPassed
     }
@@ -417,6 +427,26 @@ switch ($selection)
         {
             $arguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryBoneContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--secondary-links', $yumekaLinksPath, '--secondary-distances', $yumekaDistancesPath, '--collision-debug', '--materials', $yumekaMaterialsPath)
             $result = Invoke-Viewer 'YUMEKA スカート骨の間隔保持' $arguments
+        }
+    }
+    '16'
+    {
+        $sillyPath = Get-MotionPath 'Silly Dancing.fbx'
+        $capoeiraPath = Get-MotionPath 'Capoeira.fbx'
+        if ($sillyPath -and $capoeiraPath)
+        {
+            $arguments = $yumekaArguments + @('external-blend-ik', $sillyPath, $capoeiraPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryBoneContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--secondary-links', $yumekaLinksPath, '--secondary-distances', $yumekaDistancesPath, '--secondary-contact-links', $yumekaContactLinksPath, '--collision-debug', '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA 衣服位置に合わせた骨接触' $arguments
+        }
+    }
+    '17'
+    {
+        $skinningTestPath = Get-MotionPath 'Skinning Test.fbx'
+        $swingingPath = Get-MotionPath 'Swinging.fbx'
+        if ($skinningTestPath -and $swingingPath)
+        {
+            $arguments = $yumekaArguments + @('external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryPath, '--materials', $yumekaMaterialsPath)
+            $result = Invoke-Viewer 'YUMEKA Skinning Test + Swinging 揺れもの（身体接触なし）' $arguments
         }
     }
     '13'
