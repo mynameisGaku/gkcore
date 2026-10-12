@@ -33,7 +33,7 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         return detail::SetError("secondary motion debug requires a skeletal source");
     }
     // 必要数を先に検査して、容量不足時は出力を触らない。
-    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count() + state->distanceConstraints.Count();
+    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count() + state->distanceConstraints.Count() + state->contactLinks.Count();
     for (uint32_t index = 0; index < state->chains.Count(); ++index)
     {
         const auto* chain = state->chains.At(index);
@@ -154,6 +154,22 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         {
             return detail::SetError("secondary motion debug distance allocation failed");
         }
+    }
+    // 骨原点から離して配置した衣服側の補助形状も、実際の描画FKで表示する。
+    for (uint32_t index = 0; index < state->contactLinks.Count(); ++index)
+    {
+        const auto& contact = state->contactLinks.At(index);
+        if (contact.firstBone >= skeleton.parents.Count() || contact.secondBone >= skeleton.parents.Count() || !isfinite(contact.radius) || contact.radius < 0.0f)
+            return detail::SetError("secondary motion debug attachment is invalid");
+        const float* first = matrices.Data() + static_cast<uint64_t>(contact.firstBone) * 16u;
+        const float* second = matrices.Data() + static_cast<uint64_t>(contact.secondBone) * 16u;
+        FModelSecondaryMotionDebugShape shape{};
+        shape.start = { first[12] + first[0] * contact.firstOffset.x + first[4] * contact.firstOffset.y + first[8] * contact.firstOffset.z, first[13] + first[1] * contact.firstOffset.x + first[5] * contact.firstOffset.y + first[9] * contact.firstOffset.z, first[14] + first[2] * contact.firstOffset.x + first[6] * contact.firstOffset.y + first[10] * contact.firstOffset.z };
+        shape.end = { second[12] + second[0] * contact.secondOffset.x + second[4] * contact.secondOffset.y + second[8] * contact.secondOffset.z, second[13] + second[1] * contact.secondOffset.x + second[5] * contact.secondOffset.y + second[9] * contact.secondOffset.z, second[14] + second[2] * contact.secondOffset.x + second[6] * contact.secondOffset.y + second[10] * contact.secondOffset.z };
+        shape.radius = contact.radius;
+        shape.bone = contact.firstBone;
+        if (!isfinite(shape.start.x) || !isfinite(shape.start.y) || !isfinite(shape.start.z) || !isfinite(shape.end.x) || !isfinite(shape.end.y) || !isfinite(shape.end.z) || !candidate.Append(shape))
+            return detail::SetError("secondary motion debug attachment is outside range or allocation failed");
     }
     if (candidate.Count() > 0)
     {

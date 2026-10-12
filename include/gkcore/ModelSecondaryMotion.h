@@ -14,6 +14,7 @@ struct FModelSecondaryMotionCollider;
 #include <gkcore/FModelSecondaryMotionDebugShape.h>
 #include <gkcore/FModelSecondaryMotionLink.h>
 #include <gkcore/FModelSecondaryMotionDistanceConstraint.h>
+#include <gkcore/FModelSecondaryMotionContactLink.h>
 
 /**
  * アニメーションの後に、髪や衣服のボーンへ揺れを加えるAPI。
@@ -82,6 +83,14 @@ GKCORE_API int SetModelSecondaryMotionLinks(ModelHandle model, const FModelSecon
  * 固定rootや同じ鎖のbone対は指定できない。Reset後は次のUpdateで距離を解く。
  */
 GKCORE_API int SetModelSecondaryMotionDistanceConstraints(ModelHandle model, const FModelSecondaryMotionDistanceConstraint* constraints, uint32_t count, uint32_t iterations = 32);
+/**
+ * boneローカル端点で衣服側を支える接触線分をコピーして全置換する。最大1024本。
+ * 端点は登録鎖の自由bone（index 1以降）に置き、仮想末端は指定できない。同じboneの両端も使える。
+ * 異なるboneを結ぶ場合は別々の鎖に所属する必要がある。同じ端点の組み合わせは重複登録できない。
+ * offsetは有限、radiusは有限な0以上。反復上限は既存の接続・距離制約と共有し、count=0で解除する。
+ * 取付boneのpivot位置とscaleを保ち、端点の接触に応じて後続boneの向きを解く。失敗時は以前の設定・姿勢を保つ。
+ */
+GKCORE_API int SetModelSecondaryMotionContactLinks(ModelHandle model, const FModelSecondaryMotionContactLink* links, uint32_t count, uint32_t iterations = 32);
 /**
  * 身体と揺れものの接触形状を、現在の描画姿勢のmodel空間値へ複製する。
  * nullptr,0で必要な個数を返す。十分なcapacityなら書き込んだ個数を返す。

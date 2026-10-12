@@ -299,5 +299,6 @@ if (gk::GetModelAnimationMappingInfo(character, info) == 0)
 
 骨格のあるモデルには、髪・スカート・アクセサリーの鎖を登録できます。
 clipとブレンドを進めてIKを設定した後、`UpdateModelSecondaryMotion`で揺れを一度更新します。
-身体との衝突は未対応です。
+身体側の球・カプセルと、揺れもの側の節球・接触線分を設定できます。
+骨から離れた衣服の位置には、boneローカルoffsetを持つ接触線分も使えます。
 設定と制約は[モデルの揺れもの](model-secondary-motion.md)を参照してください。

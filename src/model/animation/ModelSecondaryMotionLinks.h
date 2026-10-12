@@ -22,11 +22,19 @@ bool ValidateSecondaryMotionDistanceConstraints(const FModelSecondaryMotionState
  * candidate内の接続接触と骨制約を解く。失敗した候補は呼出側が破棄する。
  * deltaは元の更新間隔で、接触を加えた位置差だけを速度へ反映する。
  */
-bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error);
+bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error, const Array<float>* baseMatrices = nullptr);
 /**
  * 描画FKから解決したbone原点の接続線分を身体形状へ検査する。
  */
 bool CheckRenderedSecondaryMotionLinks(const FModelSecondaryMotionState& state, const Array<float>& matrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, String& error);
+/**
+ * 骨に取り付ける補助接触の端点、所属、半径と重複を検査する。状態は変更しない。
+ */
+bool ValidateSecondaryMotionContactLinks(const FModelSecondaryMotionState& state, String& error);
+/**
+ * 実際の描画FKへ骨ローカル端点を変換し、身体との接触を最後に検査する。
+ */
+bool CheckRenderedSecondaryMotionContactLinks(const FModelSecondaryMotionState& state, const Array<float>& matrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, String& error);
 #if defined(GKCORE_TESTING)
 /**
  * 接続の端点解決・形状準備・鎖復元の回数を0へ戻す。

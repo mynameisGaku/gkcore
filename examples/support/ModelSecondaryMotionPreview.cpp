@@ -68,6 +68,11 @@ bool ParseSecondaryDistanceOptions(int& argc, char** argv, const char*& path)
     return ParsePathOption(argc, argv, "--secondary-distances", path);
 }
 
+bool ParseSecondaryContactLinkOptions(int& argc, char** argv, const char*& path)
+{
+    return ParsePathOption(argc, argv, "--secondary-contact-links", path);
+}
+
 bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled)
 {
     // 値を持つoptionのpathをflagとして誤読しない。
@@ -457,6 +462,82 @@ bool ApplySecondaryDistancePreview(ModelHandle model, const char* path)
     if (!passed)
     {
         fprintf(stderr, "invalid secondary distance config: %s (%s)\n", path, GetLastErrorMessage());
+    }
+    return passed;
+}
+
+bool ApplySecondaryContactLinkPreview(ModelHandle model, const char* path)
+{
+    FILE* file = path ? fopen(path, "rb") : nullptr;
+    if (!file)
+    {
+        fprintf(stderr, "cannot open secondary contact link config: %s\n", path ? path : "(null)");
+        return false;
+    }
+    // 全行を検証してからAPIを一度だけ呼び、途中登録を残さない。
+    FModelSecondaryMotionContactLink links[1024]{};
+    uint32_t count = 0;
+    bool passed = true;
+    char line[2048]{};
+    while (passed && fgets(line, sizeof(line), file))
+    {
+        if (strlen(line) == sizeof(line) - 1 && line[sizeof(line) - 2] != '\n' && !feof(file))
+        {
+            passed = false;
+            break;
+        }
+        char* cursor = line;
+        if (strncmp(cursor, "\xef\xbb\xbf", 3) == 0)
+        {
+            cursor += 3;
+        }
+        while (*cursor == ' ' || *cursor == '\t')
+        {
+            ++cursor;
+        }
+        if (!*cursor || *cursor == '#' || *cursor == '\r' || *cursor == '\n')
+        {
+            continue;
+        }
+        if (count == 1024)
+        {
+            passed = false;
+            break;
+        }
+        // 半径と両端のboneローカル座標、bone名を1行から読む。
+        FModelSecondaryMotionContactLink& link = links[count];
+        char first[512]{}, second[512]{};
+        int consumed = -1;
+        if (sscanf(cursor, "%f %f %f %f %f %f %f | %511s %511s %n", &link.radius, &link.firstOffset.x, &link.firstOffset.y, &link.firstOffset.z, &link.secondOffset.x, &link.secondOffset.y, &link.secondOffset.z, first, second, &consumed) != 9 || consumed < 0)
+        {
+            passed = false;
+            break;
+        }
+        cursor += consumed;
+        while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
+        {
+            ++cursor;
+        }
+        const int32_t firstBone = FindModelBone(model, first);
+        const int32_t secondBone = FindModelBone(model, second);
+        if (*cursor || !isfinite(link.radius) || link.radius < 0.0f || !isfinite(link.firstOffset.x) || !isfinite(link.firstOffset.y) || !isfinite(link.firstOffset.z) || !isfinite(link.secondOffset.x) || !isfinite(link.secondOffset.y) || !isfinite(link.secondOffset.z) || firstBone < 0 || secondBone < 0)
+        {
+            passed = false;
+            break;
+        }
+        link.firstBone = static_cast<uint32_t>(firstBone);
+        link.secondBone = static_cast<uint32_t>(secondBone);
+        ++count;
+    }
+    passed = passed && !ferror(file) && count > 0;
+    fclose(file);
+    if (passed)
+    {
+        passed = SetModelSecondaryMotionContactLinks(model, links, count, 32) == 0;
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "invalid secondary contact link config: %s (%s)\n", path, GetLastErrorMessage());
     }
     return passed;
 }

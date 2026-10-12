@@ -38,6 +38,21 @@ setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMoti
 既定の反復数は32で、`nullptr, 0`は接続線分だけを解除し、鎖や身体形状は保持します。
 `ResetModelSecondaryMotion`と鎖の再登録後も接続線分と反復数を保持し、次の明示更新で接触を解きます。
 
+skin weightに近い位置へ骨接触線分を置くには、`SetModelSecondaryMotionContactLinks`へ`FModelSecondaryMotionContactLink`配列を渡します。
+両端はboneローカルの`firstOffset`と`secondOffset`、線分半径は有限な0以上のmodel空間値です。
+端点が同じboneにある設定も使えます。
+異なるboneを結ぶ場合は、各boneが別々の鎖に属する自由boneでなければなりません。
+固定root、仮想末端、同じ鎖にある異なるboneは指定できず、端点とoffsetが同じ線分の重複も拒否します。
+最大1024本で、既定32回、明示時は1〜32回の反復です。
+反復数は接続線分・距離制約と共有します。
+不正な設定のsetterは既存状態を保ちます。
+`nullptr, 0`はこの接触線分だけを解除します。
+
+この線分の位置に応じて、各boneのpivotを保ったまま後続boneの向きを回し、骨長と最大曲げ角を保つ姿勢を探します。
+身体接触や他の制約と同時に解けない場合、更新は失敗し、直前に確定した揺れ状態と姿勢を保ちます。
+基準方向と接触位置が正反対になるなど回転軸を一意に定められない特異な配置は解けない場合があります。
+これは骨に結び付けた接触proxyであり、skin weight、衣服の幅やmesh面全体の接触は保証しません。
+
 複数鎖の自由bone間の距離を保つには、`SetModelSecondaryMotionDistanceConstraints`へ`FModelSecondaryMotionDistanceConstraint`配列を渡します。
 各端点は別々に登録した鎖の自由boneで、最大1024組です。
 固定root・同じ鎖のbone・順序を反転した重複ペアは指定できません。
@@ -211,6 +226,17 @@ bone名はモデルから検索され、節の余白`0.005` model unitが半径�
 各行は`半径 | firstBone secondBone`で、半径はmodel空間です。
 設定ファイルはスカート接続線分を参照してください。
 接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
+
+骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。
+このoptionは揺れもの鎖と身体形状を設定した起動で使います。
+各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。
+数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。
+同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。
+空行と`#`コメントを無視します。
+YUMEKAの衣服位置の球はSTART16の設定例です。
+同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。
+別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。
+複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
 
 骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。
 このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。

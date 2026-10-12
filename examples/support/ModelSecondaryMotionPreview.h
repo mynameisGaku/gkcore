@@ -45,6 +45,14 @@ bool ParseSecondaryDistanceOptions(int& argc, char** argv, const char*& path);
  * 基準距離・柔らかさと2個のbone名から距離制約を読み、一括登録する。
  */
 bool ApplySecondaryDistancePreview(ModelHandle model, const char* path);
+/**
+ * --secondary-contact-linksのpathを取り出す。欠落・重複では引数列を保つ。
+ */
+bool ParseSecondaryContactLinkOptions(int& argc, char** argv, const char*& path);
+/**
+ * 骨ローカル端点と半径を読み、接触線分を一括登録する。
+ */
+bool ApplySecondaryContactLinkPreview(ModelHandle model, const char* path);
 
 }
 
