@@ -57,6 +57,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelIk.cpp
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
+    src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp
     src/model/animation/ModelSecondaryMotionCollision.cpp
     src/model/animation/ModelSecondaryMotionDistances.cpp
     src/model/animation/ModelSecondaryMotionColliders.cpp

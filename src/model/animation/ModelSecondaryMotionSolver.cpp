@@ -20,15 +20,6 @@ uint64_t secondaryMotionReferenceCalculationCount = 0;
 using FVector3 = gk::FVector3d;
 
 /**
- * 1つのsubstep内で制約反復に再利用する目標線分。
- */
-struct FSecondaryMotionReferenceSegment
-{
-    FVector3 direction; // 正規化済みの目標方向。
-    double length;      // 目標線分の長さ。
-};
-
-/**
  * 3成分を倍精度位置へ変換する。
  */
 FVector3 ToDouble(const gk::Vec3& value)
@@ -221,8 +212,11 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 /**
  * 鎖を候補側で積分し、長さ・曲げ角・任意の身体接触を満たすときだけstateを更新する。
  */
-static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false)
+static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false, FModelSecondaryMotionSolverWorkspace* workspace = nullptr)
 {
+    FModelSecondaryMotionSolverWorkspace localWorkspace;
+    FModelSecondaryMotionSolverWorkspace& scratch = workspace ? *workspace : localWorkspace;
+    scratch.Clear();
     error.Clear();
     if (!ValidateSettings(settings, delta) || !ValidateTargets(targets, count, error))
     {
@@ -312,10 +306,10 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         return true;
     }
 
-    gk::Array<FVector3> positions;
-    gk::Array<FVector3> velocities;
-    gk::Array<FVector3> oldPositions;
-    gk::Array<FVector3> stepTargets;
+    gk::Array<FVector3>& positions = scratch.positions;
+    gk::Array<FVector3>& velocities = scratch.velocities;
+    gk::Array<FVector3>& oldPositions = scratch.oldPositions;
+    gk::Array<FVector3>& stepTargets = scratch.stepTargets;
     if (!positions.Reserve(count) || !velocities.Reserve(count) || !oldPositions.Reserve(count) || !stepTargets.Reserve(count))
     {
         error.Assign("Secondary motion solver allocation failed");
@@ -345,7 +339,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
     const FVector3 wind = ToDouble(settings.windAcceleration);
     // 接触形状もアニメーション目標と同じ小刻み更新の時刻で補間する。
     gk::Array<FModelSecondaryMotionCollisionShape> stepShapes;
-    gk::Array<FSecondaryMotionReferenceSegment> referenceSegments;
+    gk::Array<FSecondaryMotionReferenceSegment>& referenceSegments = scratch.referenceSegments;
     // 同じsubstepの投影と接触検査で共有する、半径ガード付きの身体形状。
     gk::Array<FPreparedSecondaryMotionCollisionShape> preparedStepShapes;
     if ((!zeroStepShapes && !stepShapes.Reserve(shapeCount)) || !referenceSegments.Reserve(count - 1u))
@@ -436,7 +430,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                             return ResetSecondaryMotionChain(targets, count, state, error);
                         }
                         FModelSecondaryMotionChainState restarted;
-                        if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error, zeroStepShapes))
+                        if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error, zeroStepShapes, false, workspace))
                         {
                             return false;
                         }
@@ -595,9 +589,19 @@ bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uin
     return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes);
 }
 
+bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionSolverWorkspace& workspace, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes, false, &workspace);
+}
+
 bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)
 {
     return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes, true);
+}
+
+bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionSolverWorkspace& workspace, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    return StepSecondaryMotionChainCore(targets, count, settings, 0.0, shapes.expanded, shapes.expanded, shapes.count, state, error, &shapes, true, &workspace);
 }
 
 }

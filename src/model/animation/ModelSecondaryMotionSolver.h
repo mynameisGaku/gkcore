@@ -8,6 +8,7 @@
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelSecondaryMotionChainState.h"
 #include "model/animation/FModelSecondaryMotionStepShapes.h"
+#include "model/animation/FModelSecondaryMotionSolverWorkspace.h"
 
 namespace gk::model::animation
 {
@@ -34,9 +35,19 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
 bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error);
 
 /**
+ * workspaceのscratch容量を使って時間0の接触・鎖制約を解く。失敗時はstateを保つ。
+ */
+bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionSolverWorkspace& workspace, FModelSecondaryMotionChainState& state, gk::String& error);
+
+/**
  * 身体接触を使わない場合も鎖の長さと曲げ角を復元する。失敗時はstateを保つ。
  */
 bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error);
+
+/**
+ * workspace容量を使い、形状があれば接触も解きながら鎖制約を復元する。失敗時はstateを保つ。
+ */
+bool RestoreSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionSolverWorkspace& workspace, FModelSecondaryMotionChainState& state, gk::String& error);
 
 #if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
 /**
