@@ -22,6 +22,8 @@ struct FPreparedSecondaryMotionCollisionShape
     double axisLength;                // 回避計算で使う、桁あふれを避けた軸長。
     double radius;                    // 接触判定に使う半径。
     double tolerance;                 // 接触判定に使う許容幅。
+    bool hasRootContactOverride;      // root判定にguard前の接触閾値を使うか。
+    double rootContactThreshold;      // guard前のroot接触判定距離。
     double boundsLow[3];              // 半径分広げたAABBの下限。
     double boundsHigh[3];             // 半径分広げたAABBの上限。
     double conservativeBoundsLow[3];  // 丸め余白を加えた保守的AABBの下限。

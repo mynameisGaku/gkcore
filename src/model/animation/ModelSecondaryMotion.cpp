@@ -8,6 +8,7 @@
 #include "model/animation/ModelSkinContactSnapshot.h"
 #include "model/animation/ModelIk.h"
 #include "model/animation/FModelPoseChain.h"
+#include "model/animation/FModelSecondaryMotionStepShapeCache.h"
 #include "model/animation/AModelAnimationSource.h"
 #include "core/Context.h"
 #include <math.h>
@@ -104,6 +105,7 @@ model::FModelSecondaryMotionChain* CloneChain(const model::FModelSecondaryMotion
     {
         result->settings = source->settings;
         result->collisionRadius = source->collisionRadius;
+        result->colliderMask = source->colliderMask;
         if (!result->bones.AppendRange(source->bones.Data(), source->bones.Count()) || !result->transforms.AppendRange(source->transforms.Data(), source->transforms.Count()) || !result->simulation.points.AppendRange(source->simulation.points.Data(), source->simulation.points.Count()) || !result->simulation.previousTargets.AppendRange(source->simulation.previousTargets.Data(), source->simulation.previousTargets.Count()))
         {
             delete result;
@@ -320,6 +322,9 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         return Failure(error);
     }
+    // subset用の前回・今回shape cacheは別々に所有し、借用viewを移動させない。
+    model::animation::FModelSecondaryMotionStepShapeCache previousShapeCache(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count());
+    model::animation::FModelSecondaryMotionStepShapeCache currentShapeCache(currentShapes.Data(), currentShapes.Count());
     // 全鎖の点を一度だけ確保し、一括で回す間は参照先を移動させない。
     Array<Vec3> orientationPoints;
     Array<model::animation::FModelPoseChain> orientationChains;
@@ -367,7 +372,22 @@ int Update(ModelHandle handle, double delta, bool reset)
         }
         else
         {
-            const bool advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error, chain.collisionRadius) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            bool advanced = false;
+            if (currentShapes.Count() > 0 && chain.colliderMask != UINT64_MAX)
+            {
+                // subsetだけcacheの拡張shapeを渡し、solver側の二重半径加算を避ける。
+                model::animation::FModelSecondaryMotionStepShapes previousView{};
+                model::animation::FModelSecondaryMotionStepShapes currentView{};
+                if (!previousShapeCache.Get(chain.collisionRadius, chain.colliderMask, previousView, error) || !currentShapeCache.Get(chain.collisionRadius, chain.colliderMask, currentView, error))
+                {
+                    return Failure(error);
+                }
+                advanced = model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previousView.expanded, currentView.expanded, currentView.count, chain.simulation, error, 0.0f);
+            }
+            else
+            {
+                advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error, chain.collisionRadius) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            }
             if (!advanced)
             {
                 // 設定を調整できるよう、接触を解けなかった鎖の先頭boneを示す。
@@ -474,9 +494,28 @@ int Update(ModelHandle handle, double delta, bool reset)
                     return detail::SetError("secondary motion rendered contact allocation failed");
                 }
             }
-            // 描画FKの検査も、身体と揺れbone球の半径を足した同じ範囲を使う。
+            // 描画FKの検査も、鎖ごとに選んだ身体形状と同じ半径範囲を使う。
             Array<model::animation::FModelSecondaryMotionCollisionShape> effectiveShapes;
-            if (!model::animation::ExpandSecondaryMotionCollisionShapes(currentShapes.Data(), currentShapes.Count(), candidate.chains.At(index)->collisionRadius, effectiveShapes, error) || !model::animation::CheckSecondaryMotionContacts(effectiveShapes.Data(), effectiveShapes.Count(), renderedPoints.Data(), renderedPoints.Count(), error))
+            if (candidate.chains.At(index)->colliderMask == UINT64_MAX)
+            {
+                if (!model::animation::ExpandSecondaryMotionCollisionShapes(currentShapes.Data(), currentShapes.Count(), candidate.chains.At(index)->collisionRadius, effectiveShapes, error))
+                {
+                    return Failure(error);
+                }
+            }
+            else
+            {
+                model::animation::FModelSecondaryMotionStepShapes selectedShapes{};
+                if (!currentShapeCache.Get(candidate.chains.At(index)->collisionRadius, candidate.chains.At(index)->colliderMask, selectedShapes, error) || (selectedShapes.count > 0 && !effectiveShapes.AppendRange(selectedShapes.expanded, selectedShapes.count)))
+                {
+                    if (error.Empty())
+                    {
+                        error.Assign("secondary motion rendered collider selection allocation failed");
+                    }
+                    return Failure(error);
+                }
+            }
+            if (effectiveShapes.Count() > 0 && !model::animation::CheckSecondaryMotionContacts(effectiveShapes.Data(), effectiveShapes.Count(), renderedPoints.Data(), renderedPoints.Count(), error))
             {
                 // 回転を姿勢へ戻した結果で失敗した鎖も、先頭boneで識別する。
                 error.Append(" (rendered chain root: ");
@@ -603,6 +642,7 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
             if (previous->chains.At(index)->bones.At(0) == bones[0])
             {
                 chain.collisionRadius = previous->chains.At(index)->collisionRadius;
+                chain.colliderMask = previous->chains.At(index)->colliderMask;
                 break;
             }
         }
@@ -982,6 +1022,55 @@ int SetModelSecondaryMotionChainCollisionRadius(ModelHandle handle, uint32_t fir
         }
     }
     return detail::SetError("secondary motion collision radius requires a registered chain root");
+}
+
+int SetModelSecondaryMotionChainColliderMask(ModelHandle handle, uint32_t firstBone, uint64_t colliderMask)
+{
+    detail::ModelResource* resource = nullptr;
+    detail::ModelTransform* transform = nullptr;
+    if (!Instance(handle, resource, transform))
+    {
+        return -1;
+    }
+    auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (!previous)
+    {
+        return detail::SetError("configure a secondary motion chain before its collider mask");
+    }
+    String error;
+    model::FModelSecondaryMotionState candidate;
+    if (!CopyCollisionSettings(previous, candidate, error))
+    {
+        return Failure(error);
+    }
+    bool found = false;
+    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    {
+        auto* chain = CloneChain(previous->chains.At(index), error);
+        if (!chain)
+        {
+            return Failure(error);
+        }
+        if (chain->bones.Count() > 0 && chain->bones.At(0) == firstBone)
+        {
+            chain->colliderMask = colliderMask;
+            found = true;
+        }
+        if (!AppendChain(candidate, chain, error))
+        {
+            return Failure(error);
+        }
+    }
+    if (!found)
+    {
+        return detail::SetError("secondary motion collider mask requires a registered chain root");
+    }
+    if (!Commit(*transform, candidate, error))
+    {
+        return Failure(error);
+    }
+    detail::ClearError();
+    return 0;
 }
 
 }

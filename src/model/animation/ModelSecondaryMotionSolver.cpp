@@ -1,6 +1,8 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionDirection.h"
+#include "model/animation/ModelSecondaryMotionChainContacts.h"
 #include "foundation/FVector3d.h"
 
 #include <float.h>
@@ -14,6 +16,7 @@ namespace
 #if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))
 // 鎖制約で目標方向と長さを計算した回数。
 uint64_t secondaryMotionReferenceCalculationCount = 0;
+
 #endif
 
 // 積分と接触が共通で使う倍精度座標。
@@ -392,12 +395,26 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 positions.At(index).value[axis] += velocities.At(index).value[axis] * step;
             }
         }
-        // 許容誤差なしの検査が通った位置は、通常許容幅による直後の再検査を省く。
+        // 保存丸めの余白付き形状で接触を解き、保存後は元の身体形状でも検算する。
         bool contactsClear = false;
         referenceSegments.Clear();
         if (shapeCount > 0 && !zeroStepShapes && !PrepareSecondaryMotionCollisionShapes(stepShapes.Data(), shapeCount, preparedStepShapes, error))
         {
             return false;
+        }
+        if (shapeCount > 0 && !zeroStepShapes)
+        {
+            // 固定rootの例外は、丸め余白を加える前の実効半径で判定する。
+            for (uint32_t shape = 0; shape < shapeCount; ++shape)
+            {
+                const auto& current = currentShapes[shape];
+                const auto& previous = integrateMotion ? previousShapes[shape] : current;
+                const double originalRadius = static_cast<float>(previous.radius + (static_cast<double>(current.radius) - previous.radius) * weight);
+                const double originalTolerance = fmax(originalRadius * 1.0e-3, originalRadius * DBL_EPSILON * 64.0);
+                auto& prepared = preparedStepShapes.At(shape);
+                prepared.hasRootContactOverride = true;
+                prepared.rootContactThreshold = originalRadius - originalTolerance;
+            }
         }
         // 接触投影と検査に使う準備済み配列を選ぶ。
         const FPreparedSecondaryMotionCollisionShape* contactShapes = zeroStepShapes ? zeroStepShapes->prepared : preparedStepShapes.Data();
@@ -467,11 +484,22 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 }
                 if (settings.maxAngleDegrees < 180.0f)
                     direction = LimitDirection(direction, referenceDirection, cosineLimit, sineLimit);
+                if (shapeCount > 0)
+                {
+                    // 個別の脚回避が別の接触を戻す場合、角度内で全身体形状を同時に離れる向きを探す。
+                    // この節だけで解けない場合は位置を保持し、鎖全体の次反復と最終検査へ渡す。
+                    String directionError;
+                    if (!FindPreparedSecondaryMotionCollisionDirection(contactShapes, shapeCount, positions.At(index - 1), segmentLength, index == 1, referenceDirection, cosineLimit, direction, directionError, 1.0) && !directionError.Empty())
+                    {
+                        error.Assign(directionError.CStr());
+                        return false;
+                    }
+                }
                 for (uint32_t axis = 0; axis < 3; ++axis)
                     positions.At(index).value[axis] = positions.At(index - 1).value[axis] + direction.value[axis] * segmentLength;
             }
             // 骨長と曲げ角を戻した後も接触が解けていれば、残りの反復は不要。
-            if (shapeCount > 0 && CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error, 0.0))
+            if (shapeCount > 0 && CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error, 1.0))
             {
                 contactsClear = true;
                 break;
@@ -479,7 +507,25 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         }
         if (shapeCount > 0 && !contactsClear && !CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error))
         {
-            return false;
+            // 子の回避だけで止まった鎖は、親の向きも含めて接触・骨長・曲げ角を同時に解く。
+            String chainError;
+            if (ResolvePreparedSecondaryMotionChainContacts(contactShapes, shapeCount, referenceSegments.Data(), referenceSegments.Count(), cosineLimit, positions, chainError, 1.0))
+            {
+                if (!CheckPreparedSecondaryMotionContacts(contactShapes, shapeCount, positions.Data(), count, error))
+                {
+                    return false;
+                }
+                contactsClear = true;
+            }
+            else if (!chainError.Empty())
+            {
+                error.Assign(chainError.CStr());
+                return false;
+            }
+            if (!contactsClear)
+            {
+                return false;
+            }
         }
         for (uint32_t index = 0; index < count; ++index)
         {

@@ -31,6 +31,25 @@ setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMoti
 無効な先頭boneや負値・非有限値は失敗し、前の設定を保ちます。
 `ClearModelSecondaryMotion`で鎖とともに解放されます。
 
+`SetModelSecondaryMotionChainColliderMask(model, firstBone, colliderMask)`で、その鎖の節球・隣接線分が接触する身体形状を選べます。
+64bitのbit 0〜63は`SetModelSecondaryMotionColliders`へ渡した配列の順序に対応し、立っているbitの形状だけを使います。
+既定の`UINT64_MAX`は全形状、`0`はこの鎖の身体接触なしです。
+登録数より上のbitは無視するため、身体形状を登録する前にも指定できます。
+身体配列の順序を変えると、同じbitが指す形状も変わります。
+
+選択は次の明示更新から適用し、鎖の再登録・resetでは保持します。
+clearで鎖とともに破棄します。
+骨原点間link、bone-local offsetの接触link、頂点接触の対象は変えません。
+例えば髪は頭と胴体に、腰で固定したスカートは脚のcapsuleに接触させる設定を別々に作れます。
+
+```cpp
+// 身体配列の4〜7番へ登録した脚形状を、このスカート鎖の判定対象にする。
+if (gk::SetModelSecondaryMotionChainColliderMask(model, skirtRoot, UINT64_C(240)) != 0)
+{
+    // GetLastErrorMessage()で失敗理由を取得する。
+}
+```
+
 複数の鎖の自由boneを線分で結ぶには、`SetModelSecondaryMotionLinks`へ`FModelSecondaryMotionLink`配列を渡します。
 各端点は別々に登録した鎖の自由boneで、固定rootや仮想末端は指定できません。
 最大1024本、半径はmodel空間の有限な0以上、反復数は1〜32です。
@@ -175,6 +194,11 @@ rootは固定し、rootが形状内にある場合はその形状との最初の
 制約を同時に満たす姿勢が作れない場合は更新を失敗させ、最後に確定した姿勢と揺れ状態を保ちます。
 resetは元のanimation姿勢へ戻し、次の更新で現在の接触形状を解きます。
 
+複数の身体形状を避ける補正が骨長や曲げ角の復元で停滞すると、許容角内で節方向をまとめて調整し、鎖全体の接触を再探索します。
+固定rootの内外は、登録した身体半径と節球半径から判定し、計算中の丸め余白では例外条件を変えません。
+候補探索には上限があり、接触・骨長・曲げ角を同時に満たした姿勢だけを採用します。
+角度制限そのものは広げません。
+
 ## 設定値と制約
 
 `FModelSecondaryMotionSettings`の単位は秒、度、model空間です。
@@ -265,6 +289,14 @@ model_viewer.exe <model-file> <scale> <centerX> <centerY> <centerZ> external-ble
 
 ```text
 4 0.8 35 0 0.035 0 0 -1 0 32 | HairRoot HairMiddle HairTip
+```
+
+11個目に節球半径、12個目に身体選択の64bit整数を指定できます。
+選択値は10進の整数で、省略すると全身体形状を使います。
+次は脚形状を配列の4〜7番に登録した場合のスカート設定です。
+
+```text
+5 0.8 90 0 0.035 0 0 -1 0 32 0.038 240 | SkirtRoot SkirtMiddle SkirtTip
 ```
 
 ```powershell

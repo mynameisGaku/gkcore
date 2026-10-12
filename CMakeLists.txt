@@ -56,6 +56,8 @@ set(GKCORE_CORE_SOURCES
     ${GKCORE_MODEL_ANIMATION_LOADER_SOURCES}
     src/model/animation/ModelIk.cpp
     src/model/animation/ModelSecondaryMotionSolver.cpp
+    src/model/animation/ModelSecondaryMotionDirection.cpp
+    src/model/animation/ModelSecondaryMotionChainContacts.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp

@@ -14,7 +14,7 @@ namespace gk::examples
  */
 bool ParseSecondaryMotionOptions(int& argc, char** argv, const char*& path);
 /**
- * 設定ファイルのbone名を解決し、各鎖を登録する。失敗時はViewerを終了する。
+ * 設定ファイルのbone名を解決し各鎖を登録する。12番目の十進数は身体形状mask。失敗時はViewerを終了する。
  */
 bool ApplySecondaryMotionPreview(ModelHandle model, const char* path);
 /**

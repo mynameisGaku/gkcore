@@ -1001,7 +1001,7 @@ bool ConstrainSecondaryMotionLinks(FModelSecondaryMotionState& candidate, const 
             auto& entry = *candidate.chains.At(chain);
             // viewは次のcache取得までに使い切り、鎖や次の更新へ保持しない。
             animation::FModelSecondaryMotionStepShapes chainShapes;
-            if (!chainShapeCache.Get(entry.collisionRadius, chainShapes, error))
+            if (!chainShapeCache.Get(entry.collisionRadius, entry.colliderMask, chainShapes, error))
             {
                 return false;
             }

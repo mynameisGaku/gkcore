@@ -21,6 +21,16 @@ namespace gk::model::animation
 {
 
 /**
+ * root例外に使う接触閾値を返す。guard前閾値がなければ通常の半径と許容幅を使う。
+ */
+double GetPreparedSecondaryMotionRootContactThreshold(const FPreparedSecondaryMotionCollisionShape& shape);
+
+/**
+ * rootが許容範囲外にある最初の線分へ使う接触距離を返す。
+ */
+double GetPreparedSecondaryMotionRootSpanThreshold(const FPreparedSecondaryMotionCollisionShape& shape, double rootDistance, double toleranceFraction);
+
+/**
  * 接触形状の数、座標、半径がsolverの対応範囲か調べる。
  */
 bool ValidateSecondaryMotionCollisionShapes(const FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, gk::String& error);
