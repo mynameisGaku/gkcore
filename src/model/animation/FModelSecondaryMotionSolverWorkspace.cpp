@@ -11,6 +11,7 @@ void FModelSecondaryMotionSolverWorkspace::Clear()
     oldPositions.Clear();
     stepTargets.Clear();
     referenceSegments.Clear();
+    projectionCandidate.Clear();
 }
 
 }

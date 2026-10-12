@@ -33,6 +33,8 @@ class FModelSecondaryMotionSolverWorkspace
     gk::Array<gk::FVector3d> stepTargets;
     // 制約反復で共有する目標線分。
     gk::Array<FSecondaryMotionReferenceSegment> referenceSegments;
+    // 接触投影の候補位置を再利用する。
+    gk::Array<gk::FVector3d> projectionCandidate;
 };
 
 }

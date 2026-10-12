@@ -403,7 +403,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
         const FPreparedSecondaryMotionCollisionShape* contactShapes = zeroStepShapes ? zeroStepShapes->prepared : preparedStepShapes.Data();
         for (uint32_t pass = 0; pass < settings.constraintIterations; ++pass)
         {
-            if (shapeCount > 0 && !ProjectPreparedSecondaryMotionContacts(contactShapes, shapeCount, stepTargets.Data(), count, positions, error))
+            if (shapeCount > 0 && !ProjectPreparedSecondaryMotionContacts(contactShapes, shapeCount, stepTargets.Data(), count, positions, scratch.projectionCandidate, error))
             {
                 return false;
             }
