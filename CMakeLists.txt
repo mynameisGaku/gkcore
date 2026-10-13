@@ -62,6 +62,8 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/ModelSecondaryMotionDirection.cpp
     src/model/animation/ModelSecondaryMotionChainContacts.cpp
+    src/model/animation/ModelSecondaryMotionWeightedContacts.cpp
+    src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp
@@ -125,6 +127,7 @@ if(GKCORE_BUILD_TESTS)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
     add_test(NAME gkcore.game_repository COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/package/test_game_repository.py")
     add_test(NAME gkcore.secondary_motion_contact_fit COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_secondary_motion_contact_fit.py")
+    add_test(NAME gkcore.secondary_motion_contact_points_fit COMMAND ${Python3_EXECUTABLE} "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_secondary_motion_contact_points_fit.py")
 
     set(_gkcore_animation_math_sources src/model/animation/ModelPose.cpp src/model/animation/ModelIk.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
@@ -141,6 +144,7 @@ if(GKCORE_BUILD_TESTS)
         src/model/animation/ModelSecondaryMotionSolver.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp src/model/animation/FModelSecondaryMotionStepShapeCache.cpp src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp src/model/animation/ModelSecondaryMotionDistances.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_tests PRIVATE cxx_std_17)
+    target_compile_definitions(gkcore_model_secondary_motion_tests PRIVATE GKCORE_TESTING=1)
     target_include_directories(gkcore_model_secondary_motion_tests PRIVATE include src)
     gkcore_enable_warnings(gkcore_model_secondary_motion_tests)
     add_test(NAME gkcore.model_secondary_motion COMMAND gkcore_model_secondary_motion_tests)
@@ -168,6 +172,14 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_secondary_motion_chain_attachments_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_secondary_motion_chain_attachments_tests)
     add_test(NAME gkcore.model_secondary_motion_chain_attachments COMMAND gkcore_model_secondary_motion_chain_attachments_tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/joint_attachment_contact1_chain.txt")
+    add_executable(gkcore_model_secondary_motion_weighted_contacts_tests tests/model_secondary_motion_weighted_contacts_tests.cpp
+        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_secondary_motion_weighted_contacts_tests)
+    add_test(NAME gkcore.model_secondary_motion_weighted_contacts COMMAND gkcore_model_secondary_motion_weighted_contacts_tests)
     add_executable(gkcore_model_skin_points_tests tests/model_skin_points_tests.cpp
         src/model/animation/ModelSkinPoints.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
@@ -1374,7 +1386,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/HumanoidBoneTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
-    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h include/gkcore/FModelSecondaryMotionDistanceConstraint.h include/gkcore/FModelSecondaryMotionContactLink.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h include/gkcore/FModelSecondaryMotionDistanceConstraint.h include/gkcore/FModelSecondaryMotionContactLink.h include/gkcore/FModelSecondaryMotionContactPoint.h include/gkcore/FModelSecondaryMotionContactAnchor.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimationMappingInfo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelMaterial.h include/gkcore/ModelMaterialSettings.h include/gkcore/ModelAlphaModeTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)

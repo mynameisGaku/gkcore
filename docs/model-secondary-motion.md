@@ -30,6 +30,27 @@ skin weightに近い位置へ骨接触線分を置くには、`SetModelSecondary
 
 通常は各boneのpivotを保ったまま後続boneの向きを回し、骨長と最大曲げ角を保つ姿勢を探します。骨原点間linkと距離制約がなく、各接触linkの両端が同じboneに付く構成では、個々の接触と鎖全体の許容方向を同時に解く経路へ切り替わります。複数の接触がある場合は鎖全体の経路を先に試します。単一接触ではpivotを固定する従来経路の成功結果を保ち、解けない場合だけ鎖全体の経路を試します。固定root、骨長、bone-local translationとscaleを保ちながら、祖先boneの回転で自由boneのmodel空間pivotを動かせます。接触linkが別boneを結ぶ構成や、骨原点間link・距離制約を含む構成は既存の連成経路を使います。鎖の`colliderMask`はbone-local接触linkには適用されず、登録した全身体形状を判定します。候補では接触許容幅の半分、描画FKでは従来どおり全許容幅を使います。身体接触や他の制約と同時に解けない場合、更新は失敗し、直前に確定した揺れ状態と姿勢を保ちます。基準方向と接触位置が正反対になるなど回転軸を一意に定められない特異な配置は解けない場合があります。これは骨に結び付けた接触proxyであり、skin weight、衣服の幅やmesh面全体の接触は保証しません。
 
+複数boneの影響を受ける位置へ接触球を置くには、`SetModelSecondaryMotionContactPoints`を使います。`FModelSecondaryMotionContactPoint`は、寄与配列の先頭`firstAnchor`、寄与数`anchorCount`、model空間の球半径`radius`を持ちます。対応する`FModelSecondaryMotionContactAnchor`には`bone`、boneローカルの`offset`、正の`weight`を指定します。球の中心は各boneで変換したoffset位置を実weightで足し合わせます。weightの一部を省いたり、登録時に正規化したりしません。
+
+最大1024球・合計16384寄与で、一つの球は1〜64寄与です。weightの合計は1から`64 * FLT_EPSILON`以内、offsetと半径は有限、半径は0以上である必要があります。各球の寄与範囲は重複せず、配列の全寄与をちょうど一度参照してください。反復数は1〜32で、各探索候補を改善する回数の上限です。登録鎖のrootも寄与先に使えます。root位置は固定したまま、そのboneの回転でoffsetが動きます。鎖の枝の外にある身体boneなどはanimationの位置を固定寄与として含めます。登録鎖の子孫なのに鎖へ含まれていないboneは、指定できません。
+
+この接触球は複数鎖の姿勢をまとめて解き、骨長・曲げ角・節の身体接触を保ちます。骨原点間linkと距離制約は併用できません。従来のbone-local接触線分は、各線分の両端が同じboneにある場合だけ併用できます。球の身体判定は鎖maskの対象にせず、登録した全身体形状へ球半径を加えて行います。描画FKから同じweightで球中心を再検査し、許容幅を超えた接触や成立しない設定は更新失敗として前の姿勢を保ちます。出力頂点は書き換えません。
+
+接触点と寄与はinstanceへコピーします。clone、reset、鎖の再登録、身体設定の変更後も保持し、`ClearModelSecondaryMotion`で破棄します。両配列に`nullptr, 0`を渡すと、この接触球だけを解除します。不正な入力や確保失敗は既存設定を保ちます。固定boneの寄与が大きい場合など、登録できても接触を満たす姿勢を見つけられないことがあります。
+
+通常の候補が未収束の場合は、直前に確定した骨の方向から現在root・骨長に合わせた候補も試します。初期化前、骨列の変更、大きな移動、0.25秒以上の停止では使いません。数値・範囲・確保エラーも再試行の対象外です。前の姿勢を無条件に採用せず、再試行後も現在の曲げ角・身体接触・float保存・描画FKの検査を行います。
+
+個々の鎖の小刻み更新で身体接触が未解決になった場合も、重み付き接触を登録した構成では、現在の予測姿勢から全鎖の身体・衣服接触をまとめて解きます。入力・数値・確保失敗はこの再試行へ回しません。最終姿勢には同じ骨長・角度・身体接触・描画FKの検査を適用します。途中の移動軌跡まで接触を保証する機能ではありません。
+
+```cpp
+const gk::FModelSecondaryMotionContactAnchor anchors[] = { { skirtLeft, { 0.0f, 0.025f, 0.0f }, 0.6f }, { skirtRight, { 0.0f, 0.025f, 0.0f }, 0.4f } };
+const gk::FModelSecondaryMotionContactPoint points[] = { { 0, 2, 0.003f } };
+if (gk::SetModelSecondaryMotionContactPoints(model, points, 1, anchors, 2) != 0)
+{
+    // GetLastErrorMessage()で登録の失敗理由を確認する。
+}
+```
+
 複数鎖の自由bone間の距離を保つには、`SetModelSecondaryMotionDistanceConstraints`へ`FModelSecondaryMotionDistanceConstraint`配列を渡します。各端点は別々に登録した鎖の自由boneで、最大1024組です。固定root・同じ鎖のbone・順序を反転した重複ペアは指定できません。`restDistance=0`は登録時の基準姿勢を測って距離として固定します。この基準姿勢は揺れを加える前のclip・blend・IK反映後の位置です。animationで毎frame基準距離を測り直す機能ではありません。正の`restDistance`はmodel空間の距離を直接指定します。`compliance=0`は距離を保ち、正の値は伸び縮みを許します。値が大きいほど柔らかく、両端は同じ動きやすさで補正します。
 
 距離は、柔らかさを時間刻みに合わせて扱うXPBDという位置補正で解きます。各Updateのframe末尾で連成処理を呼び、その制約反復内では補正の累計`lambda`を保持します。lambdaはUpdateごとに0へ戻します。時間刻み`h`は、0より大きく0.25秒未満のdeltaではそのdelta、deltaが0または0.25秒以上のhitchでは`1/120`秒です。検査する誤差は`abs(実距離 - 基準距離 - (compliance / h²) * lambda)`で、柔らかい設定では実距離そのものの伸びを拒否しません。候補は基準距離の0.05%、描画FKは0.1%を許容します。各鎖のsubstepと距離制約を同じ刻みで一緒に解く構成ではなく、更新頻度による動きの差は残ります。極端に短い距離や大きなfloat座標では必要な相対精度を保てず、更新が失敗する場合があります。
@@ -111,7 +132,9 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。このoptionには`--secondary-colliders`が必要です。各行は`半径 | firstBone secondBone`で、半径はmodel空間です。設定ファイルは[スカート接続線分](../samples/config/yumeka-secondary-links.txt)を参照してください。接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
 
-骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。このoptionは揺れもの鎖と身体形状を設定した起動で使います。各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。空行と`#`コメントを無視します。YUMEKAの[衣服位置の球](../samples/config/yumeka-secondary-contact-links.txt)はSTART16と18で使う設定です。同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
+骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。このoptionは揺れもの鎖と身体形状を設定した起動で使います。各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。空行と`#`コメントを無視します。YUMEKAの[衣服位置の球](../samples/config/yumeka-secondary-contact-links.txt)はSTART16で使う設定です。同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
+
+複数boneの重みで置く接触球には`--secondary-contact-points <config-file>`を指定します。各行は`半径 | bone名 weight localX localY localZ | ...`です。身体形状と揺れ鎖が必要で、原点間link・距離制約は併用できません。[YUMEKAの接触球設定](../samples/config/yumeka-skinning-contact-points.txt)は、複数のboneから同時に影響される位置も扱います。頂点位置は書き換えず、骨の姿勢で球を身体から離します。
 
 骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。これは布面の非貫通や全設定の収束を保証するものではありません。
 

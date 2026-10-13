@@ -1,4 +1,6 @@
-﻿#include <Windows.h>
+﻿#include <gkcore/FModelSecondaryMotionContactPoint.h>
+#include <gkcore/FModelSecondaryMotionContactAnchor.h>
+#include <Windows.h>
 #include <gkcore.h>
 #include <gkcore/Handle.h>
 #include <gkcore/ModelSecondaryMotion.h>
@@ -28,6 +30,13 @@ bool VerifySecondaryMotionApiExports()
     }
     // 鎖ごとの身体選択も、配布headerとDLLから参照できることを確認する。
     if (gk::SetModelSecondaryMotionChainColliderMask({}, 0, UINT64_MAX) != -1)
+    {
+        return false;
+    }
+    // 複数boneの接触球APIも、配布headerとDLLだけでリンクする。
+    const gk::FModelSecondaryMotionContactAnchor contactAnchor{};
+    const gk::FModelSecondaryMotionContactPoint contactPoint{ 0, 1, 0.002f };
+    if (gk::SetModelSecondaryMotionContactPoints({}, &contactPoint, 1, &contactAnchor, 1) != -1)
     {
         return false;
     }

@@ -7,6 +7,7 @@
 
 #include <float.h>
 #include <math.h>
+#include <string.h>
 
 namespace gk::model::animation
 {
@@ -21,6 +22,23 @@ uint64_t secondaryMotionReferenceCalculationCount = 0;
 
 // 積分と接触が共通で使う倍精度座標。
 using FVector3 = gk::FVector3d;
+
+/**
+ * 接触の幾何学的制約を満たせなかった診断だけを識別する。
+ */
+bool IsGeometricContactFailure(const gk::String& error)
+{
+    if (error.Empty())
+        return false;
+    const char* message = error.CStr();
+    const char* prefixes[] = { "Secondary motion chain intersects a collision shape", "Secondary motion point intersects a collision shape", "Secondary motion collision segment cannot reach outside a shape" };
+    for (uint32_t index = 0; index < sizeof(prefixes) / sizeof(prefixes[0]); ++index)
+    {
+        if (strncmp(message, prefixes[index], strlen(prefixes[index])) == 0)
+            return true;
+    }
+    return false;
+}
 
 /**
  * 3成分を倍精度位置へ変換する。
@@ -215,8 +233,12 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 /**
  * 鎖を候補側で積分し、長さ・曲げ角・任意の身体接触を満たすときだけstateを更新する。
  */
-static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false, FModelSecondaryMotionSolverWorkspace* workspace = nullptr)
+static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false, FModelSecondaryMotionSolverWorkspace* workspace = nullptr, bool* contactUnresolved = nullptr)
 {
+    if (contactUnresolved)
+    {
+        *contactUnresolved = false;
+    }
     FModelSecondaryMotionSolverWorkspace localWorkspace;
     FModelSecondaryMotionSolverWorkspace& scratch = workspace ? *workspace : localWorkspace;
     scratch.Clear();
@@ -445,7 +467,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                             return ResetSecondaryMotionChain(targets, count, state, error);
                         }
                         FModelSecondaryMotionChainState restarted;
-                        if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error, zeroStepShapes, false, workspace))
+                        if (!ResetSecondaryMotionChain(targets, count, restarted, error) || !StepSecondaryMotionChainCore(targets, count, settings, 0.0, currentShapes, currentShapes, shapeCount, restarted, error, zeroStepShapes, false, workspace, contactUnresolved))
                         {
                             return false;
                         }
@@ -524,6 +546,10 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
             }
             if (!contactsClear)
             {
+                if (contactUnresolved)
+                {
+                    *contactUnresolved = true;
+                }
                 return false;
             }
         }
@@ -600,8 +626,12 @@ uint64_t GetSecondaryMotionReferenceCalculationCount()
 }
 #endif
 
-bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius)
+bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius, bool* contactUnresolved)
 {
+    if (contactUnresolved)
+    {
+        *contactUnresolved = false;
+    }
     if (!isfinite(pointRadius) || pointRadius < 0.0f)
     {
         error.Assign("Secondary motion skin point radius is invalid");
@@ -609,7 +639,12 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
     }
     if (pointRadius == 0.0f)
     {
-        return StepSecondaryMotionChainCore(targets, count, settings, delta, previousShapes, currentShapes, shapeCount, state, error);
+        const bool result = StepSecondaryMotionChainCore(targets, count, settings, delta, previousShapes, currentShapes, shapeCount, state, error, nullptr, false, nullptr, contactUnresolved);
+        if (!result && contactUnresolved && IsGeometricContactFailure(error))
+        {
+            *contactUnresolved = true;
+        }
+        return result;
     }
     if (previousShapes == currentShapes)
     {
@@ -617,7 +652,12 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
         gk::Array<FModelSecondaryMotionCollisionShape> expandedShapes;
         if (!ExpandSecondaryMotionCollisionShapes(previousShapes, shapeCount, pointRadius, expandedShapes, error))
             return false;
-        return StepSecondaryMotionChainCore(targets, count, settings, delta, expandedShapes.Data(), expandedShapes.Data(), shapeCount, state, error);
+        const bool result = StepSecondaryMotionChainCore(targets, count, settings, delta, expandedShapes.Data(), expandedShapes.Data(), shapeCount, state, error, nullptr, false, nullptr, contactUnresolved);
+        if (!result && contactUnresolved && IsGeometricContactFailure(error))
+        {
+            *contactUnresolved = true;
+        }
+        return result;
     }
     gk::Array<FModelSecondaryMotionCollisionShape> expandedPreviousShapes;
     gk::Array<FModelSecondaryMotionCollisionShape> expandedCurrentShapes;
@@ -625,7 +665,12 @@ bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t co
     {
         return false;
     }
-    return StepSecondaryMotionChainCore(targets, count, settings, delta, expandedPreviousShapes.Data(), expandedCurrentShapes.Data(), shapeCount, state, error);
+    const bool result = StepSecondaryMotionChainCore(targets, count, settings, delta, expandedPreviousShapes.Data(), expandedCurrentShapes.Data(), shapeCount, state, error, nullptr, false, nullptr, contactUnresolved);
+    if (!result && contactUnresolved && IsGeometricContactFailure(error))
+    {
+        *contactUnresolved = true;
+    }
+    return result;
 }
 
 bool StepSecondaryMotionChainWithPreparedCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionStepShapes& shapes, FModelSecondaryMotionChainState& state, gk::String& error)

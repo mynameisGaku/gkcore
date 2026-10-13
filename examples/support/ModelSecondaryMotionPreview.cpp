@@ -74,6 +74,11 @@ bool ParseSecondaryContactLinkOptions(int& argc, char** argv, const char*& path)
     return ParsePathOption(argc, argv, "--secondary-contact-links", path);
 }
 
+bool ParseSecondaryContactPointOptions(int& argc, char** argv, const char*& path)
+{
+    return ParsePathOption(argc, argv, "--secondary-contact-points", path);
+}
+
 bool ParseSecondaryVertexContactOptions(int& argc, char** argv, bool& enabled)
 {
     // 値を持つoptionのpathをflagとして誤読しない。
@@ -575,6 +580,108 @@ bool ApplySecondaryContactLinkPreview(ModelHandle model, const char* path)
     if (!passed)
     {
         fprintf(stderr, "invalid secondary contact link config: %s (%s)\n", path, GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
+ * すべての行の骨名と有限値を確認してから、接触点と寄与配列を登録する。
+ */
+bool ApplySecondaryContactPointPreview(ModelHandle model, const char* path)
+{
+    FILE* file = path ? fopen(path, "rb") : nullptr;
+    if (!file)
+    {
+        fprintf(stderr, "cannot open secondary contact point config: %s\n", path ? path : "(null)");
+        return false;
+    }
+    // APIの最大数を一度だけ確保し、読み込み途中の状態をinstanceへ残さない。
+    FModelSecondaryMotionContactPoint points[1024]{};
+    FModelSecondaryMotionContactAnchor anchors[16384]{};
+    uint32_t pointCount = 0;
+    uint32_t anchorCount = 0;
+    bool passed = true;
+    char line[65536]{};
+    while (passed && fgets(line, sizeof(line), file))
+    {
+        if (strlen(line) == sizeof(line) - 1 && line[sizeof(line) - 2] != '\n' && !feof(file))
+        {
+            passed = false;
+            break;
+        }
+        char* cursor = line;
+        if (strncmp(cursor, "\xef\xbb\xbf", 3) == 0)
+        {
+            cursor += 3;
+        }
+        while (*cursor == ' ' || *cursor == '\t')
+        {
+            ++cursor;
+        }
+        if (!*cursor || *cursor == '#' || *cursor == '\r' || *cursor == '\n')
+        {
+            continue;
+        }
+        if (pointCount == 1024)
+        {
+            passed = false;
+            break;
+        }
+        auto& point = points[pointCount];
+        int consumed = -1;
+        if (sscanf(cursor, "%f %n", &point.radius, &consumed) != 1 || consumed < 0 || !isfinite(point.radius) || point.radius < 0.0f)
+        {
+            passed = false;
+            break;
+        }
+        cursor += consumed;
+        point.firstAnchor = anchorCount;
+        while (passed)
+        {
+            if (*cursor != '|' || anchorCount == 16384 || point.anchorCount == 64)
+            {
+                passed = false;
+                break;
+            }
+            ++cursor;
+            char boneName[512]{};
+            auto& anchor = anchors[anchorCount];
+            consumed = -1;
+            if (sscanf(cursor, "%511s %f %f %f %f %n", boneName, &anchor.weight, &anchor.offset.x, &anchor.offset.y, &anchor.offset.z, &consumed) != 5 || consumed < 0 || !isfinite(anchor.weight) || anchor.weight <= 0.0f || !isfinite(anchor.offset.x) || !isfinite(anchor.offset.y) || !isfinite(anchor.offset.z))
+            {
+                passed = false;
+                break;
+            }
+            const int32_t bone = FindModelBone(model, boneName);
+            if (bone < 0)
+            {
+                passed = false;
+                break;
+            }
+            anchor.bone = static_cast<uint32_t>(bone);
+            ++anchorCount;
+            ++point.anchorCount;
+            cursor += consumed;
+            while (*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
+            {
+                ++cursor;
+            }
+            if (!*cursor)
+            {
+                break;
+            }
+        }
+        ++pointCount;
+    }
+    passed = passed && !ferror(file) && pointCount > 0;
+    fclose(file);
+    if (passed)
+    {
+        passed = SetModelSecondaryMotionContactPoints(model, points, pointCount, anchors, anchorCount, 32) == 0;
+    }
+    if (!passed)
+    {
+        fprintf(stderr, "invalid secondary contact point config: %s (%s)\n", path, GetLastErrorMessage());
     }
     return passed;
 }

@@ -8,6 +8,14 @@ namespace gk
 {
 struct FModelSecondaryMotionSettings;
 struct FModelSecondaryMotionCollider;
+/**
+ * 複数boneの寄与をまとめた接触球の設定。
+ */
+struct FModelSecondaryMotionContactPoint;
+/**
+ * 接触球へ寄与するbone、ローカル位置と影響量。
+ */
+struct FModelSecondaryMotionContactAnchor;
 }
 #include <gkcore/FModelSecondaryMotionSettings.h>
 #include <gkcore/FModelSecondaryMotionCollider.h>
@@ -15,6 +23,8 @@ struct FModelSecondaryMotionCollider;
 #include <gkcore/FModelSecondaryMotionLink.h>
 #include <gkcore/FModelSecondaryMotionDistanceConstraint.h>
 #include <gkcore/FModelSecondaryMotionContactLink.h>
+#include <gkcore/FModelSecondaryMotionContactAnchor.h>
+#include <gkcore/FModelSecondaryMotionContactPoint.h>
 
 /**
  * アニメーションの後に、髪や衣服のボーンへ揺れを加えるAPI。
@@ -98,6 +108,16 @@ GKCORE_API int SetModelSecondaryMotionDistanceConstraints(ModelHandle model, con
  * 取付boneのpivot位置とscaleを保ち、端点の接触に応じて後続boneの向きを解く。失敗時は以前の設定・姿勢を保つ。
  */
 GKCORE_API int SetModelSecondaryMotionContactLinks(ModelHandle model, const FModelSecondaryMotionContactLink* links, uint32_t count, uint32_t iterations = 32);
+/**
+ * 複数boneの重み付き接触点をコピーして全置換する。点は最大1024、anchorは最大16384。
+ * 各点は1から64 anchorを持ち、正の有限weightの合計は1±64FLT_EPSILONを満たす必要がある。
+ * offsetは有限、radiusは有限な0以上。各anchorを重複なく一度ずつ参照する。
+ * bone番号は登録済みskeleton内であれば鎖rootや固定boneも使える。鎖外の子孫boneは指定できない。
+ * links・距離制約・別鎖接触linkとは併用できず、同一boneのcontact linkとは併用できる。
+ * iterationsは各探索候補の反復上限で1から32、既存接触設定と共有する。両countが0なら解除する。
+ * 失敗時は以前の設定を保ち、更新時の未収束では以前の姿勢を保つ。
+ */
+GKCORE_API int SetModelSecondaryMotionContactPoints(ModelHandle model, const FModelSecondaryMotionContactPoint* points, uint32_t pointCount, const FModelSecondaryMotionContactAnchor* anchors, uint32_t anchorCount, uint32_t iterations = 32);
 /**
  * 身体と揺れものの接触形状を、現在の描画姿勢のmodel空間値へ複製する。
  * nullptr,0で必要な個数を返す。十分なcapacityなら書き込んだ個数を返す。

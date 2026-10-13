@@ -49,6 +49,8 @@ _FIXED = {
     "include/gkcore/FModelSecondaryMotionDebugShape.h",
     "include/gkcore/FModelSecondaryMotionLink.h",
     "include/gkcore/FModelSecondaryMotionContactLink.h",
+    "include/gkcore/FModelSecondaryMotionContactPoint.h",
+    "include/gkcore/FModelSecondaryMotionContactAnchor.h",
     "include/gkcore/FModelSecondaryMotionDistanceConstraint.h",
     "include/gkcore/ModelAnimationMappingInfo.h",
     "include/gkcore/HumanoidBoneTypes.h",

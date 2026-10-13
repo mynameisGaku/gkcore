@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionSolver.h"
+#include "foundation/Memory.h"
 
 #include <math.h>
 #include <limits>
@@ -458,6 +459,60 @@ bool TestResetFailuresPreserveState()
 }
 
 /**
+ * 接触を解けない失敗だけを識別し、入力や確保失敗を未収束扱いしない。
+ */
+bool TestCollisionUnresolvedStatusIsSpecificAndAtomic()
+{
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape enclosingSphere = { { 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.2f };
+    const FModelSecondaryMotionCollisionShape clearSphere = { { 4.0f, 0.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, 0.25f };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 0.0f;
+    FModelSecondaryMotionChainState state;
+    FModelSecondaryMotionChainState snapshot;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 2, state, error) || !CopyState(state, snapshot))
+    {
+        return Fail(error.Empty() ? "could not prepare the unresolved-status state" : error.CStr());
+    }
+    bool unresolved = false;
+    const bool impossibleResult = StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &enclosingSphere, &enclosingSphere, 1, state, error, 0.0f, &unresolved);
+    if (impossibleResult || error.Empty() || !unresolved || !SameState(state, snapshot))
+    {
+        fprintf(stderr, "unresolved diagnostic: result=%d error='%s' flag=%d same=%d\n", impossibleResult ? 1 : 0, error.CStr(), unresolved ? 1 : 0, SameState(state, snapshot) ? 1 : 0);
+        return Fail("a geometrically impossible contact did not report unresolved while preserving state");
+    }
+    const FModelSecondaryMotionCollisionShape rootEnclosingSphere = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 2.0f };
+    unresolved = false;
+    if (StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &rootEnclosingSphere, &rootEnclosingSphere, 1, state, error, 0.0f, &unresolved) || error.Empty() || !unresolved || !SameState(state, snapshot))
+    {
+        return Fail("a collider enclosing the fixed root was not classified as geometric contact failure");
+    }
+    const double invalidDelta = std::numeric_limits<double>::quiet_NaN();
+    unresolved = true;
+    if (StepSecondaryMotionChainWithCollisions(targets, 2, settings, invalidDelta, &clearSphere, &clearSphere, 1, state, error, 0.0f, &unresolved) || error.Empty() || unresolved || !SameState(state, snapshot))
+    {
+        return Fail("an invalid delta was misreported as contact nonconvergence or changed state");
+    }
+    unresolved = true;
+    if (StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &clearSphere, &clearSphere, 1, state, error, -0.1f, &unresolved) || error.Empty() || unresolved || !SameState(state, snapshot))
+    {
+        return Fail("an invalid point radius was misreported as contact nonconvergence or changed state");
+    }
+#if defined(GKCORE_TESTING)
+    unresolved = true;
+    gk::SetAllocationFailureAfterForTesting(0);
+    const bool allocationResult = StepSecondaryMotionChainWithCollisions(targets, 2, settings, 0.0, &clearSphere, &clearSphere, 1, state, error, 0.0f, &unresolved);
+    gk::ResetAllocationFailureForTesting();
+    if (allocationResult || error.Empty() || unresolved || !SameState(state, snapshot))
+    {
+        return Fail("an allocation failure was misreported as contact nonconvergence or changed state");
+    }
+#endif
+    return true;
+}
+
+/**
  * count上限2と1025を受け入れ、1026を拒否する。
  */
 bool TestChainCountLimits()
@@ -484,7 +539,7 @@ bool TestChainCountLimits()
 
 int main()
 {
-    if (!TestResetAndStationaryChain() || !TestMovingAnchorLagAndConstraints() || !TestDampedReturn() || !TestGravityRemainsFinite() || !TestFrameRateConvergence() || !TestTeleportAndHitchReset() || !TestOppositeDirectionResets() || !TestZeroDeltaUpdatesOnlyRoot() || !TestInvalidInputsPreserveState() || !TestResetFailuresPreserveState() || !TestChainCountLimits())
+    if (!TestResetAndStationaryChain() || !TestMovingAnchorLagAndConstraints() || !TestDampedReturn() || !TestGravityRemainsFinite() || !TestFrameRateConvergence() || !TestTeleportAndHitchReset() || !TestOppositeDirectionResets() || !TestZeroDeltaUpdatesOnlyRoot() || !TestInvalidInputsPreserveState() || !TestResetFailuresPreserveState() || !TestCollisionUnresolvedStatusIsSpecificAndAtomic() || !TestChainCountLimits())
         return 1;
     return 0;
 }

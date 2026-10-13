@@ -191,7 +191,7 @@ bool BuildPositions(const gk::FVector3d& root, const FSecondaryMotionReferenceSe
 /**
  * 正の侵入量の二乗和と対応する節方向勾配を加える。
  */
-bool AddPenetration(double penetration, const gk::FVector3d& normal, double directionScale, double& merit, gk::Array<gk::FVector3d>& gradients, uint32_t segmentIndex, const FSecondaryMotionReferenceSegment* references, bool includeCurrent)
+bool AddPenetration(double penetration, const gk::FVector3d& normal, double directionScale, double& merit, gk::FVector3d* gradients, uint32_t gradientCount, uint32_t segmentIndex, const FSecondaryMotionReferenceSegment* references, bool includeCurrent)
 {
     if (!(penetration > 0.0))
     {
@@ -206,12 +206,12 @@ bool AddPenetration(double penetration, const gk::FVector3d& normal, double dire
     for (uint32_t index = 0; index < fullSegments; ++index)
     {
         const double scale = references[index].length * penetration;
-        gradients.At(index) = Add(gradients.At(index), Multiply(normal, scale));
+        gradients[index] = Add(gradients[index], Multiply(normal, scale));
     }
-    if (!includeCurrent && segmentIndex < gradients.Count())
+    if (!includeCurrent && segmentIndex < gradientCount)
     {
         const double scale = references[segmentIndex].length * penetration * directionScale;
-        gradients.At(segmentIndex) = Add(gradients.At(segmentIndex), Multiply(normal, scale));
+        gradients[segmentIndex] = Add(gradients[segmentIndex], Multiply(normal, scale));
     }
     return true;
 }
@@ -219,7 +219,7 @@ bool AddPenetration(double penetration, const gk::FVector3d& normal, double dire
 /**
  * 添付線分の侵入量と、その線分を動かす鎖方向への勾配を加える。
  */
-bool AddAttachmentPenetration(double penetration, const gk::FVector3d& normal, double spanAmount, const FSecondaryMotionAttachmentEvaluation& first, const FSecondaryMotionAttachmentEvaluation& second, uint32_t segmentIndex, const FSecondaryMotionReferenceSegment* references, double& merit, gk::Array<gk::FVector3d>& gradients)
+bool AddAttachmentPenetration(double penetration, const gk::FVector3d& normal, double spanAmount, const FSecondaryMotionAttachmentEvaluation& first, const FSecondaryMotionAttachmentEvaluation& second, uint32_t segmentIndex, const FSecondaryMotionReferenceSegment* references, double& merit, gk::FVector3d* gradients, uint32_t gradientCount)
 {
     if (!(penetration > 0.0))
     {
@@ -237,7 +237,7 @@ bool AddAttachmentPenetration(double penetration, const gk::FVector3d& normal, d
     const gk::FVector3d combinedGradient = Add(firstGradient, secondGradient);
     for (uint32_t index = 0; index < segmentIndex; ++index)
     {
-        gradients.At(index) = Add(gradients.At(index), Multiply(combinedGradient, references[index].length));
+        gradients[index] = Add(gradients[index], Multiply(combinedGradient, references[index].length));
     }
     // 現segmentの回転済みoffsetへヤコビアン（offset位置の変化率）を適用する。
     gk::FVector3d localGradient{};
@@ -248,8 +248,12 @@ bool AddAttachmentPenetration(double penetration, const gk::FVector3d& normal, d
             localGradient.value[childAxis] += first.childJacobian[pointAxis * 3 + childAxis] * firstGradient.value[pointAxis] + second.childJacobian[pointAxis * 3 + childAxis] * secondGradient.value[pointAxis];
         }
     }
-    gradients.At(segmentIndex) = Add(gradients.At(segmentIndex), Multiply(localGradient, references[segmentIndex].length));
-    return IsFinite(localGradient) && IsFinite(gradients.At(segmentIndex));
+    if (segmentIndex >= gradientCount)
+    {
+        return false;
+    }
+    gradients[segmentIndex] = Add(gradients[segmentIndex], Multiply(localGradient, references[segmentIndex].length));
+    return IsFinite(localGradient) && IsFinite(gradients[segmentIndex]);
 }
 
 /**
@@ -281,17 +285,17 @@ bool IsAttachmentRotationSingular(const FSecondaryMotionAttachmentDefinition& de
 /**
  * 位置列の全点・線分接触と鎖方向への勾配を評価する。
  */
-bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* references, uint32_t segmentCount, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& positions, double& merit, gk::Array<gk::FVector3d>& gradients, gk::String& error)
+bool EvaluateChainRaw(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* references, uint32_t segmentCount, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* gradients, uint32_t gradientCount, gk::String& error)
 {
     merit = 0.0;
-    gradients.Clear();
+    if (positionCount != segmentCount + 1u || gradientCount != segmentCount || (positionCount > 0 && !positions) || (gradientCount > 0 && !gradients))
+    {
+        error.Assign("Secondary motion chain merit view is invalid");
+        return false;
+    }
     for (uint32_t index = 0; index < segmentCount; ++index)
     {
-        if (!gradients.Append(gk::FVector3d{}))
-        {
-            error.Assign("Secondary motion chain contact gradient allocation failed");
-            return false;
-        }
+        gradients[index] = {};
     }
     for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
     {
@@ -304,8 +308,8 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
         }
         for (uint32_t segmentIndex = 0; segmentIndex < segmentCount; ++segmentIndex)
         {
-            const gk::FVector3d& first = positions.At(segmentIndex);
-            const gk::FVector3d& second = positions.At(segmentIndex + 1u);
+            const gk::FVector3d& first = positions[segmentIndex];
+            const gk::FVector3d& second = positions[segmentIndex + 1u];
             double penetration = 0.0;
             double spanAmount = 0.0;
             gk::FVector3d normal{};
@@ -313,7 +317,7 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
             {
                 return false;
             }
-            if (!AddPenetration(penetration, normal, 0.0, merit, gradients, segmentIndex, references, true))
+            if (!AddPenetration(penetration, normal, 0.0, merit, gradients, gradientCount, segmentIndex, references, true))
             {
                 error.Assign("Secondary motion chain contact merit is outside the numeric range");
                 return false;
@@ -353,7 +357,7 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
                 {
                     penetration += rootSpanThreshold - shape.radius;
                 }
-                if (!AddPenetration(penetration, normal, spanAmount, merit, gradients, segmentIndex, references, false))
+                if (!AddPenetration(penetration, normal, spanAmount, merit, gradients, gradientCount, segmentIndex, references, false))
                 {
                     error.Assign("Secondary motion chain contact merit is outside the numeric range");
                     return false;
@@ -374,16 +378,16 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
         // 回転offset評価と、その子位置に対する微分を保持する。
         FSecondaryMotionAttachmentEvaluation firstEvaluation{};
         FSecondaryMotionAttachmentEvaluation secondEvaluation{};
-        if (IsAttachmentRotationSingular(contact.firstDefinition, positions.At(segmentIndex), positions.At(segmentIndex + 1u)) || IsAttachmentRotationSingular(contact.secondDefinition, positions.At(segmentIndex), positions.At(segmentIndex + 1u)))
+        if (IsAttachmentRotationSingular(contact.firstDefinition, positions[segmentIndex], positions[segmentIndex + 1u]) || IsAttachmentRotationSingular(contact.secondDefinition, positions[segmentIndex], positions[segmentIndex + 1u]))
         {
             merit = DBL_MAX;
-            for (uint32_t index = 0; index < gradients.Count(); ++index)
+            for (uint32_t index = 0; index < gradientCount; ++index)
             {
-                gradients.At(index) = {};
+                gradients[index] = {};
             }
             return true;
         }
-        if (!EvaluateSecondaryMotionAttachment(contact.firstDefinition, positions.At(segmentIndex), positions.At(segmentIndex + 1u), firstEvaluation, error) || !EvaluateSecondaryMotionAttachment(contact.secondDefinition, positions.At(segmentIndex), positions.At(segmentIndex + 1u), secondEvaluation, error))
+        if (!EvaluateSecondaryMotionAttachment(contact.firstDefinition, positions[segmentIndex], positions[segmentIndex + 1u], firstEvaluation, error) || !EvaluateSecondaryMotionAttachment(contact.secondDefinition, positions[segmentIndex], positions[segmentIndex + 1u], secondEvaluation, error))
         {
             return false;
         }
@@ -397,7 +401,7 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
             {
                 return false;
             }
-            if (!AddAttachmentPenetration(penetration, normal, spanAmount, firstEvaluation, secondEvaluation, segmentIndex, references, merit, gradients))
+            if (!AddAttachmentPenetration(penetration, normal, spanAmount, firstEvaluation, secondEvaluation, segmentIndex, references, merit, gradients, gradientCount))
             {
                 error.Assign("Secondary motion chain attachment merit is outside the numeric range");
                 return false;
@@ -409,15 +413,37 @@ bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_
         error.Assign("Secondary motion chain contact merit is outside the numeric range");
         return false;
     }
-    for (uint32_t index = 0; index < gradients.Count(); ++index)
+    for (uint32_t index = 0; index < gradientCount; ++index)
     {
-        if (!IsFinite(gradients.At(index)))
+        if (!IsFinite(gradients[index]))
         {
             error.Assign("Secondary motion chain contact gradient is outside the numeric range");
             return false;
         }
     }
     return true;
+}
+
+/**
+ * 既存array呼出しをraw-pointer評価へつなぐ。
+ */
+bool EvaluateChain(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* references, uint32_t segmentCount, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& positions, double& merit, gk::Array<gk::FVector3d>& gradients, gk::String& error)
+{
+    gradients.Clear();
+    if (!gradients.Reserve(segmentCount))
+    {
+        error.Assign("Secondary motion chain contact gradient allocation failed");
+        return false;
+    }
+    for (uint32_t index = 0; index < segmentCount; ++index)
+    {
+        if (!gradients.Append(gk::FVector3d{}))
+        {
+            error.Assign("Secondary motion chain contact gradient allocation failed");
+            return false;
+        }
+    }
+    return EvaluateChainRaw(shapes, shapeCount, references, segmentCount, toleranceFraction, contacts, contactCount, positions.Data(), positions.Count(), merit, gradients.Data(), gradients.Count(), error);
 }
 
 /**
@@ -561,6 +587,42 @@ bool MakeCoherentTilt(const FSecondaryMotionReferenceSegment* references, uint32
     return true;
 }
 
+}
+
+bool EvaluatePreparedSecondaryMotionChainContactsMerit(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* directionGradients, uint32_t gradientCount, gk::String& error)
+{
+    error.Clear();
+    if (shapeCount > 64 || (shapeCount > 0 && !shapes) || segmentCount == UINT32_MAX || (segmentCount > 0 && !referenceSegments) || positionCount != segmentCount + 1u || (positionCount > 0 && !positions) || gradientCount != segmentCount || (gradientCount > 0 && !directionGradients) || contactCount > 1024 || (contactCount > 0 && !contacts) || !isfinite(cosineLimit) || cosineLimit < -1.0 || cosineLimit > 1.0 || !isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
+    {
+        error.Assign("Secondary motion chain merit input is invalid");
+        return false;
+    }
+    for (uint32_t index = 0; index < positionCount; ++index)
+    {
+        if (!IsFloatPosition(positions[index]))
+        {
+            error.Assign("Secondary motion chain merit position is invalid");
+            return false;
+        }
+    }
+    for (uint32_t index = 0; index < segmentCount; ++index)
+    {
+        if (!IsFinite(referenceSegments[index].direction) || !isfinite(referenceSegments[index].length) || !(referenceSegments[index].length > 0.0) || referenceSegments[index].length > FLT_MAX)
+        {
+            error.Assign("Secondary motion chain merit reference segment is invalid");
+            return false;
+        }
+    }
+    for (uint32_t index = 0; index < contactCount; ++index)
+    {
+        const FSecondaryMotionChainAttachmentContact& contact = contacts[index];
+        if (contact.segmentIndex >= segmentCount || contact.shapeCount > 64 || (contact.shapeCount > 0 && !contact.shapes) || !ValidateAttachmentDefinition(contact.firstDefinition, referenceSegments[contact.segmentIndex], cosineLimit) || !ValidateAttachmentDefinition(contact.secondDefinition, referenceSegments[contact.segmentIndex], cosineLimit))
+        {
+            error.Assign("Secondary motion chain merit attachment is invalid");
+            return false;
+        }
+    }
+    return EvaluateChainRaw(shapes, shapeCount, referenceSegments, segmentCount, toleranceFraction, contacts, contactCount, positions, positionCount, merit, directionGradients, gradientCount, error);
 }
 
 bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, gk::Array<gk::FVector3d>& positions, gk::String& error, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount)

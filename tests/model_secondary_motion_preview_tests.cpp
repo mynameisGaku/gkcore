@@ -203,6 +203,32 @@ bool TestDuplicateFlagIsAtomic()
     return Require(rejected, "duplicate flag is rejected") && Require(preserved, "duplicate rejection preserves argv and enabled state");
 }
 
+/**
+ * 複数bone接触球のpathを他optionから区別し、重複や値なしで状態を保つ。
+ */
+bool TestSecondaryContactPointPathContracts()
+{
+    char* args[] = { "viewer", "model.fbx", "1", "0", "0", "0", "--materials", "--secondary-contact-points", "--secondary-contact-points", "weighted.txt", nullptr };
+    int count = 10;
+    const char* path = nullptr;
+    if (!Require(gk::examples::ParseSecondaryContactPointOptions(count, args, path) && path && strcmp(path, "weighted.txt") == 0 && count == 8 && strcmp(args[7], "--secondary-contact-points") == 0, "weighted contact path preserves a matching material value"))
+    {
+        return false;
+    }
+    char* duplicate[] = { "viewer", "model.fbx", "1", "0", "0", "0", "--secondary-contact-points", "a.txt", "--secondary-contact-points", "b.txt", nullptr };
+    char* snapshot[11]{};
+    memcpy(snapshot, duplicate, sizeof(duplicate));
+    count = 10;
+    path = "previous";
+    if (!Require(!gk::examples::ParseSecondaryContactPointOptions(count, duplicate, path) && count == 10 && strcmp(path, "previous") == 0 && memcmp(snapshot, duplicate, sizeof(snapshot)) == 0, "duplicate weighted paths preserve argument and path state"))
+    {
+        return false;
+    }
+    char* missing[] = { "viewer", "model.fbx", "1", "0", "0", "0", "--secondary-contact-points", nullptr };
+    count = 7;
+    return Require(!gk::examples::ParseSecondaryContactPointOptions(count, missing, path) && count == 7 && strcmp(path, "previous") == 0, "missing weighted path preserves state");
+}
+
 }
 
 /**
@@ -210,5 +236,5 @@ bool TestDuplicateFlagIsAtomic()
  */
 bool RunSecondaryMotionPreviewContracts()
 {
-    return TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts() && TestSecondaryLinkPathContracts() && TestSecondaryDistancePathContracts() && TestSecondaryContactLinkPathContracts();
+    return TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts() && TestSecondaryLinkPathContracts() && TestSecondaryDistancePathContracts() && TestSecondaryContactLinkPathContracts() && TestSecondaryContactPointPathContracts();
 }

@@ -17,6 +17,7 @@
 #include "model/animation/ModelPose.h"
 #include "model/animation/ModelAnimationResources.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionContactPoints.h"
 #include "model/animation/ModelSecondaryMotionDistances.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
@@ -3672,6 +3673,489 @@ static bool TestSecondaryMotionContactLinkApiLifecycle()
 }
 
 /**
+ * 重み付きcontact pointの所有、検証、相互排他、解除を確かめる。
+ */
+static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
+{
+    auto* resource = gk::detail::CreateModelResource();
+    if (!resource)
+    {
+        return false;
+    }
+    auto* source = new AAnimationRigTestSource;
+    source->boneCount = 7;
+    const int32_t parents[7] = { -1, 0, 1, 0, 3, 1, 5 };
+    gk::model::animation::FModelBoneTransform rest[7]{};
+    rest[1].position[0] = 1.0f;
+    rest[3].position[1] = -1.0f;
+    rest[4].position[1] = 1.0f;
+    rest[5].position[1] = 1.0f;
+    rest[6].position[1] = 1.0f;
+    if (!source->skeleton.parents.AppendRange(parents, 7) || !source->skeleton.restLocalTransforms.AppendRange(rest, 7))
+    {
+        delete source;
+        gk::Release(&resource->reference);
+        return false;
+    }
+    gk::String error;
+    resource->animation = gk::model::CreateModelAnimationAsset(source, error);
+    gk::detail::ModelVertex vertices[7]{};
+    if (!resource->animation || !resource->vertices.AppendRange(vertices, 7))
+    {
+        gk::Release(&resource->reference);
+        return false;
+    }
+    const auto model = gk::detail::RegisterModelResource(resource, error);
+    gk::detail::ModelTransform baseTransform{};
+    baseTransform.handle = model;
+    baseTransform.scale = { 1.0f, 1.0f, 1.0f };
+    const bool transformAdded = model.IsValid() && gk::detail::GetContext().modelTransforms.Append(baseTransform);
+    const auto firstInstance = transformAdded ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    const auto secondInstance = firstInstance.IsValid() ? gk::CreateModelInstance(model) : gk::ModelHandle{};
+    if (!firstInstance.IsValid() || !secondInstance.IsValid())
+    {
+        if (firstInstance.IsValid())
+        {
+            gk::DeleteModel(firstInstance);
+        }
+        if (secondInstance.IsValid())
+        {
+            gk::DeleteModel(secondInstance);
+        }
+        if (model.IsValid())
+        {
+            gk::DeleteModel(model);
+        }
+        else
+        {
+            gk::Release(&resource->reference);
+        }
+        fprintf(stderr, "weighted contact lifecycle fixture creation failed: %s\n", error.CStr());
+        return false;
+    }
+
+    const uint32_t firstChain[3] = { 1, 5, 6 };
+    const uint32_t secondChain[2] = { 3, 4 };
+    gk::FModelSecondaryMotionSettings settings{};
+    settings.frequencyHz = 6.0f;
+    settings.dampingRatio = 0.8f;
+    settings.gravity = {};
+    settings.windAcceleration = {};
+    settings.endOffset = { 0.0f, 0.2f, 0.0f };
+    settings.maxAngleDegrees = 60.0f;
+    settings.constraintIterations = 8;
+    bool passed = gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings) == 0 && gk::SetModelSecondaryMotionChain(firstInstance, secondChain, 2, settings) == 0 && gk::SetModelSecondaryMotionChain(secondInstance, firstChain, 3, settings) == 0 && gk::SetModelSecondaryMotionChain(secondInstance, secondChain, 2, settings) == 0;
+    const auto ReadState = [](gk::ModelHandle handle)
+    {
+        auto* transform = gk::detail::FindModelTransform(handle);
+        return transform && transform->playback ? transform->playback->secondaryMotion : nullptr;
+    };
+    const auto Checkpoint = [&](const char* stage, bool condition)
+    {
+        if (!condition)
+        {
+            fprintf(stderr, "weighted contact lifecycle failed at %s: %s\n", stage, gk::GetLastErrorMessage());
+        }
+        return condition;
+    };
+    passed = Checkpoint("independent chains register", passed) && passed;
+
+    gk::FModelSecondaryMotionContactAnchor anchors[2] = { { 5, { 0.01f, 0.02f, 0.03f }, 0.500002f }, { 6, { -0.04f, 0.05f, -0.06f }, 0.500002f } };
+    gk::FModelSecondaryMotionContactPoint points[1] = { { 0, 2, 0.025f } };
+    const gk::FModelSecondaryMotionLink existingLink{ 6, 4, 0.01f };
+    const gk::FModelSecondaryMotionDistanceConstraint existingDistance{ 6, 4, 1.0f, 0.001f };
+    const gk::FModelSecondaryMotionContactLink crossChainContact{ 6, {}, 4, {}, 0.01f };
+    const gk::FModelSecondaryMotionContactLink sameBoneContact{ 6, {}, 6, {}, 0.01f };
+    passed = Checkpoint("legacy link setting succeeds before weighted points", gk::SetModelSecondaryMotionLinks(firstInstance, &existingLink, 1, 10) == 0) && passed;
+    passed = Checkpoint("weighted points reject an existing link", gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 11) == -1) && passed;
+    const int clearLinksBeforePoint = gk::SetModelSecondaryMotionLinks(firstInstance, nullptr, 0, 11);
+    auto* setupState = ReadState(firstInstance);
+    passed = Checkpoint("clearing links leaves weighted points unset", clearLinksBeforePoint == 0 && setupState && setupState->contactPoints.Count() == 0) && passed;
+    passed = Checkpoint("legacy distance setting succeeds before weighted points", gk::SetModelSecondaryMotionDistanceConstraints(firstInstance, &existingDistance, 1, 12) == 0) && passed;
+    passed = Checkpoint("weighted points reject an existing distance", gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 13) == -1) && passed;
+    const int clearDistancesBeforePoint = gk::SetModelSecondaryMotionDistanceConstraints(firstInstance, nullptr, 0, 13);
+    setupState = ReadState(firstInstance);
+    passed = Checkpoint("clearing distances leaves weighted points unset", clearDistancesBeforePoint == 0 && setupState && setupState->contactPoints.Count() == 0) && passed;
+    passed = Checkpoint("cross-chain contact setting succeeds before weighted points", gk::SetModelSecondaryMotionContactLinks(firstInstance, &crossChainContact, 1, 14) == 0) && passed;
+    passed = Checkpoint("weighted points reject an existing cross-chain contact", gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 15) == -1) && passed;
+    const int setSameBoneBeforePoint = gk::SetModelSecondaryMotionContactLinks(firstInstance, &sameBoneContact, 1, 16);
+    const int setPointWithSameBone = gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 17);
+    setupState = ReadState(firstInstance);
+    passed = Checkpoint("same-bone contact setting coexists before weighted points", setSameBoneBeforePoint == 0 && setPointWithSameBone == 0 && setupState && setupState->contactLinks.Count() == 1 && setupState->contactLinks.At(0).firstBone == setupState->contactLinks.At(0).secondBone && setupState->contactPoints.Count() == 1) && passed;
+    const int clearPointBeforeMainCase = gk::SetModelSecondaryMotionContactPoints(firstInstance, nullptr, 0, nullptr, 0, 18);
+    setupState = ReadState(firstInstance);
+    passed = Checkpoint("clear weighted points keeps the compatible contact link", clearPointBeforeMainCase == 0 && setupState && setupState->contactLinks.Count() == 1) && passed;
+    const int registered = gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 19);
+    passed = Checkpoint("valid weighted point registers", registered == 0) && passed;
+    auto* firstState = ReadState(firstInstance);
+    const bool copied = firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2 && firstState->contactPoints.At(0).firstAnchor == 0 && firstState->contactPoints.At(0).anchorCount == 2 && firstState->contactPoints.At(0).radius == 0.025f && firstState->contactAnchors.At(0).bone == 5 && firstState->contactAnchors.At(0).offset.x == 0.01f && firstState->contactAnchors.At(0).weight == anchors[0].weight && firstState->contactAnchors.At(1).bone == 6 && firstState->contactAnchors.At(1).weight == anchors[1].weight && firstState->linkIterations == 19;
+    anchors[0].weight = 0.75f;
+    anchors[1].bone = 6;
+    points[0].radius = 2.0f;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("input arrays are deeply copied without weight normalization", copied && firstState && firstState->contactAnchors.At(0).weight == 0.500002f && firstState->contactAnchors.At(1).bone == 6 && firstState->contactPoints.At(0).radius == 0.025f) && passed;
+
+    gk::FModelSecondaryMotionCollider distantCollider{};
+    distantCollider.bone = 0;
+    distantCollider.start = { 100.0f, 100.0f, 100.0f };
+    distantCollider.end = distantCollider.start;
+    distantCollider.radius = 0.05f;
+    firstState = ReadState(firstInstance);
+    const int distantColliderResult = gk::SetModelSecondaryMotionColliders(firstInstance, &distantCollider, 1, 0.0f);
+    firstState = ReadState(firstInstance);
+    const bool initialTargetsAreValid = firstState && firstState->chains.Count() == 2 && firstState->chains.At(0)->simulation.points.Count() == firstState->chains.At(0)->simulation.previousTargets.Count() && firstState->chains.At(1)->simulation.points.Count() == firstState->chains.At(1)->simulation.previousTargets.Count() && firstState->chains.At(0)->simulation.previousTargets.Count() == firstState->chains.At(0)->bones.Count() + 1u && firstState->chains.At(1)->simulation.previousTargets.Count() == firstState->chains.At(1)->bones.Count() + 1u;
+    const bool compatibleContactStillSet = firstState && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == firstState->contactLinks.At(0).secondBone;
+    gk::Vec3 firstRootBefore{};
+    gk::Vec3 secondRootBefore{};
+    gk::Vec3 firstRootAfter{};
+    gk::Vec3 secondRootAfter{};
+    const bool rootsBeforeUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootBefore) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootBefore) == 0;
+    const int compatibleCombinedUpdate = distantColliderResult == 0 ? gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0) : -1;
+    firstState = ReadState(firstInstance);
+    const bool rootsAfterUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootAfter) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootAfter) == 0;
+    const bool combinedUpdatePreservesRoots = initialTargetsAreValid && compatibleContactStillSet && rootsBeforeUpdate && compatibleCombinedUpdate == 0 && rootsAfterUpdate && NearVector(firstRootBefore, firstRootAfter) && NearVector(secondRootBefore, secondRootAfter);
+    if (!combinedUpdatePreservesRoots)
+    {
+        fprintf(stderr, "weighted/contact-link update details: collider=%d; validTargets=%d; sameBoneLink=%d; chains=%u; prev=(%u,%u); points=(%u,%u); rootsBefore=%d; update=%d; rootsAfter=%d; root1=(%.9g,%.9g,%.9g)->(%.9g,%.9g,%.9g); root2=(%.9g,%.9g,%.9g)->(%.9g,%.9g,%.9g); error=%s\n", distantColliderResult, initialTargetsAreValid ? 1 : 0, compatibleContactStillSet ? 1 : 0, firstState ? firstState->chains.Count() : 0u, firstState && firstState->chains.Count() > 0 ? firstState->chains.At(0)->simulation.previousTargets.Count() : 0u, firstState && firstState->chains.Count() > 1 ? firstState->chains.At(1)->simulation.previousTargets.Count() : 0u, firstState && firstState->chains.Count() > 0 ? firstState->chains.At(0)->simulation.points.Count() : 0u, firstState && firstState->chains.Count() > 1 ? firstState->chains.At(1)->simulation.points.Count() : 0u, rootsBeforeUpdate ? 1 : 0, compatibleCombinedUpdate, rootsAfterUpdate ? 1 : 0, firstRootBefore.x, firstRootBefore.y, firstRootBefore.z, firstRootAfter.x, firstRootAfter.y, firstRootAfter.z, secondRootBefore.x, secondRootBefore.y, secondRootBefore.z, secondRootAfter.x, secondRootAfter.y, secondRootAfter.z, gk::GetLastErrorMessage());
+    }
+    passed = Checkpoint("weighted points coexist with the same-bone contact link during update", combinedUpdatePreservesRoots) && passed;
+    const int resetCombinedUpdate = gk::ResetModelSecondaryMotion(firstInstance);
+    const int clearSetupContactLink = gk::SetModelSecondaryMotionContactLinks(firstInstance, nullptr, 0, 19);
+    passed = Checkpoint("reset and compatible contact-link clear prepare the isolated update", resetCombinedUpdate == 0 && clearSetupContactLink == 0) && passed;
+    firstState = ReadState(firstInstance);
+    const bool isolatedTargetsAreValid = firstState && firstState->chains.Count() == 2 && firstState->chains.At(0)->simulation.points.Count() == firstState->chains.At(0)->simulation.previousTargets.Count() && firstState->chains.At(1)->simulation.points.Count() == firstState->chains.At(1)->simulation.previousTargets.Count();
+    const bool isolatedRootsBeforeUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootBefore) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootBefore) == 0;
+    const int firstWeightedUpdate = distantColliderResult == 0 && clearSetupContactLink == 0 ? gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0) : -1;
+    firstState = ReadState(firstInstance);
+    const bool isolatedRootsAfterUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootAfter) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootAfter) == 0;
+    const bool weightedOnlyUpdatePreservesRoots = isolatedTargetsAreValid && isolatedRootsBeforeUpdate && firstWeightedUpdate == 0 && isolatedRootsAfterUpdate && NearVector(firstRootBefore, firstRootAfter) && NearVector(secondRootBefore, secondRootAfter);
+    passed = Checkpoint("weighted-only update preserves valid initial targets and root pose", weightedOnlyUpdatePreservesRoots) && passed;
+    passed = Checkpoint("weighted-only update reset succeeds", gk::ResetModelSecondaryMotion(firstInstance) == 0) && passed;
+
+    firstState = ReadState(firstInstance);
+    gk::model::animation::FModelPose weightedBasePose;
+    gk::Array<float> weightedBaseMatrices;
+    gk::String weightedError;
+    const bool weightedBaseReady = firstState && gk::model::animation::InitializeModelPose(source->skeleton, weightedBasePose, weightedError) && gk::model::animation::EvaluateModelPose(source->skeleton, weightedBasePose, weightedBaseMatrices, weightedError);
+    gk::Array<gk::model::animation::FModelSecondaryMotionPoint> weightedPointSnapshot;
+    uint32_t weightedPointCount = 0;
+    if (firstState)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < firstState->chains.Count(); ++chainIndex)
+        {
+            weightedPointCount += firstState->chains.At(chainIndex)->simulation.points.Count();
+        }
+    }
+    bool weightedSnapshotReady = weightedPointSnapshot.Reserve(weightedPointCount);
+    if (weightedSnapshotReady && firstState)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < firstState->chains.Count(); ++chainIndex)
+        {
+            const auto& simulationPoints = firstState->chains.At(chainIndex)->simulation.points;
+            weightedSnapshotReady = weightedPointSnapshot.AppendRange(simulationPoints.Data(), simulationPoints.Count()) && weightedSnapshotReady;
+        }
+    }
+    bool invalidVelocityAtomic = weightedBaseReady && weightedSnapshotReady && firstState && firstState->chains.Count() > 0u && firstState->chains.At(0)->simulation.points.Count() > 1u;
+    if (invalidVelocityAtomic)
+    {
+        auto& candidatePoint = firstState->chains.At(0)->simulation.points.At(1);
+        const gk::Vec3 savedVelocity = candidatePoint.velocity;
+        candidatePoint.velocity.x = std::numeric_limits<float>::quiet_NaN();
+        weightedPointSnapshot.At(1) = candidatePoint;
+        uint32_t snapshotOffset = 0;
+        gk::model::FModelSecondaryMotionState emptyPrevious;
+        const bool acceptedInvalidVelocity = gk::model::ConstrainSecondaryMotionContactPoints(*firstState, emptyPrevious, source->skeleton, weightedBaseMatrices, nullptr, 0, 0.0, weightedError);
+        bool unchanged = !acceptedInvalidVelocity && !weightedError.Empty();
+        for (uint32_t chainIndex = 0; chainIndex < firstState->chains.Count(); ++chainIndex)
+        {
+            const auto& simulationPoints = firstState->chains.At(chainIndex)->simulation.points;
+            const uint32_t count = simulationPoints.Count();
+            unchanged = unchanged && memcmp(simulationPoints.Data(), weightedPointSnapshot.Data() + snapshotOffset, static_cast<size_t>(count) * sizeof(gk::model::animation::FModelSecondaryMotionPoint)) == 0;
+            snapshotOffset += count;
+        }
+        if (!unchanged)
+        {
+            fprintf(stderr, "weighted helper invalid-velocity details: accepted=%d error=%s; candidateVelocity=(%g,%g,%g)\n", acceptedInvalidVelocity ? 1 : 0, weightedError.CStr(), candidatePoint.velocity.x, candidatePoint.velocity.y, candidatePoint.velocity.z);
+        }
+        candidatePoint.velocity = savedVelocity;
+        invalidVelocityAtomic = unchanged;
+    }
+    passed = Checkpoint("direct weighted helper rejects nonfinite velocity atomically with no previous state and zero delta", invalidVelocityAtomic) && passed;
+
+    const gk::FModelSecondaryMotionContactAnchor validAnchors[2] = { { 5, { 0.01f, 0.02f, 0.03f }, 0.500002f }, { 6, { -0.04f, 0.05f, -0.06f }, 0.500002f } };
+    const gk::FModelSecondaryMotionContactPoint validPoint = { 0, 2, 0.025f };
+    const auto RejectWithoutReplacing = [&](const char* stage, const gk::FModelSecondaryMotionContactPoint* candidatePoints, uint32_t pointCount, const gk::FModelSecondaryMotionContactAnchor* candidateAnchors, uint32_t anchorCount, uint32_t iterations)
+    {
+        const auto* before = ReadState(firstInstance);
+        const auto* beforePoints = before ? before->contactPoints.Data() : nullptr;
+        const auto* beforeAnchors = before ? before->contactAnchors.Data() : nullptr;
+        const bool rejected = gk::SetModelSecondaryMotionContactPoints(firstInstance, candidatePoints, pointCount, candidateAnchors, anchorCount, iterations) == -1;
+        const auto* after = ReadState(firstInstance);
+        const bool intact = rejected && after == before && after && after->contactPoints.Count() == 1 && after->contactAnchors.Count() == 2 && after->contactPoints.Data() == beforePoints && after->contactAnchors.Data() == beforeAnchors && after->contactPoints.At(0).firstAnchor == validPoint.firstAnchor && after->contactPoints.At(0).anchorCount == validPoint.anchorCount && after->contactPoints.At(0).radius == validPoint.radius && after->contactAnchors.At(0).bone == validAnchors[0].bone && after->contactAnchors.At(0).offset.x == validAnchors[0].offset.x && after->contactAnchors.At(0).offset.y == validAnchors[0].offset.y && after->contactAnchors.At(0).offset.z == validAnchors[0].offset.z && after->contactAnchors.At(0).weight == validAnchors[0].weight && after->contactAnchors.At(1).bone == validAnchors[1].bone && after->contactAnchors.At(1).offset.x == validAnchors[1].offset.x && after->contactAnchors.At(1).offset.y == validAnchors[1].offset.y && after->contactAnchors.At(1).offset.z == validAnchors[1].offset.z && after->contactAnchors.At(1).weight == validAnchors[1].weight && after->linkIterations == 19;
+        return Checkpoint(stage, intact);
+    };
+    gk::FModelSecondaryMotionContactPoint invalidPoint = validPoint;
+    invalidPoint.anchorCount = 0;
+    const gk::FModelSecondaryMotionContactPoint badRange = { 1, 2, 0.025f };
+    const gk::FModelSecondaryMotionContactPoint badRadius = { 0, 2, -0.01f };
+    gk::FModelSecondaryMotionContactPoint tooManyPoints[1025]{};
+    for (uint32_t index = 0; index < 1025; ++index)
+    {
+        tooManyPoints[index] = validPoint;
+    }
+    gk::FModelSecondaryMotionContactAnchor tooManyAnchors[65]{};
+    for (uint32_t index = 0; index < 65; ++index)
+    {
+        tooManyAnchors[index] = { 0, {}, 1.0f / 65.0f };
+    }
+    gk::FModelSecondaryMotionContactAnchor invalidAnchors[2] = { validAnchors[0], validAnchors[1] };
+    invalidAnchors[0].bone = 99;
+    const gk::FModelSecondaryMotionContactAnchor nonregisteredDescendant[2] = { { 2, {}, 0.5f }, validAnchors[1] };
+    const gk::FModelSecondaryMotionContactAnchor invalidWeight[2] = { validAnchors[0], { 4, {}, 0.0f } };
+    const gk::FModelSecondaryMotionContactAnchor invalidSum[2] = { validAnchors[0], { 4, {}, 0.6f } };
+    const gk::FModelSecondaryMotionContactAnchor nanOffset[2] = { { 5, { std::numeric_limits<float>::quiet_NaN(), 0.0f, 0.0f }, 0.5f }, validAnchors[1] };
+    const gk::FModelSecondaryMotionContactPoint tooManyAnchorsPoint = { 0, 65, 0.025f };
+    const gk::FModelSecondaryMotionContactAnchor duplicateRangeAnchors[2] = { { 5, {}, 0.5f }, { 6, {}, 0.5f } };
+    const gk::FModelSecondaryMotionContactPoint gapRangePoint = { 1, 1, 0.025f };
+    const gk::FModelSecondaryMotionContactAnchor gapRangeAnchors[2] = { { 5, {}, 1.0f }, { 6, {}, 1.0f } };
+    const gk::FModelSecondaryMotionContactPoint overlappingRangePoints[2] = { { 0, 2, 0.025f }, { 0, 2, 0.025f } };
+    passed = RejectWithoutReplacing("null point pointer is atomic", nullptr, 1, validAnchors, 2, 19) && RejectWithoutReplacing("null anchor pointer is atomic", &validPoint, 1, nullptr, 2, 19) && RejectWithoutReplacing("point and anchor counts must be paired", &validPoint, 1, validAnchors, 0, 19) && RejectWithoutReplacing("empty point array cannot retain anchors", nullptr, 0, validAnchors, 2, 19) && RejectWithoutReplacing("point anchor count must be nonzero", &invalidPoint, 1, validAnchors, 2, 19) && RejectWithoutReplacing("anchor range must fit the flat array", &badRange, 1, validAnchors, 2, 19) && RejectWithoutReplacing("unused anchor gap is rejected atomically", &gapRangePoint, 1, gapRangeAnchors, 2, 19) && RejectWithoutReplacing("overlapping anchor ranges are rejected atomically", overlappingRangePoints, 2, duplicateRangeAnchors, 2, 19) && RejectWithoutReplacing("point radius must be nonnegative", &badRadius, 1, validAnchors, 2, 19) && RejectWithoutReplacing("excess point count is atomic", tooManyPoints, 1025, validAnchors, 2, 19) && RejectWithoutReplacing("excess flat anchor count is atomic", &validPoint, 1, validAnchors, 16385, 19) && RejectWithoutReplacing("one point cannot use more than 64 anchors", &tooManyAnchorsPoint, 1, tooManyAnchors, 65, 19) && RejectWithoutReplacing("invalid bone is atomic", &validPoint, 1, invalidAnchors, 2, 19) && RejectWithoutReplacing("unregistered chain descendant is atomic", &validPoint, 1, nonregisteredDescendant, 2, 19) && RejectWithoutReplacing("weight must be positive", &validPoint, 1, invalidWeight, 2, 19) && RejectWithoutReplacing("weights must sum to one", &validPoint, 1, invalidSum, 2, 19) && RejectWithoutReplacing("offset must be finite", &validPoint, 1, nanOffset, 2, 19) && RejectWithoutReplacing("iteration count must be in range", &validPoint, 1, validAnchors, 2, 0) && RejectWithoutReplacing("upper iteration count must be in range", &validPoint, 1, validAnchors, 2, 33) && passed;
+
+    firstState = ReadState(firstInstance);
+    const auto* allocationOwner = firstState;
+    const auto* allocationAnchors = firstState ? firstState->contactAnchors.Data() : nullptr;
+    gk::SetAllocationFailureAfterForTesting(0);
+    const int allocationResult = gk::SetModelSecondaryMotionContactPoints(firstInstance, &validPoint, 1, validAnchors, 2, 20);
+    gk::ResetAllocationFailureForTesting();
+    firstState = ReadState(firstInstance);
+    const bool allocationAtomic = allocationResult == -1 && firstState == allocationOwner && firstState && firstState->contactAnchors.Data() == allocationAnchors && firstState->contactAnchors.Count() == 2 && firstState->contactPoints.At(0).radius == 0.025f && firstState->linkIterations == 19;
+    passed = Checkpoint("allocation failure preserves the old arrays", allocationAtomic) && passed;
+
+    const gk::FModelSecondaryMotionLink link{ 6, 4, 0.01f };
+    const gk::FModelSecondaryMotionDistanceConstraint distance{ 6, 4, 1.0f, 0.001f };
+    firstState = ReadState(firstInstance);
+    const auto* conflictOwner = firstState;
+    passed = Checkpoint("secondary links conflict atomically", gk::SetModelSecondaryMotionLinks(firstInstance, &link, 1, 10) == -1 && ReadState(firstInstance) == conflictOwner) && passed;
+    passed = Checkpoint("distance constraints conflict atomically", gk::SetModelSecondaryMotionDistanceConstraints(firstInstance, &distance, 1, 10) == -1 && ReadState(firstInstance) == conflictOwner) && passed;
+    passed = Checkpoint("cross-chain contact links conflict atomically", gk::SetModelSecondaryMotionContactLinks(firstInstance, &crossChainContact, 1, 10) == -1 && ReadState(firstInstance) == conflictOwner) && passed;
+    passed = Checkpoint("same-bone contact links coexist", gk::SetModelSecondaryMotionContactLinks(firstInstance, &sameBoneContact, 1, 19) == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("same-bone link and weighted arrays are retained", firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2 && firstState->contactLinks.Count() == 1 && firstState->contactLinks.At(0).firstBone == firstState->contactLinks.At(0).secondBone) && passed;
+
+    const int clearCompatibleLink = gk::SetModelSecondaryMotionContactLinks(firstInstance, nullptr, 0, 19);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("compatible contact link can be cleared independently", clearCompatibleLink == 0 && firstState && firstState->contactLinks.Count() == 0 && firstState->contactPoints.Count() == 1) && passed;
+    const uint32_t shortenedChain[2] = { 1, 5 };
+    firstState = ReadState(firstInstance);
+    const auto* beforeChainChange = firstState;
+    passed = Checkpoint("chain replacement cannot strand a weighted anchor", gk::SetModelSecondaryMotionChain(firstInstance, shortenedChain, 2, settings) == -1 && ReadState(firstInstance) == beforeChainChange) && passed;
+    const int bodyReplaceResult = gk::SetModelSecondaryMotionColliders(firstInstance, nullptr, 0, 0.0f);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("body replacement preserves weighted settings", bodyReplaceResult == 0 && firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2) && passed;
+    passed = Checkpoint("reset preserves weighted settings", gk::ResetModelSecondaryMotion(firstInstance) == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("chain re-registration preserves valid weighted settings", gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings) == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("re-registration retains copied point and anchors", firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2 && firstState->contactAnchors.At(0).bone == 5 && firstState->linkIterations == 19) && passed;
+
+    gk::FModelSecondaryMotionContactAnchor rootAndFixed[2] = { { 1, {}, 0.5f }, { 0, {}, 0.5f } };
+    const gk::FModelSecondaryMotionContactPoint fixedBlendPoint = { 0, 2, 0.01f };
+    passed = Checkpoint("registered root and fixed skeleton bone are accepted", gk::SetModelSecondaryMotionContactPoints(firstInstance, &fixedBlendPoint, 1, rootAndFixed, 2, 9) == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("new descriptors replace the old arrays", firstState && firstState->contactAnchors.Count() == 2 && firstState->contactAnchors.At(0).bone == 1 && firstState->contactAnchors.At(1).bone == 0 && firstState->linkIterations == 9) && passed;
+
+    const int secondPoints = gk::SetModelSecondaryMotionContactPoints(secondInstance, &validPoint, 1, validAnchors, 2, 7);
+    auto* secondState = ReadState(secondInstance);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("instances own independent weighted arrays", secondPoints == 0 && secondState && secondState->contactPoints.Count() == 1 && secondState->contactAnchors.At(0).bone == 5 && firstState && firstState->contactAnchors.At(0).bone == 1) && passed;
+    passed = Checkpoint("count zero clears both flat arrays", gk::SetModelSecondaryMotionContactPoints(firstInstance, nullptr, 0, nullptr, 0, 15) == 0) && passed;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("clearing points keeps chains and other settings", firstState && firstState->chains.Count() == 2 && firstState->contactPoints.Count() == 0 && firstState->contactAnchors.Count() == 0 && firstState->contactLinks.Count() == 0 && firstState->linkIterations == 15) && passed;
+    passed = gk::DeleteModel(secondInstance) == 0 && passed;
+    passed = gk::ClearModelSecondaryMotion(firstInstance) == 0 && ReadState(firstInstance) == nullptr && passed;
+    passed = gk::DeleteModel(firstInstance) == 0 && gk::DeleteModel(model) == 0 && passed;
+    if (!passed)
+    {
+        fprintf(stderr, "secondary weighted contact public lifecycle contract failed: %s\n", gk::GetLastErrorMessage());
+    }
+    return passed;
+}
+
+/**
+ * 接触候補が停滞したとき、前回の鎖方向を現在のrootと骨長へ移して再試行する。
+ */
+static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
+{
+    gk::model::animation::FModelSkeleton skeleton;
+    const int32_t parents[5] = { -1, 0, 1, 0, 3 };
+    gk::model::animation::FModelBoneTransform rest[5]{};
+    rest[1].position[0] = 0.2f;
+    rest[2].position[0] = 1.0f;
+    rest[3].position[0] = 0.2f;
+    rest[4].position[0] = -1.0f;
+    gk::String error;
+    if (!skeleton.parents.AppendRange(parents, 5) || !skeleton.restLocalTransforms.AppendRange(rest, 5))
+    {
+        return false;
+    }
+    gk::model::animation::FModelPose pose;
+    gk::Array<float> baseMatrices;
+    if (!gk::model::animation::InitializeModelPose(skeleton, pose, error) || !gk::model::animation::EvaluateModelPose(skeleton, pose, baseMatrices, error))
+    {
+        fprintf(stderr, "weighted warm-start skeleton setup failed: %s\n", error.CStr());
+        return false;
+    }
+
+    gk::model::FModelSecondaryMotionState candidate;
+    gk::model::FModelSecondaryMotionState previous;
+    const uint32_t chainBones[2][2] = { { 1, 2 }, { 3, 4 } };
+    const gk::Vec3 currentTargets[2][3] = { { { 0.2f, 0.0f, 0.0f }, { 1.2f, 0.0f, 0.0f }, { 1.3f, 0.0f, 0.0f } }, { { 0.2f, 0.0f, 0.0f }, { -0.8f, 0.0f, 0.0f }, { -0.9f, 0.0f, 0.0f } } };
+    const gk::Vec3 previousTargets[2][3] = { { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 1.1f, 0.0f, 0.0f } }, { { 0.0f, 0.0f, 0.0f }, { -1.0f, 0.0f, 0.0f }, { -1.1f, 0.0f, 0.0f } } };
+    bool chainsReady = true;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        auto* currentChain = new gk::model::FModelSecondaryMotionChain;
+        auto* previousChain = new gk::model::FModelSecondaryMotionChain;
+        currentChain->settings.maxAngleDegrees = 90.0f;
+        currentChain->settings.teleportDistance = 10.0f;
+        currentChain->settings.endOffset = { 0.1f, 0.0f, 0.0f };
+        previousChain->settings = currentChain->settings;
+        gk::model::animation::FModelSecondaryMotionPoint currentPoints[3]{};
+        gk::model::animation::FModelSecondaryMotionPoint previousPoints[3]{};
+        for (uint32_t pointIndex = 0; pointIndex < 3u; ++pointIndex)
+        {
+            currentPoints[pointIndex].position = currentTargets[chainIndex][pointIndex];
+            previousPoints[pointIndex].position = pointIndex == 0u ? previousTargets[chainIndex][pointIndex] : gk::Vec3{ 0.0f, 0.0f, pointIndex == 1u ? 0.8f : 1.3f };
+        }
+        chainsReady = currentChain->bones.AppendRange(chainBones[chainIndex], 2) && currentChain->simulation.previousTargets.AppendRange(currentTargets[chainIndex], 3) && currentChain->simulation.points.AppendRange(currentPoints, 3) && previousChain->bones.AppendRange(chainBones[chainIndex], 2) && previousChain->simulation.previousTargets.AppendRange(previousTargets[chainIndex], 3) && previousChain->simulation.points.AppendRange(previousPoints, 3) && candidate.chains.Append(currentChain) && previous.chains.Append(previousChain) && chainsReady;
+        if (!chainsReady)
+        {
+            if (candidate.chains.Count() <= chainIndex)
+            {
+                delete currentChain;
+            }
+            if (previous.chains.Count() <= chainIndex)
+            {
+                delete previousChain;
+            }
+            return false;
+        }
+    }
+    candidate.linkIterations = 1;
+    const gk::FModelSecondaryMotionContactPoint point = { 0, 2, 0.0f };
+    const gk::FModelSecondaryMotionContactAnchor anchors[2] = { { 2, {}, 0.5f }, { 4, {}, 0.5f } };
+    const gk::model::animation::FModelSecondaryMotionCollisionShape body = { { 0.2f, 0.0f, 0.0f }, { 0.2f, 0.0f, 0.0f }, 0.99f };
+    if (!candidate.contactPoints.Append(point) || !candidate.contactAnchors.AppendRange(anchors, 2))
+    {
+        return false;
+    }
+
+    gk::model::animation::FModelSecondaryMotionPoint beforePrimary[6]{};
+    uint32_t snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        memcpy(beforePrimary + snapshotOffset, points.Data(), sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
+        snapshotOffset += points.Count();
+    }
+    gk::model::FModelSecondaryMotionState uninitializedPrevious;
+    const bool primaryAccepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, uninitializedPrevious, skeleton, baseMatrices, &body, 1, 0.0, error);
+    bool primaryAtomic = !primaryAccepted && strcmp(error.CStr(), "secondary weighted contacts could not preserve body contact and chain constraints together") == 0;
+    snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        primaryAtomic = primaryAtomic && memcmp(points.Data(), beforePrimary + snapshotOffset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count()) == 0;
+        snapshotOffset += points.Count();
+    }
+    if (!primaryAtomic)
+    {
+        fprintf(stderr, "weighted warm-start fixture did not produce an atomic primary no-candidate result: accepted=%d error=%s\n", primaryAccepted ? 1 : 0, error.CStr());
+        return false;
+    }
+    if (!gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error))
+    {
+        fprintf(stderr, "weighted warm-start retry failed: %s\n", error.CStr());
+        return false;
+    }
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        const auto& solved = candidate.chains.At(chainIndex)->simulation.points;
+        if (solved.Count() != 3u || fabs(solved.At(0).position.x - 0.2f) > 1.0e-6f || fabs(solved.At(0).position.y) > 1.0e-6f || fabs(solved.At(0).position.z) > 1.0e-6f)
+        {
+            return false;
+        }
+        for (uint32_t segment = 0; segment < 2u; ++segment)
+        {
+            const auto& parent = solved.At(segment).position;
+            const auto& child = solved.At(segment + 1u).position;
+            const double length = sqrt((child.x - parent.x) * (child.x - parent.x) + (child.y - parent.y) * (child.y - parent.y) + (child.z - parent.z) * (child.z - parent.z));
+            const double referenceX = currentTargets[chainIndex][segment + 1u].x - currentTargets[chainIndex][segment].x;
+            const double referenceLength = fabs(referenceX);
+            const double directionDot = (child.x - parent.x) * (referenceX / referenceLength) / length;
+            if (fabs(length - referenceLength) > 0.001 || directionDot < -0.001)
+            {
+                fprintf(stderr, "weighted warm-start chain %u segment %u invalid: length=%.9g dot=%.9g\n", chainIndex, segment, length, directionDot);
+                return false;
+            }
+        }
+    }
+    const auto& firstAnchorPoint = candidate.chains.At(0)->simulation.points.At(1).position;
+    const auto& secondAnchorPoint = candidate.chains.At(1)->simulation.points.At(1).position;
+    const double blendedX = (static_cast<double>(firstAnchorPoint.x) + secondAnchorPoint.x) * 0.5;
+    const double blendedY = (static_cast<double>(firstAnchorPoint.y) + secondAnchorPoint.y) * 0.5;
+    const double blendedZ = (static_cast<double>(firstAnchorPoint.z) + secondAnchorPoint.z) * 0.5;
+    const double weightedDistance = sqrt((blendedX - body.start.x) * (blendedX - body.start.x) + (blendedY - body.start.y) * (blendedY - body.start.y) + (blendedZ - body.start.z) * (blendedZ - body.start.z));
+    if (weightedDistance < body.radius * 0.5)
+    {
+        return false;
+    }
+
+    const auto RestoreCurrentPose = [&]()
+    {
+        uint32_t offset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+        {
+            auto& points = candidate.chains.At(chainIndex)->simulation.points;
+            memcpy(points.Data(), beforePrimary + offset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
+            offset += points.Count();
+        }
+    };
+    const auto IsUnchangedNoRetry = [&](double step, const char* stage)
+    {
+        RestoreCurrentPose();
+        error.Clear();
+        const bool accepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, step, error);
+        bool unchanged = !accepted && strcmp(error.CStr(), "secondary weighted contacts could not preserve body contact and chain constraints together") == 0;
+        uint32_t offset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+        {
+            const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+            unchanged = unchanged && memcmp(points.Data(), beforePrimary + offset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count()) == 0;
+            offset += points.Count();
+        }
+        if (!unchanged)
+        {
+            fprintf(stderr, "weighted warm-start skip contract failed at %s: accepted=%d error=%s\n", stage, accepted ? 1 : 0, error.CStr());
+        }
+        return unchanged;
+    };
+    const bool largeDeltaSkipped = IsUnchangedNoRetry(0.25, "delta threshold");
+    candidate.chains.At(0)->settings.teleportDistance = 0.1f;
+    candidate.chains.At(1)->settings.teleportDistance = 0.1f;
+    const bool teleportSkipped = IsUnchangedNoRetry(0.0, "teleport threshold");
+    candidate.chains.At(0)->settings.teleportDistance = 10.0f;
+    candidate.chains.At(1)->settings.teleportDistance = 10.0f;
+    const uint32_t savedPreviousBone = previous.chains.At(0)->bones.At(1);
+    previous.chains.At(0)->bones.At(1) = 3;
+    RestoreCurrentPose();
+    error.Clear();
+    const bool topologyRejected = !gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error) && !error.Empty() && candidate.chains.At(0)->simulation.points.At(1).position.x == beforePrimary[1].position.x && candidate.chains.At(0)->simulation.points.At(1).position.y == beforePrimary[1].position.y && candidate.chains.At(0)->simulation.points.At(1).position.z == beforePrimary[1].position.z;
+    previous.chains.At(0)->bones.At(1) = savedPreviousBone;
+    return largeDeltaSkipped && teleportSkipped && topologyRejected;
+}
+
+/**
  * body接触後の鎖復元と距離制約が有限反復で両立する既知可行姿勢を確かめる。
  */
 static bool TestSecondaryMotionLinkLocalStallFeasiblePose()
@@ -3996,5 +4480,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

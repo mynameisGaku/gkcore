@@ -1668,3 +1668,38 @@ Native commandはgkcore_model_benchmark.exe <YUMEKA FBX> 1.1166145684 0 .6716787
 ゲーム構築用372ファイルのRuntimeと5sampleをRelease buildしました。install済みSDKは59ファイルで許可リストに一致し、そのSDKをリンクした外部consumerがGPU Init・描画・Present・Shutdownを完了しました。consumerへコピーした全RuntimeファイルのSHA-256もinstall出力と一致しています。mainにはtests、数値fixture、私有asset、モデル固有の接触設定や開発記録を含めません。
 
 記録はjoint-attachment-contract-red-{build,test}.log、joint-attachment-native-contact1-{chain,witness}.json、joint-attachment-native-fixtures.jsonl、joint-attachment-final-cpu-{debug,release}-{build,test}.log、joint-attachment-masked-debug-3000.log、joint-attachment-final-release-3000.log、joint-attachment-realtime-{debug,release}-3000.logとdeltas.txt、joint-attachment-functional-comparison.json、joint-attachment-legacy-regression.json、joint-attachment-skin-comparison.json、joint-attachment-{game,sdk}-manifest.json、joint-attachment-consumer-run.log、joint-attachment-source-audit.jsonです。使用済みexport staging、一時調査sourceとcapture harness、PPMとPython cacheの生成400ファイル、空folder48個を片づけました。削除対象は生成物の絶対path・SHA-256を個別に照合し、調査source本文はjoint-attachment-cleanup.jsonへ保存しました。元asset・現在のbuild・最新PNGと数値記録は保持しています。次は複数boneのskin寄与と衣服幅を考慮し、骨側の接触形状が支えられていない布面の侵入を改善します。
+
+## 複数boneの影響を受ける衣服位置へ接触球を置く
+
+2026-10-13、START18の最深侵入を開始frame51・loop frame87で再現しました。開始のSkirt点31867はSkirt_2_R.002 / Skirt_1.002 / Skirt_2_R.003のweight約0.6158 / 0.3494 / 0.0348だけで、Rootや身体boneの寄与はありません。各骨の変換点と骨球が身体capsuleの外にあっても、その混合位置は右大腿の中心付近へ入り、深さ0.04656になりました。loopの点32086も2本の自由骨だけで同じ不足を再現しました。GPU skin mismatchと固定waistだけを原因とは扱いません。
+
+FModelSecondaryMotionContactAnchorとFModelSecondaryMotionContactPoint、SetModelSecondaryMotionContactPointsを追加しました。骨番号・local offset・実weightをflat配列へコピーし、複数骨の変換位置から接触球の中心を作ります。出力頂点は書き換えません。元の骨長・曲げ角と身体の骨球/線分、既存のsame-bone offset接触と重み付き球を同時に解き、float保存後の全制約と実描画FKを通した候補だけを確定します。Rootの位置は固定、Root上のoffsetは回転で動きます。登録鎖の枝外のboneは固定FK寄与、未登録の鎖子孫は拒否します。候補なし・invalid・numeric・確保失敗を区別し、失敗は前の状態を保持します。
+
+公開APIは最大1024点・全16384寄与、一つの球は1〜64寄与、正の有限weightの合計1±64FLT_EPSILON、有限offset・非負半径、全寄与を重複なく一度参照する範囲を受け付けます。weightを正規化したり残りの骨を捨てたりしません。origin link / distanceと異なるboneを結ぶ従来offset linkは併用拒否です。clone・reset・同root再登録・instance終了のライフサイクルを検査しています。DebugShapesにも同じ描画FKの重み付き球を追加しました。
+
+設定生成は同じbone/weight signatureだけをまとめ、各bone-local代表位置と偏差の重み付き上界を半径にします。骨の線形変換の最大伸長が指定上限以下という条件付きの包絡であり、weightを丸めてグループを統合しません。元1314点から自由なSkirt子骨のweightが99%以上の468点を選び、465球・1365寄与を作りました。除外846点は固定Root/身体などの混合が大きい点です。三角形内部の非貫通や全衣服の包絡を保証するものではありません。Viewerへ--secondary-contact-pointsと設定ファイルの読み込みを追加しました。
+
+REDでは、両boneの点が身体球外でも混合位置だけが内側になる2鎖の契約を使いました。3寄与、親方向を必要とする2節・非平行offset、Root zero-offset、固定寄与のみのclear/不成立、180度反平行の初期方向、並べ替え、NaN/weight/iteration/確保失敗・atomic性を検査します。設定時validatorが未使用/重複rangeを認めて更新時だけ拒否する不一致をREDで捕捉し、共通validatorへ委譲しました。Public headerを単独先頭でincludeしたcompile REDから前方宣言を補いました。positive deltaの実API更新と、same-bone旧contactとの併用も実行しています。
+
+Runtimeで接触球を1点の鎖として検査してしまう誤りを修正し、半幅候補/全幅描画FKをFreeSegmentContacts(center, center)で検査します。複数回のline searchで勾配配列のCountが0になる不具合は半径0.99の独立可行fixtureでREDを得て、毎回全方向数のgradient要素を構築する処理へ修正しました。直接helperへNaN速度・前回状態なし・delta0を渡すREDも保存し、teleportや時間0の分岐を含む有限速度検査を追加しました。
+
+同じ1314点と全8身体形状で、元179球と新465重み付き球をReleaseの開始0秒・3.35秒から各120frameで比較しました。Skirt平均侵入14.950→1.692、15.150→1.800、最大深度0.046561→0.035908、0.048603→0.028556 model unit。Vest_Shirt平均18.050→10.592、14.875→9.350、最大深度0.053237→0.028842、0.049902→0.019126です。Jacketの開始最大深度は0.009331→0.012260へ増えており、全衣服の完全改善とは扱いません。loopのJacket侵入点数は0でした。選別した点数で検査対象を絞らず、全meshの記録を保持しています。Bodyは近似capsuleで、実body mesh内部の深度そのものではありません。
+
+
+全体探索で接触に無関係な髪・尾の鎖まで基準方向へ傾け、補正速度を注入する不足を修正しました。重み付き点が参照する鎖と、初期の身体・既存offset接触が未解決の鎖だけをseedの対象にし、それ以外は現在方向を保持します。接触勾配が0になる対称配置も、鎖ごとの侵入量で対象へ含めます。旧exportのMathを最新テストへリンクした対照では、第三の無関係鎖が動く契約がREDとなり、新しい実装でGREENです。
+
+微小な侵入にも一律20度から補正候補を試す不足を、正規化前の勾配と侵入量から初期角を選ぶ処理へ修正しました。上限0.35 rad・既存の最小line角を保ち、非線形の候補は厳密な侵入量減少でのみ採用します。半径0.001の球へ微小に侵入した独立fixtureは、近くにclear姿勢があり、補正後の移動量0.001未満・root・骨長・角度・接触を要求します。旧export Mathは過大移動でRED、新実装はGREENです。共通勾配とPR+の探索、同一反復内の通常勾配への再開も有限回で行います。
+
+初期化済みで同じ骨列・teleportでない場合に限り、候補なしの後に前回の確定方向から現在root・骨長へ構築した姿勢を再試行します。半径0.99の対向二鎖・反復1の合成fixtureでは、前回状態なしはatomicに失敗し、前回+Z方向を与えると現在root/長さを保って成功します。delta0.25、骨列変更、teleport、NaN/確保失敗は再試行対象から外します。
+
+90度では701/727/728付近の接触競合が残り、小さい骨球0.003だけでも1,016frameで未解決でした。骨球0.038と脚mask240、身体8形状、接触465球の値を保ち、脚上げで折り返せる最大角度180度へ設定した構成はRelease・Debugの固定1/60秒・3,000frameを完走しました。影響範囲を絞った補正のRelease実時間3,000frameも完走しています。個々の鎖のbody予測を常に省く試作は悪化したため採用していません。
+
+Debug実時間の151 deltaを保存し、Releaseでも150番目にHair root39/span4の身体接触が停止することを再現しました。Hair角度90度だけでも同じ停止が残りました。個々のbody予測の幾何学的未解決をbool statusで区別し、この失敗だけ身体なしの予測から後段の全鎖接触へ渡す処理を追加しました。同じ151 deltaはReleaseで完走しました。入力・数値・確保・float保存の失敗は再試行しません。不可行body、NaN delta、負radius、割当失敗のstatus/atomic契約をDebug/Releaseで実行し、テストtargetのGKCORE_TESTINGも有効にしました。全体solverとfloat/FK/body/weightedの検査を通った候補だけを確定します。
+
+現行180度構成の開始0秒・3.35秒をDebug/Release各120frame、脚上げ16.8秒と従来dance構成をRelease各120frame、計720frameでGPU変形を確認しました。位置45,233・法線55,747のreadbackは位置誤差0、法線最大誤差1.78814e-7で、許容値0.0005以内です。固定2区間の全mesh集計と保存画像はDebug/Releaseで一致しました。現行Skirt平均侵入は3.350/2.675、最大深度0.039625/0.028653です。旧179球・90度構成の14.950/15.150、0.046561/0.048603から軽減しました。Vest_Shirt平均13.400/9.808・最大深度0.035777/0.025264、Jacket開始平均0.267・最大深度0.011524で、Jacket開始は旧構成より増加しています。布面全体の完全改善とは扱いません。
+
+Windows 11 Pro x64 build26200、RTX4070 SUPER / driver617.42、Visual Studio2026のv142/MSVC19.29.30159、WindowsSDK10.0.22621.0でnative実行。CPU構成はMSVC19.51/SDK10.0.28000.0でDebug/Release各65/65成功。記録はbuild/native-validation/skin-coverage-complete-*-test.log、skin-coverage-final-quality.json、skin-coverage-prediction-retry-replay-151.log等に保存。main用ソース381ファイルを生成し、ReleaseのRuntimeとゲーム用5サンプルをビルド、install SDK61ファイルの許可リストと公開新header先頭include・setterのリンクを確認しています。
+
+最終の幾何未解決再試行を含むDebug実時間3,000frameも完走しました。deltaを終了時に一括保存し、固定時間再生とは分けて記録しています（skin-coverage-prediction-retry-debug-real-3000.log、同debug-deltas.txt）。source graph・anchor ownership・body status・raw gradient・seed locality・OOM atomicの独立read-onlyレビューも完了し、P1/P2なしです。
+
+最終ソースではDebug/Releaseの固定各3,000frame、Release/Debugの実時間各3,000frame、保存151deltaを完走。Release実時間は95.079FPS、p95 10.628msで、300FPSは未達です。インストール済みSDK61ファイルだけのconsumer GPU smokeは公開APIリンク、Init、Scene/UI描画、Present、Shutdownまでexit0。完了要約はskin-coverage-completion.json。調査用source/probe build・重複export・PPM等の生成物1,874ファイル約87MBをhashと絶対path確認後に整理し、元asset・現在build・最新ログ/数値/PNGを保持しました。
