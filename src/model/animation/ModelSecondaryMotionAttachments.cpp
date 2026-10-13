@@ -114,7 +114,19 @@ bool EvaluateRotatedOffset(const gk::FVector3d& unitBase, const gk::FVector3d& u
     if (!IsFinite(rotatedOffset))
         return false;
 
-    // 行優先ヤコビアンを成分ごとに積算する。
+    // 方向軸ごとの四元数微分を出力軸と子軸の計算から分離する。
+    gk::FVector3d derivativeOffsets[3]{};
+    for (uint32_t directionAxis = 0; directionAxis < 3; ++directionAxis)
+    {
+        gk::FVector3d basis = {};
+        basis.value[directionAxis] = 1.0;
+        const gk::FVector3d derivativeCross = Cross(unitBase, basis);
+        const double derivativeScalar = unitBase.value[directionAxis];
+        const gk::FVector3d derivativeQ = Subtract(Multiply(derivativeCross, 1.0 / denominator), Multiply(quaternionVector, derivativeScalar / (denominator * denominator * denominator)));
+        const double derivativeW = derivativeScalar * scalar / (denominator * denominator * denominator);
+        derivativeOffsets[directionAxis] = Add(Multiply(firstCross, 2.0 * derivativeW), Add(Multiply(Cross(derivativeQ, offset), 2.0 * w), Multiply(Add(Cross(derivativeQ, firstCross), Cross(q, Cross(derivativeQ, offset))), 2.0)));
+    }
+    // 行優先ヤコビアンの各和の順序を保って積算する。
     for (uint32_t outputAxis = 0; outputAxis < 3; ++outputAxis)
     {
         for (uint32_t childAxis = 0; childAxis < 3; ++childAxis)
@@ -122,16 +134,8 @@ bool EvaluateRotatedOffset(const gk::FVector3d& unitBase, const gk::FVector3d& u
             double derivative = 0.0;
             for (uint32_t directionAxis = 0; directionAxis < 3; ++directionAxis)
             {
-                // current方向の基底に対する四元数微分を再構成する。
-                gk::FVector3d basis = {};
-                basis.value[directionAxis] = 1.0;
-                const gk::FVector3d derivativeCross = Cross(unitBase, basis);
-                const double derivativeScalar = unitBase.value[directionAxis];
-                const gk::FVector3d derivativeQ = Subtract(Multiply(derivativeCross, 1.0 / denominator), Multiply(quaternionVector, derivativeScalar / (denominator * denominator * denominator)));
-                const double derivativeW = derivativeScalar * scalar / (denominator * denominator * denominator);
-                const gk::FVector3d derivativeOffset = Add(Multiply(firstCross, 2.0 * derivativeW), Add(Multiply(Cross(derivativeQ, offset), 2.0 * w), Multiply(Add(Cross(derivativeQ, firstCross), Cross(q, Cross(derivativeQ, offset))), 2.0)));
                 const double directionDerivative = ((directionAxis == childAxis ? 1.0 : 0.0) - unitCurrent.value[directionAxis] * unitCurrent.value[childAxis]) / segmentLength;
-                derivative += derivativeOffset.value[outputAxis] * directionDerivative;
+                derivative += derivativeOffsets[directionAxis].value[outputAxis] * directionDerivative;
             }
             jacobian[outputAxis * 3 + childAxis] = derivative;
         }
