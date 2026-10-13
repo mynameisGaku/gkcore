@@ -10,7 +10,7 @@ from pathlib import Path
 from fit_secondary_motion_contact_links import _finite_number, _validate_point_record
 
 
-def fit_contact_points(records: list[dict], max_spread: float, minimum_radius: float, minimum_moving_weight: float = 0.99, maximum_bone_scale: float = 1.0, selected_ids: set[int] | None = None) -> tuple[list[dict], dict]:
+def fit_contact_points(records: list[dict], max_spread: float, minimum_radius: float, minimum_moving_weight: float = 0.99, maximum_bone_scale: float = 1.0, selected_ids: set[int] | None = None, include_root_offsets: bool = False) -> tuple[list[dict], dict]:
     """同じboneと実weightの点だけをまとめ、各boneの偏差の重み付き上界を半径にする。"""
     max_spread = _finite_number(max_spread, "max_spread")
     minimum_radius = _finite_number(minimum_radius, "minimum_radius")
@@ -24,6 +24,7 @@ def fit_contact_points(records: list[dict], max_spread: float, minimum_radius: f
     seen_ids = set()
     excluded = []
     names = {}
+    bone_groups = {}
     for record in records:
         if not isinstance(record, dict):
             raise ValueError("each binding record must be an object")
@@ -37,23 +38,48 @@ def fit_contact_points(records: list[dict], max_spread: float, minimum_radius: f
         total = sum(b["weight"] for b in bindings)
         if abs(total - 1.0) > 1e-6:
             raise ValueError("binding weights must sum to one")
-        moving = sum(b["weight"] for b in bindings if b["group"] == "skirtChild")
+        if include_root_offsets:
+            merged = {}
+            for binding in bindings:
+                if binding["weight"] == 0:
+                    continue
+                bone = binding["bone"]
+                item = merged.setdefault(bone, {"weight": 0.0, "sum": [0.0] * 3, "name": binding["name"], "group": binding["group"]})
+                if item["name"] != binding["name"] or item["group"] != binding["group"]:
+                    raise ValueError("one bone has inconsistent names or groups")
+                item["weight"] += binding["weight"]
+                for axis in range(3):
+                    item["sum"][axis] += binding["localPosition"][axis] * binding["weight"]
+            for bone, item in merged.items():
+                metadata = (item["name"], item["group"])
+                if bone in bone_groups and bone_groups[bone] != metadata:
+                    raise ValueError("one bone has inconsistent names or groups")
+                bone_groups[bone] = metadata
+            moving = sum(item["weight"] for item in merged.values() if item["group"] == "skirtChild" or item["group"] == "skirtRoot" and any(value != 0.0 for value in item["sum"]))
+        else:
+            moving = sum(b["weight"] for b in bindings if b["group"] == "skirtChild")
         if moving < minimum_moving_weight or selected_ids is not None and identifier not in selected_ids:
             excluded.append(identifier)
             continue
         # 同じboneの複数clusterは、実weightを足して局所位置の重心を求める。
-        merged = {}
-        for b in bindings:
-            if b["weight"] == 0:
-                continue
-            bone = b["bone"]
-            if bone in names and names[bone] != b["name"]:
-                raise ValueError("one bone has inconsistent names")
-            names[bone] = b["name"]
-            item = merged.setdefault(bone, {"weight": 0.0, "sum": [0.0] * 3})
-            item["weight"] += b["weight"]
-            for axis in range(3):
-                item["sum"][axis] += b["localPosition"][axis] * b["weight"]
+        if not include_root_offsets:
+            merged = {}
+            for b in bindings:
+                if b["weight"] == 0:
+                    continue
+                bone = b["bone"]
+                if bone in names and names[bone] != b["name"]:
+                    raise ValueError("one bone has inconsistent names")
+                names[bone] = b["name"]
+                item = merged.setdefault(bone, {"weight": 0.0, "sum": [0.0] * 3})
+                item["weight"] += b["weight"]
+                for axis in range(3):
+                    item["sum"][axis] += b["localPosition"][axis] * b["weight"]
+        else:
+            for bone, item in merged.items():
+                if bone in names and names[bone] != item["name"]:
+                    raise ValueError("one bone has inconsistent names")
+                names[bone] = item["name"]
         if not 1 <= len(merged) <= 64:
             raise ValueError("one contact requires one to 64 positive-weight anchors")
         signature = tuple((bone, merged[bone]["weight"]) for bone in sorted(merged))
@@ -77,7 +103,7 @@ def fit_contact_points(records: list[dict], max_spread: float, minimum_radius: f
         points.append({"radius": max(minimum_radius, bound), "observedWeightedBound": bound, "anchors": [{"bone": bone, "name": names[bone], "weight": weight, "offset": centre, "observedSpread": spread} for (bone, weight), centre, spread in zip(signature, centres, spreads)], "positionIds": [row["positionId"] for row in samples]})
     for signature, samples in sorted(groups.items()):
         divide(signature, sorted(samples, key=lambda row: row["positionId"]))
-    return points, {"selectedPoints": sum(len(rows) for rows in groups.values()), "excludedPoints": len(excluded), "excludedPositionIds": sorted(excluded), "contactPoints": len(points), "anchorCount": sum(len(row["anchors"]) for row in points), "maximumBoneScale": maximum_bone_scale, "coverageLimit": "equal bone/weight signatures only; the radius bound requires each bone linear transform to stretch by no more than maximumBoneScale; triangle interiors and unselected samples are not covered"}
+    return points, {"selectedPoints": sum(len(rows) for rows in groups.values()), "excludedPoints": len(excluded), "excludedPositionIds": sorted(excluded), "contactPoints": len(points), "anchorCount": sum(len(row["anchors"]) for row in points), "maximumBoneScale": maximum_bone_scale, "minimumMovingWeight": minimum_moving_weight, "maximumSpread": max_spread, "minimumRadius": minimum_radius, "includeRootOffsets": include_root_offsets, "coverageLimit": "equal bone/weight signatures only; the radius bound requires each bone linear transform to stretch by no more than maximumBoneScale; triangle interiors and unselected samples are not covered"}
 
 
 def main() -> None:
@@ -89,10 +115,11 @@ def main() -> None:
     parser.add_argument("--minimum-moving-weight", type=float, default=0.99)
     parser.add_argument("--maximum-bone-scale", type=float, default=1.00002)
     parser.add_argument("--point-ids", type=Path)
+    parser.add_argument("--include-root-offsets", action="store_true", help="非ゼロのroot局所offsetを移動weightとして扱う")
     args = parser.parse_args()
     try:
         ids = set(json.loads(args.point_ids.read_text(encoding="utf-8-sig"))) if args.point_ids else None
-        points, report = fit_contact_points(json.loads(args.bindings.read_text(encoding="utf-8-sig")), args.max_spread, args.minimum_radius, args.minimum_moving_weight, args.maximum_bone_scale, ids)
+        points, report = fit_contact_points(json.loads(args.bindings.read_text(encoding="utf-8-sig")), args.max_spread, args.minimum_radius, args.minimum_moving_weight, args.maximum_bone_scale, ids, args.include_root_offsets)
         if not points or len(points) > 1024 or report["anchorCount"] > 16384:
             raise ValueError("contact point count is empty or exceeds API limits")
     except (ValueError, OSError, TypeError) as error:

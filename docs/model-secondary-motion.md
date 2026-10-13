@@ -136,6 +136,8 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 複数boneの重みで置く接触球には`--secondary-contact-points <config-file>`を指定します。各行は`半径 | bone名 weight localX localY localZ | ...`です。身体形状と揺れ鎖が必要で、原点間link・距離制約は併用できません。[YUMEKAの接触球設定](../samples/config/yumeka-skinning-contact-points.txt)は、複数のboneから同時に影響される位置も扱います。頂点位置は書き換えず、骨の姿勢で球を身体から離します。
 
+鎖の先頭のboneも、local offsetを持つ接触点には使えます。先頭の位置は固定したまま、子へ向かう方向に合わせてoffsetが回転します。offsetがゼロの先頭寄与は動かず、身体などの固定骨の寄与も元のweightのまま混ぜます。接触点を作るときは、子boneだけでなくこの回転による移動も考慮してください。
+
 骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。これは布面の非貫通や全設定の収束を保証するものではありません。
 
 ```powershell

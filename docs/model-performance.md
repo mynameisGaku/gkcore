@@ -195,3 +195,9 @@ Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.2
 接触の位置補正による人工速度を除き、前回からの物理予測を先に一括接触へ渡しました。START18の検査motionは往復再生です。近い合法姿勢が得られた後も候補を比較し続ける試作は、実時間1,000frameのdelta平均0.160508秒、114回の250ms以上の更新間隔となり、通常表示にも不向きでした。保存後の全制約を満たす候補を縮約し、その最初の成功で探索を終了します。
 
 同じWindows/GPU/toolchain、1280×720、非表示・標準効果・VSyncなし、13鎖・身体8形状・465球、Release実時間600frame/warmup0は31.025FPS、p95 31.645msでした。Draw .443、Present5.007、IK .554、揺れ更新26.152msです。更新内訳の記録を有効にした値で、往復再生と探索基準も変えているため、以前の95.079FPSとの単純な速度比較には使いません。動作は継続しましたが、300FPSは未達です。記録はbuild/native-validation/skirt-stability-bounded-search-realtime-600.logです。
+
+## 先頭の骨の回転による衣服接触を加えた構成
+
+START18は529球です。既存465球を保ち、先頭のboneから影響されるスカート位置64球を追加しました。骨原点だけでは支えられなかった腰周りを扱い、開始・折り返しの各120frameで検査したスカート440点の侵入は0になりました。これは身体capsuleへの近似判定で、シャツやジャケットの侵入と全衣服面の保証は残ります。
+
+同じWindows/GPU/toolchain、1280×720、非表示・標準効果・VSyncなし、13鎖・身体8形状、Release実時間600frame/warmup0は16.637FPS、p95 41.451msでした。Draw .646、Present6.436、IK .857、揺れ更新52.076msです。固定1/60秒3,000frameと実時間600frameは完走しましたが、接触を増やした構成の負担は残っています。300FPSは未達です。記録はbuild/native-validation/root-coverage-realtime-600.logです。

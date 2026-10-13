@@ -1721,3 +1721,17 @@ clear後も候補を比較し続ける試作は実時間1,000frameを完走し�
 Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29・SDK10.0.22621.0で、往復再生の開始0/2.1秒をDebug/Release各120frame、計480frame実行しました。GPU位置45,233・法線55,747の比較は位置誤差0、法線最大1.78814e-7、許容0.0005以内です。全mesh記録と各区間の保存画像はDebug/Releaseで一致しました。Skirt平均侵入は5.517/2.992、最大深度0.039969/0.018488で、布面侵入は残ります。body capsuleとの近似距離であり、実身体mesh面の完全な非貫通ではありません。
 
 最終CPU構成はMSVC19.51/SDK10.0.28000.0のDebug/Release各65/65成功です。main用383ファイルを生成し、Runtimeとゲーム用5サンプルをビルド、install SDK61ファイルを検査し、同じDLLを使うconsumerのGPU描画もexit0でした。exampleの新しいpaired sourceがexportから漏れる反例を捕捉し、CMakeとincludeが参照する配布依存物の検査を追加しました。独立read-onlyレビューとBOM/CRLF/noSTL監査も実施しています。数値・画像・コマンドの記録はbuild/native-validation/skirt-stability-*、使用済み調査sourceと片づけ対象はskirt-stability-cleanup.jsonへ保存します。
+
+## 先頭の骨に影響されるスカート位置も接触で支える
+
+2026-10-13、開始区間の最深侵入点32259はスカートmesh内410番で、先頭の骨の寄与0.880453、子骨0、固定した腰0.119547でした。骨原点の球は点から0.0661/0.0811離れて接触せず、衣服の混合位置が腰sphereへ0.039969入り込んでいました。既存fitterは子骨の寄与だけを数えるため、この点を接触から外していました。登録鎖の先頭位置は固定でも、bone-local offsetは子方向とともに回転するRuntimeの既存機能を使います。Runtimeの位置更新や元のFBX・skin weightは変更していません。
+
+fit_contact_pointsにinclude_root_offsets=FalseとCLI --include-root-offsetsを追加しました。opt-inでは同じboneの正weightを集約してから、非ゼロのroot offsetのweightを子骨のweightへ加えます。重心offsetが打ち消されてゼロになるrootは数えず、固定骨の寄与も元weightのまま出力します。同bone/weight signatureだけをまとめ、偏差半径の上界を保ちます。root/child/fixed混合の独立回転、ゼロ/相殺offset、group/name矛盾、順序反転、ID選択とCLIの契約を先行追加し、旧実装でRED、現行9件GREENを確認しました。fit報告には移動寄与閾値・最大偏差・最小半径も記録します。
+
+native bind出力へmesh名・node番号・segment番号・mesh内位置IDを加え、実出力に識別子がないREDから修正しました。新dumpはJacket443、Skirt440、Vest431の計1,314点と一意IDを検査しています。Skirt全440点と旧Vest101点のIDを指定し、移動寄与0.5以上でSkirt431+Vest101の532点を529球・1,574 anchorsへまとめました。旧465行は半径・weight・offsetまで全件同一で、新しくSkirt64球だけを追加しています。root主体0.88、隣のroot0.003、固定腰0.117のRuntime Math回帰も、root固定・offset回転・骨長・角度・float保存後の接触を確認しました。
+
+Win11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621.0で、往復再生の開始0/2.1秒から各120frameをDebug/Releaseで実行しました。計480frameのGPU位置45,233・法線55,747は、位置誤差0、法線最大1.78814e-7で、全mesh記録と保存画像がDebug/Releaseで一致しました。Skirt440点は両区間の全frameで侵入0です。旧設定の平均5.517/2.992点、最大深さ0.039969/0.018488から軽減しました。開始区間のVestも平均23.083→6.300点、最大0.038997→0.013193へ減りました。折り返し区間のVest平均10.258・最大0.021560、Jacket平均0.933・最大0.018619は残ります。身体capsuleとの距離であり、実身体mesh面・三角形内部・全衣服の非貫通を保証しません。
+
+同じframe10の高解像度画像で、腰の露出と衣服の入り込みが軽減したことを確認しました。600frameの身体相対最大変化は29.617度、45度超0回で、旧29.396度/0回から暴れは再発していません。Release固定1/60秒3,000frameと実時間600frameを完走しました。実時間は16.637FPS、p95 41.451ms、揺れ更新52.076msで、300FPSは未達です。接触を追加した品質変更であり、速度改善とは扱いません。MSVC19.51/SDK10.0.28000.0の関連CPU3 targetはDebug/Releaseとも成功し、Root・fitter・実データの独立read-onlyレビューでもblocking issueはありません。
+
+記録はbuild/native-validation/root-coverage-*へ保存しています。元asset・現在のbuild・最新数値とPNGを保持し、使用済みprobe・生成config・比較用PPM・調査script・重複exportはroot-coverage-cleanup.jsonのhashと絶対pathを確認して整理します。次はシャツやジャケットの取りこぼしと、接触が増えた構成の負担を扱います。

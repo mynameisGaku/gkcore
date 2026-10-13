@@ -833,7 +833,22 @@ bool EmitSkinBindingDump(uint32_t frame, const gk::model::AModelAnimationSource&
             return false;
         }
         const auto& bindPosition = geometry.positions.At(positionId);
-        fprintf(stderr, "{\"type\":\"gkcore_skin_binding_point\",\"frame\":%u,\"positionId\":%u,\"bindPosition\":[%.17g,%.17g,%.17g],\"bindings\":[", frame, positionId, bindPosition.value[0], bindPosition.value[1], bindPosition.value[2]);
+        // 衣服ごとに対象を選べるよう、位置IDが属する描画meshも記録する。
+        uint32_t segmentIndex = 0;
+        if (!FindPointSegment(geometry, positionId, segmentIndex))
+        {
+            error.Assign("binding dump point does not belong to one mesh segment");
+            return false;
+        }
+        const auto& segment = geometry.segments.At(segmentIndex);
+        if (segment.nodeIndex >= source.Skeleton().parents.Count() || !source.BoneName(segment.nodeIndex))
+        {
+            error.Assign("binding dump mesh node is invalid");
+            return false;
+        }
+        fprintf(stderr, "{\"type\":\"gkcore_skin_binding_point\",\"frame\":%u,\"positionId\":%u,\"segmentIndex\":%u,\"meshNode\":%u,\"meshName\":", frame, positionId, segmentIndex, segment.nodeIndex);
+        EmitJsonString(source.BoneName(segment.nodeIndex));
+        fprintf(stderr, ",\"meshPositionId\":%u,\"bindPosition\":[%.17g,%.17g,%.17g],\"bindings\":[", positionId - segment.firstPosition, bindPosition.value[0], bindPosition.value[1], bindPosition.value[2]);
         for (uint32_t index = 0; index < bindings.Count(); ++index)
         {
             if (index > 0)

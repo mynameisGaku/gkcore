@@ -569,6 +569,117 @@ bool TestRootZeroOffsetAndFixedOnlyContacts()
     return true;
 }
 
+/**
+ * 先頭の骨の回転が主な混合点を、固定した腰の寄与を保ったまま身体から離す。
+ */
+bool TestRootHeavyWeightedOffsetsWithFixedHip()
+{
+    using namespace gk::model::animation;
+    const FModelSecondaryMotionCollisionShape body = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, 0.0f }, 0.08f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&body, 1, prepared, error))
+    {
+        return Fail("could not prepare the root-heavy weighted body sphere");
+    }
+
+    const gk::FVector3d roots[2] = { { { 0.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } } };
+    const gk::FVector3d initial[4] = { roots[0], { { 0.0, 1.0, 0.0 } }, roots[1], { { 0.0, -1.0, 0.0 } } };
+    FSecondaryMotionContactChain chains[2]{};
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+        chains[index].firstPoint = index * 2u;
+        chains[index].firstSegment = index;
+        chains[index].segmentCount = 1;
+        chains[index].cosineLimit = 0.0;
+    }
+    FSecondaryMotionReferenceSegment references[2] = { { { { 0.0, 1.0, 0.0 } }, 1.0 }, { { { 0.0, -1.0, 0.0 } }, 1.0 } };
+    FSecondaryMotionWeightedContactAnchor anchors[3]{};
+    anchors[0].chainIndex = 0;
+    anchors[0].segmentIndex = 0;
+    anchors[0].definition.direction = references[0].direction;
+    anchors[0].definition.offset = { { 0.2, 0.0, 0.0 } };
+    anchors[0].definition.cosineLimit = 0.0;
+    anchors[0].weight = 0.88;
+    anchors[1].chainIndex = 1;
+    anchors[1].segmentIndex = 0;
+    anchors[1].definition.direction = references[1].direction;
+    anchors[1].definition.offset = { { 0.2, 0.0, 0.0 } };
+    anchors[1].definition.cosineLimit = 0.0;
+    anchors[1].weight = 0.003;
+    anchors[2].chainIndex = 0xFFFFFFFFu;
+    anchors[2].constantPosition = { { -1.5, 0.0, 0.0 } };
+    anchors[2].weight = 0.117;
+    const FSecondaryMotionWeightedContactPoint contact = { 0, 3, prepared.Data(), 1 };
+
+    gk::Array<gk::FVector3d> positions;
+    if (!positions.AppendRange(initial, 4))
+    {
+        return Fail("could not allocate root-heavy weighted-contact positions");
+    }
+    const gk::FVector3d initialRootAnchor = EvaluateAnchorPoint(anchors[0], positions);
+    gk::FVector3d initialCenter{};
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        const gk::FVector3d anchorPosition = index == 2 ? anchors[index].constantPosition : EvaluateAnchorPoint(anchors[index], positions);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            initialCenter.value[axis] += anchorPosition.value[axis] * anchors[index].weight;
+        }
+    }
+    if (fabs(anchors[0].weight + anchors[1].weight + anchors[2].weight - 1.0) > 1.0e-12 || Distance(initialCenter, { { 0.0, 0.0, 0.0 } }) >= body.radius)
+    {
+        return Fail("the root-heavy skin blend must start inside the independent body sphere with normalized weights");
+    }
+    if (!ResolvePreparedSecondaryMotionWeightedContacts(chains, 2, references, 2, anchors, 3, &contact, 1, positions, error))
+    {
+        return Fail(error.Empty() ? "the solver rejected a feasible root-heavy offset fixture" : error.CStr());
+    }
+    if (positions.Count() != 4u || Distance(positions.At(0), roots[0]) > 1.0e-12 || Distance(positions.At(2), roots[1]) > 1.0e-12)
+    {
+        return Fail("the root-heavy solve changed a fixed chain root");
+    }
+    for (uint32_t index = 0; index < 2; ++index)
+    {
+        const double length = Distance(positions.At(index * 2u), positions.At(index * 2u + 1u));
+        const double dot = ((positions.At(index * 2u + 1u).value[0] - positions.At(index * 2u).value[0]) * references[index].direction.value[0] + (positions.At(index * 2u + 1u).value[1] - positions.At(index * 2u).value[1]) * references[index].direction.value[1] + (positions.At(index * 2u + 1u).value[2] - positions.At(index * 2u).value[2]) * references[index].direction.value[2]) / length;
+        if (fabs(length - 1.0) > 0.0011 || dot < -0.001)
+        {
+            return Fail("the root-heavy solve changed a bone length or exceeded its direction cone");
+        }
+    }
+    const gk::FVector3d finalRootAnchor = EvaluateAnchorPoint(anchors[0], positions);
+    if (Distance(initialRootAnchor, finalRootAnchor) < 0.01)
+    {
+        return Fail("the dominant root anchor offset did not rotate with its child direction");
+    }
+
+    gk::Array<gk::FVector3d> floatPositions;
+    for (uint32_t index = 0; index < positions.Count(); ++index)
+    {
+        const auto& position = positions.At(index);
+        const gk::FVector3d stored = { { static_cast<float>(position.value[0]), static_cast<float>(position.value[1]), static_cast<float>(position.value[2]) } };
+        if (!floatPositions.Append(stored))
+        {
+            return Fail("could not allocate float-rounded root-heavy positions");
+        }
+    }
+    gk::FVector3d storedCenter{};
+    for (uint32_t index = 0; index < 3; ++index)
+    {
+        const gk::FVector3d anchorPosition = index == 2 ? anchors[index].constantPosition : EvaluateAnchorPoint(anchors[index], floatPositions);
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            storedCenter.value[axis] += anchorPosition.value[axis] * anchors[index].weight;
+        }
+    }
+    if (Distance(storedCenter, { { 0.0, 0.0, 0.0 } }) < prepared.At(0).radius * 0.998)
+    {
+        return Fail("the float-rounded root-heavy skin blend remained inside the body sphere");
+    }
+    return true;
+}
+
 bool TestMultiSegmentWeightedOffsetsUseAncestorRotation()
 {
     using namespace gk::model::animation;
@@ -767,5 +878,5 @@ bool TestWeightedSpheresCompeteWithChainBodyCapsules()
 
 int main()
 {
-    return TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestRootZeroOffsetAndFixedOnlyContacts() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
+    return TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
 }
