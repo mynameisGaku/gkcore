@@ -201,3 +201,15 @@ Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.2
 START18は529球です。既存465球を保ち、先頭のboneから影響されるスカート位置64球を追加しました。骨原点だけでは支えられなかった腰周りを扱い、開始・折り返しの各120frameで検査したスカート440点の侵入は0になりました。これは身体capsuleへの近似判定で、シャツやジャケットの侵入と全衣服面の保証は残ります。
 
 同じWindows/GPU/toolchain、1280×720、非表示・標準効果・VSyncなし、13鎖・身体8形状、Release実時間600frame/warmup0は16.637FPS、p95 41.451msでした。Draw .646、Present6.436、IK .857、揺れ更新52.076msです。固定1/60秒3,000frameと実時間600frameは完走しましたが、接触を増やした構成の負担は残っています。300FPSは未達です。記録はbuild/native-validation/root-coverage-realtime-600.logです。
+
+## 接触補正の重複計算を減らした確認
+
+接触点の微分ベクトルは出力軸や子位置軸によらず方向軸だけで決まります。同じ式を27回評価していた処理を3回へまとめ、微分式、各成分の加算順、位置・速度、接触半径、探索順は保ちました。現行529球・13鎖・身体8形状の実時間600frame/warmup0は32.587FPS、p95 29.286ms、Draw .487/Present5.250/IK .575/secondary24.309msでした。前回は16.637FPS/secondary52.076msですが、実時間の進み方が異なるため固定負荷の比較ではありません。Windows11Pro26200、RTX4070SUPER/driver617.42、v142/MSVC19.29、SDK10.0.22621.0、1280×720、非表示・標準効果・VSyncなしの条件です。300FPSは未達です。
+
+ジャケットの接触追加も試しましたが、981球・750球は固定600frameで大きな跳ねと実時間再生の停止があり、636球も3,000frame検査の755frame目で停止しました。636球は短い描画検査でスカート・ジャケットの侵入0、実時間600frame完走でも、その後の動作を保てなかったため採用していません。START18は既存529球を使います。シャツ・ジャケットの残留侵入は未解決です。停止原因が幾何的な制約不成立なのか探索の不足なのかは、636球の失敗姿勢ではまだ確定していません。
+
+記録はbuild/native-validation/cloth-coverage-current529-factored-realtime.log、cloth-coverage-trial-636-quality.json、cloth-coverage-temporal-summary.json、cloth-coverage-final-fixed-3000.logです。新しい接触設定の採用は、短い画像検査に加えて長時間の連続動作を確認して判断します。
+
+採用する529球・共通計算削減後のReleaseは、固定1/60秒3,000frameを完走しています。記録はbuild/native-validation/cloth-coverage-stable529-fixed-3000.logです。
+
+固定600frameでは、記録した全boneの更新前・更新後位置も前回と全frame一致しました。

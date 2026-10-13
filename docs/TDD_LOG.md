@@ -1735,3 +1735,23 @@ Win11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621
 同じframe10の高解像度画像で、腰の露出と衣服の入り込みが軽減したことを確認しました。600frameの身体相対最大変化は29.617度、45度超0回で、旧29.396度/0回から暴れは再発していません。Release固定1/60秒3,000frameと実時間600frameを完走しました。実時間は16.637FPS、p95 41.451ms、揺れ更新52.076msで、300FPSは未達です。接触を追加した品質変更であり、速度改善とは扱いません。MSVC19.51/SDK10.0.28000.0の関連CPU3 targetはDebug/Releaseとも成功し、Root・fitter・実データの独立read-onlyレビューでもblocking issueはありません。
 
 記録はbuild/native-validation/root-coverage-*へ保存しています。元asset・現在のbuild・最新数値とPNGを保持し、使用済みprobe・生成config・比較用PPM・調査script・重複exportはroot-coverage-cleanup.jsonのhashと絶対pathを確認して整理します。次はシャツやジャケットの取りこぼしと、接触が増えた構成の負担を扱います。
+
+## 接触補正の共通計算と衣服接触の長時間確認
+
+EvaluateRotatedOffsetで出力軸・子位置軸に依存しない微分ベクトルを27回から方向軸ごとの3回へまとめました。式と各成分の加算順、位置・速度・探索方法は保ちます。変更前の既存Debug契約は成功し、基準方向・骨長・反対向きに近い方向・ゼロoffsetを含む18ケースの独立有限差分、radial方向で微分0、独立なRodrigues回転位置を追加しました。MSVC19.51/SDK10.0.28000.0の関連CPU7件はDebug/Releaseとも成功しています。529球の旧・新Runtimeで、2.1秒開始の全mesh120frame集計が一致しました。
+
+Windows11Pro26200、RTX4070SUPER/driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、1280×720、標準効果・VSyncなし・非表示windowで検査しました。既存529球の実時間600frameは完走し32.587FPS、p95 29.286ms、揺れ更新24.309msでした。前回は16.637FPS/52.076msですが、実時間の軌跡が変わるため厳密な固定負荷比較ではありません。300FPSは未達です。
+
+前回529球では2.1秒開始120frameのジャケット平均侵入0.933点・最大深度0.018619が残っていました。全衣服の移動寄与0.5以上へ広げた981球は同区間のジャケット・スカートを0にできましたが、固定600frameで身体相対最大63.48度・45度超4回、実時間283frameで停止しました。ジャケットを広く加えた750球も最大80.90度・45度超7回、実時間381frameで停止し、どちらも不採用です。
+
+既存529球を全行同一で保ち、移動寄与99%以上のジャケット107点だけを追加した636球も確認しました。639点・1,936 anchorsで、固定600frameの最大29.43度・45度超0回、実時間600frameは29.572FPSで完走しました。開始0秒・2.1秒から各120frameをDebug/Releaseで描画し、45,233位置・55,747法線を480frame照合。位置差0、法線最大差1.78813934e-7で、画像とmesh集計は両構成で一致しました。スカート440点・ジャケット443点は侵入0、シャツ431点は平均6.30/8.82、最大深度0.01319/0.01222でした。しかし、固定3,000frameの755frame目で制約を解けず停止したため採用しません。サンプルは元の529球へ戻しました。636球の失敗姿勢が幾何的に不可能なのか探索不足なのかは未確定です。
+
+残るシャツ8点も追加した989球は初回更新で失敗しました。detail36の全方向root回転を許す到達球を計算し、中心からSpine capsule軸への距離と半径の和が、接触に必要な0.082未満となることを全8点で確認しました。未知pivotでは最大弦長を使う保守的上界です。root位置の固定だけを理由に動かないとは扱いません。local offsetは回転しますが、この姿勢では既存boneの回転だけでは接触半径込みの到達範囲が足りません。これは近似capsuleとその姿勢に限った判定で、636球の別の失敗姿勢や身体mesh全体には一般化しません。
+
+ゲーム用ソース383ファイルのRuntimeを再ビルドし、install SDK61ファイルの許可リストとconsumerへ配置したDLLのhash一致を確認しました。そのSDKをリンクしたconsumerのGPU Init・描画・Present・Shutdownもexit0です。export関連11契約は成功し、独立read-onlyレビュー、BOM/CRLF、formatter、diffも確認しました。mainへはRuntimeの共通計算変更だけを反映し、tests・私有asset・試行config・開発記録を含めません。
+
+記録はbuild/native-validation/cloth-coverage-*へ保存します。試作636球の画像検査はcloth-coverage-trial-636-quality.json、連続動作はcloth-coverage-temporal-summary.jsonです。現在のbuild、元asset、必要な数値・PNGを保持し、使用済みprobe・生成config・PPM・重複exportはcloth-coverage-cleanup.jsonへsourceとhashを保存して整理します。
+
+採用する529球・共通計算削減後のReleaseは、固定1/60秒3,000frameを完走しました。記録はcloth-coverage-stable529-fixed-3000.logです。試作636球が755frameで停止した記録とは区別します。
+
+採用529球の固定600frameでは、記録した全boneの更新前・更新後位置が前回と全frame完全一致しました。cloth-coverage-stable529-trace-parity.jsonへ照合を保存しています。生成物448ファイル・107,738,175 bytesを、絶対pathとSHA-256の一致を確認して整理しました。

@@ -95,6 +95,117 @@ bool TestAttachmentEvaluationAndJacobian()
 }
 
 /**
+ * 多様な基準方向と親位置で、回転offsetの解析ヤコビアンを数値微分と照合する。
+ */
+bool TestAttachmentJacobianMatrix()
+{
+    // 位置をずらした親、非単位基準、骨長とoffsetの組み合わせを検証する。
+    const gk::FVector3d parents[3] = { { { 1.7, -2.3, 0.8 } }, { { -0.4, 0.9, 2.1 } }, { { 10.0, -4.0, 0.25 } } };
+    const gk::FVector3d references[3] = { { { 2.0, 3.0, -1.0 } }, { { 0.0, 1.0, 0.0 } }, { { -1.5, 0.7, 2.2 } } };
+    const gk::FVector3d directions[3] = { { { -0.31, 0.87, 0.38 } }, { { 0.08, -1.0, 0.06 } }, { { 0.42, 0.11, -0.90 } } };
+    const gk::FVector3d offsets[2] = { { { 0.0, 0.0, 0.0 } }, { { 0.13, -0.08, 0.045 } } };
+    const double lengths[3] = { 0.37, 2.4, 0.91 };
+    for (uint32_t fixture = 0; fixture < 18; ++fixture)
+    {
+        const uint32_t directionIndex = fixture / 6;
+        const uint32_t offsetIndex = (fixture / 3) % 2;
+        const uint32_t lengthIndex = fixture % 3;
+        FSecondaryMotionAttachmentDefinition definition{};
+        definition.direction = references[directionIndex];
+        definition.offset = offsets[offsetIndex];
+        definition.cosineLimit = -1.0;
+        gk::FVector3d child = parents[directionIndex];
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            child.value[axis] += directions[directionIndex].value[axis] * lengths[lengthIndex];
+        }
+        FSecondaryMotionAttachmentEvaluation evaluation{};
+        gk::String error;
+        if (!EvaluateSecondaryMotionAttachment(definition, parents[directionIndex], child, evaluation, error))
+        {
+            return Fail(error.CStr());
+        }
+        // 適応刻みで短い骨でも十分な角度差を与えて解析微分と比べる。
+        const double step = lengths[lengthIndex] * 1.0e-6;
+        for (uint32_t axis = 0; axis < 3; ++axis)
+        {
+            gk::FVector3d positive = child;
+            gk::FVector3d negative = child;
+            positive.value[axis] += step;
+            negative.value[axis] -= step;
+            FSecondaryMotionAttachmentEvaluation positiveEvaluation{};
+            FSecondaryMotionAttachmentEvaluation negativeEvaluation{};
+            if (!EvaluateSecondaryMotionAttachment(definition, parents[directionIndex], positive, positiveEvaluation, error) || !EvaluateSecondaryMotionAttachment(definition, parents[directionIndex], negative, negativeEvaluation, error))
+            {
+                return Fail(error.CStr());
+            }
+            for (uint32_t row = 0; row < 3; ++row)
+            {
+                const double numerical = (positiveEvaluation.position.value[row] - negativeEvaluation.position.value[row]) / (2.0 * step);
+                if (fabs(numerical - evaluation.childJacobian[row * 3 + axis]) > 3.0e-6)
+                {
+                    return Fail("attachment Jacobian matrix case disagreed with independent finite differences");
+                }
+            }
+        }
+        // 骨方向に沿う移動は方向だけで決まる回転offsetを変えない。
+        const gk::FVector3d radialPerturbation = { { child.value[0] - parents[directionIndex].value[0], child.value[1] - parents[directionIndex].value[1], child.value[2] - parents[directionIndex].value[2] } };
+        for (uint32_t row = 0; row < 3; ++row)
+        {
+            const double radialDerivative = evaluation.childJacobian[row * 3] * radialPerturbation.value[0] + evaluation.childJacobian[row * 3 + 1] * radialPerturbation.value[1] + evaluation.childJacobian[row * 3 + 2] * radialPerturbation.value[2];
+            if (fabs(radialDerivative) > 2.0e-12)
+            {
+                return Fail("attachment Jacobian changed under radial child motion");
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * 基準方向から任意方向へ回したoffsetを独立なRodrigues式と照合する。
+ */
+bool TestAttachmentShortestRotationOracle()
+{
+    const gk::FVector3d parent = { { -3.2, 1.4, 8.1 } };
+    const gk::FVector3d reference = { { 2.0, 3.0, -1.0 } };
+    const gk::FVector3d direction = { { -0.31, 0.87, 0.38 } };
+    const gk::FVector3d offset = { { 0.13, -0.08, 0.045 } };
+    const double referenceLength = sqrt(reference.value[0] * reference.value[0] + reference.value[1] * reference.value[1] + reference.value[2] * reference.value[2]);
+    const double directionLength = sqrt(direction.value[0] * direction.value[0] + direction.value[1] * direction.value[1] + direction.value[2] * direction.value[2]);
+    const double base[3] = { reference.value[0] / referenceLength, reference.value[1] / referenceLength, reference.value[2] / referenceLength };
+    const double current[3] = { direction.value[0] / directionLength, direction.value[1] / directionLength, direction.value[2] / directionLength };
+    const double cross[3] = { base[1] * current[2] - base[2] * current[1], base[2] * current[0] - base[0] * current[2], base[0] * current[1] - base[1] * current[0] };
+    const double cosine = base[0] * current[0] + base[1] * current[1] + base[2] * current[2];
+    const double crossSquared = cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2];
+    // Rodriguesの最小回転を、四元数実装とは別の外積式で求める。
+    const double firstCross[3] = { cross[1] * offset.value[2] - cross[2] * offset.value[1], cross[2] * offset.value[0] - cross[0] * offset.value[2], cross[0] * offset.value[1] - cross[1] * offset.value[0] };
+    const double secondCross[3] = { cross[1] * firstCross[2] - cross[2] * firstCross[1], cross[2] * firstCross[0] - cross[0] * firstCross[2], cross[0] * firstCross[1] - cross[1] * firstCross[0] };
+    const double rotationScale = 1.0 / (1.0 + cosine);
+    const gk::FVector3d expected = { { parent.value[0] + offset.value[0] + firstCross[0] + secondCross[0] * rotationScale, parent.value[1] + offset.value[1] + firstCross[1] + secondCross[1] * rotationScale, parent.value[2] + offset.value[2] + firstCross[2] + secondCross[2] * rotationScale } };
+    const gk::FVector3d child = { { parent.value[0] + direction.value[0] * 1.3, parent.value[1] + direction.value[1] * 1.3, parent.value[2] + direction.value[2] * 1.3 } };
+    FSecondaryMotionAttachmentDefinition definition{};
+    definition.direction = reference;
+    definition.offset = offset;
+    definition.cosineLimit = -1.0;
+    FSecondaryMotionAttachmentEvaluation evaluation{};
+    gk::String error;
+    if (!EvaluateSecondaryMotionAttachment(definition, parent, child, evaluation, error))
+    {
+        return Fail(error.CStr());
+    }
+    if (!NearVector(evaluation.position, expected, 1.0e-12))
+    {
+        return Fail("attachment position disagreed with the independent Rodrigues shortest-rotation oracle");
+    }
+    if (!(crossSquared > 0.0))
+    {
+        return Fail("Rodrigues oracle fixture unexpectedly had no rotation");
+    }
+    return true;
+}
+
+/**
  * 評価不能な入力で出力を保ち、準備済み形状の照会値を独立な球距離と照合する。
  */
 bool TestEvaluationFailureAtomicityAndContactQuery()
@@ -421,5 +532,5 @@ bool TestRecordedNativeSkinningContact()
 
 int main()
 {
-    return TestAttachmentEvaluationAndJacobian() && TestEvaluationFailureAtomicityAndContactQuery() && TestSharedBoneProjectionAndAtomicFailure() && TestEmptyShapeProjectionIsNoOp() && TestStationaryContactEscapesByRotation() && TestRecordedNativeLoopContact() && TestRecordedNativeFirstClipContact() && TestRecordedNativeSkinningContact() ? 0 : 1;
+    return TestAttachmentEvaluationAndJacobian() && TestAttachmentJacobianMatrix() && TestAttachmentShortestRotationOracle() && TestEvaluationFailureAtomicityAndContactQuery() && TestSharedBoneProjectionAndAtomicFailure() && TestEmptyShapeProjectionIsNoOp() && TestStationaryContactEscapesByRotation() && TestRecordedNativeLoopContact() && TestRecordedNativeFirstClipContact() && TestRecordedNativeSkinningContact() ? 0 : 1;
 }
