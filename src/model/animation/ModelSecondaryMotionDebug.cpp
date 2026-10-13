@@ -3,6 +3,7 @@
 #include "model/animation/AModelAnimationSource.h"
 #include "model/animation/ModelSnapshot.h"
 #include "model/animation/ModelSecondaryMotionColliders.h"
+#include "model/animation/ModelSecondaryMotionContactPoints.h"
 #include "model/animation/FModelSecondaryMotionState.h"
 #include "core/Context.h"
 #include <limits.h>
@@ -33,7 +34,7 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         return detail::SetError("secondary motion debug requires a skeletal source");
     }
     // 必要数を先に検査して、容量不足時は出力を触らない。
-    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count() + state->distanceConstraints.Count() + state->contactLinks.Count();
+    uint64_t required = static_cast<uint64_t>(state->colliders.Count()) + state->links.Count() + state->distanceConstraints.Count() + state->contactLinks.Count() + state->contactPoints.Count();
     for (uint32_t index = 0; index < state->chains.Count(); ++index)
     {
         const auto* chain = state->chains.At(index);
@@ -170,6 +171,24 @@ int GetModelSecondaryMotionDebugShapes(ModelHandle handle, FModelSecondaryMotion
         shape.bone = contact.firstBone;
         if (!isfinite(shape.start.x) || !isfinite(shape.start.y) || !isfinite(shape.start.z) || !isfinite(shape.end.x) || !isfinite(shape.end.y) || !isfinite(shape.end.z) || !candidate.Append(shape))
             return detail::SetError("secondary motion debug attachment is outside range or allocation failed");
+    }
+    // 複数boneで動く接触球も、表示中のFKと同じweightから中心を求める。
+    for (uint32_t index = 0; index < state->contactPoints.Count(); ++index)
+    {
+        FVector3d centre{};
+        if (!model::EvaluateRenderedSecondaryMotionContactPoint(*state, matrices, index, centre, error))
+        {
+            return detail::SetError(error.CStr());
+        }
+        FModelSecondaryMotionDebugShape shape{};
+        shape.start = { static_cast<float>(centre.value[0]), static_cast<float>(centre.value[1]), static_cast<float>(centre.value[2]) };
+        shape.end = shape.start;
+        shape.radius = state->contactPoints.At(index).radius;
+        shape.bone = state->contactAnchors.At(state->contactPoints.At(index).firstAnchor).bone;
+        if (!isfinite(shape.start.x) || !isfinite(shape.start.y) || !isfinite(shape.start.z) || !candidate.Append(shape))
+        {
+            return detail::SetError("secondary weighted contact debug position or allocation failed");
+        }
     }
     if (candidate.Count() > 0)
     {

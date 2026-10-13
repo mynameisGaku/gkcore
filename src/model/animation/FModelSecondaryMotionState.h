@@ -7,6 +7,8 @@
 #include <gkcore/FModelSecondaryMotionLink.h>
 #include <gkcore/FModelSecondaryMotionDistanceConstraint.h>
 #include <gkcore/FModelSecondaryMotionContactLink.h>
+#include <gkcore/FModelSecondaryMotionContactAnchor.h>
+#include <gkcore/FModelSecondaryMotionContactPoint.h>
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelGpuSkinningGeometry.h"
 
@@ -30,6 +32,10 @@ struct FModelSecondaryMotionState
     Array<FModelSecondaryMotionDistanceConstraint> distanceConstraints;
     // boneローカル位置に置く衣服側の補助接触線分。
     Array<FModelSecondaryMotionContactLink> contactLinks;
+    // 複数bone寄与で定義した身体接触点。
+    Array<FModelSecondaryMotionContactPoint> contactPoints;
+    // contactPointsが参照する、連続したbone寄与配列。
+    Array<FModelSecondaryMotionContactAnchor> contactAnchors;
     // 最後の距離補正で蓄積した力相当の値。描画姿勢の残差検査にも使う。
     Array<double> distanceLambdas;
     // 最後の距離補正に使った秒数。時間0では基準の1/120秒を使う。

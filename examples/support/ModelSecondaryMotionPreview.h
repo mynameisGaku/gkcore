@@ -54,6 +54,15 @@ bool ParseSecondaryContactLinkOptions(int& argc, char** argv, const char*& path)
  */
 bool ApplySecondaryContactLinkPreview(ModelHandle model, const char* path);
 
+/**
+ * --secondary-contact-pointsのpathを取り出す。欠落・重複では引数列を保つ。
+ */
+bool ParseSecondaryContactPointOptions(int& argc, char** argv, const char*& path);
+/**
+ * 半径と複数boneのweight・局所位置を読み、接触球を一括登録する。
+ */
+bool ApplySecondaryContactPointPreview(ModelHandle model, const char* path);
+
 }
 
 #endif

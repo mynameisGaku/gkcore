@@ -58,6 +58,8 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/ModelSecondaryMotionDirection.cpp
     src/model/animation/ModelSecondaryMotionChainContacts.cpp
+    src/model/animation/ModelSecondaryMotionWeightedContacts.cpp
+    src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp
@@ -364,7 +366,7 @@ if(GKCORE_BUILD_RUNTIME)
     install(FILES include/gkcore.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} COMPONENT Runtime)
     install(FILES include/gkcore/Handle.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimation.h include/gkcore/HumanoidBoneTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
-    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h include/gkcore/FModelSecondaryMotionDistanceConstraint.h include/gkcore/FModelSecondaryMotionContactLink.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
+    install(FILES include/gkcore/ModelSecondaryMotion.h include/gkcore/FModelSecondaryMotionSettings.h include/gkcore/FModelSecondaryMotionCollider.h include/gkcore/FModelSecondaryMotionDebugShape.h include/gkcore/FModelSecondaryMotionLink.h include/gkcore/FModelSecondaryMotionDistanceConstraint.h include/gkcore/FModelSecondaryMotionContactLink.h include/gkcore/FModelSecondaryMotionContactPoint.h include/gkcore/FModelSecondaryMotionContactAnchor.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelAnimationMappingInfo.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/ModelMaterial.h include/gkcore/ModelMaterialSettings.h include/gkcore/ModelAlphaModeTypes.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)
     install(FILES include/gkcore/Shader.hlsl DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/gkcore COMPONENT Runtime)

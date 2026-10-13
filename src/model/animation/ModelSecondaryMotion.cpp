@@ -16,6 +16,7 @@
 #include "foundation/FVector3d.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
+#include "model/animation/ModelSecondaryMotionContactPoints.h"
 #include <string.h>
 
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
@@ -160,6 +161,8 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
     state->links.MoveFrom(candidate.links);
     state->distanceConstraints.MoveFrom(candidate.distanceConstraints);
     state->contactLinks.MoveFrom(candidate.contactLinks);
+    state->contactPoints.MoveFrom(candidate.contactPoints);
+    state->contactAnchors.MoveFrom(candidate.contactAnchors);
     state->distanceLambdas.MoveFrom(candidate.distanceLambdas);
     state->distanceStepSeconds = candidate.distanceStepSeconds;
     state->linkIterations = candidate.linkIterations;
@@ -193,7 +196,7 @@ bool CopyCollisionSettings(const model::FModelSecondaryMotionState* previous, mo
         error.Assign("vertex contact selection allocation failed");
         return false;
     }
-    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.contactLinks.AppendRange(previous->contactLinks.Data(), previous->contactLinks.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
+    if (!candidate.colliders.AppendRange(previous->colliders.Data(), previous->colliders.Count()) || !candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.contactLinks.AppendRange(previous->contactLinks.Data(), previous->contactLinks.Count()) || !candidate.contactPoints.AppendRange(previous->contactPoints.Data(), previous->contactPoints.Count()) || !candidate.contactAnchors.AppendRange(previous->contactAnchors.Data(), previous->contactAnchors.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()) || !candidate.previousCollisionShapes.AppendRange(previous->previousCollisionShapes.Data(), previous->previousCollisionShapes.Count()))
     {
         error.Assign("secondary motion collision state allocation failed");
         return false;
@@ -249,6 +252,14 @@ bool IsAncestor(const model::animation::FModelSkeleton& skeleton, uint32_t ances
         }
     }
     return false;
+}
+
+/**
+ * weighted接触配列の範囲、weight、bone所属を検証する。
+ */
+bool ValidateWeightedContactPoints(const model::animation::FModelSkeleton& skeleton, const model::FModelSecondaryMotionState& state, String& error)
+{
+    return model::ValidateSecondaryMotionContactPoints(state, skeleton, error);
 }
 
 /**
@@ -373,6 +384,8 @@ int Update(ModelHandle handle, double delta, bool reset)
         else
         {
             bool advanced = false;
+            // 接触だけが未解決なら、現在の終端姿勢を一括solverで再検査できる。
+            bool contactUnresolved = false;
             if (currentShapes.Count() > 0 && chain.colliderMask != UINT64_MAX)
             {
                 // subsetだけcacheの拡張shapeを渡し、solver側の二重半径加算を避ける。
@@ -382,11 +395,17 @@ int Update(ModelHandle handle, double delta, bool reset)
                 {
                     return Failure(error);
                 }
-                advanced = model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previousView.expanded, currentView.expanded, currentView.count, chain.simulation, error, 0.0f);
+                advanced = model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previousView.expanded, currentView.expanded, currentView.count, chain.simulation, error, 0.0f, &contactUnresolved);
             }
             else
             {
-                advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error, chain.collisionRadius) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+                advanced = currentShapes.Count() > 0 ? model::animation::StepSecondaryMotionChainWithCollisions(targets.Data(), targets.Count(), chain.settings, delta, previous->previousCollisionShapes.Data(), currentShapes.Data(), currentShapes.Count(), chain.simulation, error, chain.collisionRadius, &contactUnresolved) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            }
+            if (!advanced && contactUnresolved && candidate.contactPoints.Count() > 0 && currentShapes.Count() > 0)
+            {
+                // 中間姿勢で接触を解けない場合も、終端予測から全鎖の身体・衣服接触を同時に解く。
+                error.Clear();
+                advanced = model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
             }
             if (!advanced)
             {
@@ -411,10 +430,11 @@ int Update(ModelHandle handle, double delta, bool reset)
             }
         }
     }
-    if (!reset && (((candidate.links.Count() > 0 || candidate.contactLinks.Count() > 0) && currentShapes.Count() > 0) || candidate.distanceConstraints.Count() > 0))
+    if (!reset && (((candidate.links.Count() > 0 || candidate.contactLinks.Count() > 0 || candidate.contactPoints.Count() > 0) && currentShapes.Count() > 0) || candidate.distanceConstraints.Count() > 0))
     {
         // 全鎖の候補を解いてから接続を押し出し、描画へ使う点列を更新する。
-        if (!model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error, &matrices))
+        const bool contactsConstrained = candidate.contactPoints.Count() > 0 ? model::ConstrainSecondaryMotionContactPoints(candidate, *previous, resource->animation->source->Skeleton(), matrices, currentShapes.Data(), currentShapes.Count(), delta, error) : model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error, &matrices);
+        if (!contactsConstrained)
         {
             return Failure(error);
         }
@@ -457,7 +477,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         profile = false;
     }
 #endif
-    if (!reset && (currentShapes.Count() > 0 || candidate.distanceConstraints.Count() > 0 || candidate.contactLinks.Count() > 0))
+    if (!reset && (currentShapes.Count() > 0 || candidate.distanceConstraints.Count() > 0 || candidate.contactLinks.Count() > 0 || candidate.contactPoints.Count() > 0))
     {
         // 描画へ渡す回転を全鎖へ重ね、実際のFK位置でも接触が成立することを確認する。
         Array<float> renderedMatrices;
@@ -475,6 +495,10 @@ int Update(ModelHandle handle, double delta, bool reset)
             return Failure(error);
         }
         if (candidate.contactLinks.Count() > 0 && !model::CheckRenderedSecondaryMotionContactLinks(candidate, renderedMatrices, currentShapes.Data(), currentShapes.Count(), error))
+        {
+            return Failure(error);
+        }
+        if (candidate.contactPoints.Count() > 0 && !model::CheckRenderedSecondaryMotionContactPoints(candidate, renderedMatrices, currentShapes.Data(), currentShapes.Count(), error))
         {
             return Failure(error);
         }
@@ -661,7 +685,7 @@ int SetModelSecondaryMotionChain(ModelHandle handle, const uint32_t* bones, uint
         }
         candidate.skinContactGeometry = resource->animation->source->GpuSkinningGeometry();
     }
-    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !model::ValidateSecondaryMotionLinks(candidate, error) || !model::ValidateSecondaryMotionDistanceConstraints(candidate, error) || !model::ValidateSecondaryMotionContactLinks(candidate, error) || !Commit(*transform, candidate, error))
+    if (!Targets(chain, matrices, targets, error) || !model::animation::ResetSecondaryMotionChain(targets.Data(), targets.Count(), chain.simulation, error) || !model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), settings, 0.0, chain.simulation, error) || !model::animation::OrientModelPoseChain(skeleton, base, bones, count, settings.endOffset, targets.Data(), validated, error) || !CacheTransforms(chain, base, error) || !model::ValidateSecondaryMotionLinks(candidate, error) || !model::ValidateSecondaryMotionDistanceConstraints(candidate, error) || !model::ValidateSecondaryMotionContactLinks(candidate, error) || !ValidateWeightedContactPoints(skeleton, candidate, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
     }
@@ -726,7 +750,7 @@ int SetModelSecondaryMotionColliders(ModelHandle handle, const FModelSecondaryMo
     candidate.colliderMargin = margin;
     candidate.linkIterations = previous->linkIterations;
     candidate.distanceStepSeconds = previous->distanceStepSeconds;
-    if (!candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.contactLinks.AppendRange(previous->contactLinks.Data(), previous->contactLinks.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()))
+    if (!candidate.links.AppendRange(previous->links.Data(), previous->links.Count()) || !candidate.distanceConstraints.AppendRange(previous->distanceConstraints.Data(), previous->distanceConstraints.Count()) || !candidate.contactLinks.AppendRange(previous->contactLinks.Data(), previous->contactLinks.Count()) || !candidate.contactPoints.AppendRange(previous->contactPoints.Data(), previous->contactPoints.Count()) || !candidate.contactAnchors.AppendRange(previous->contactAnchors.Data(), previous->contactAnchors.Count()) || !candidate.distanceLambdas.AppendRange(previous->distanceLambdas.Data(), previous->distanceLambdas.Count()))
     {
         return detail::SetError("secondary link settings allocation failed");
     }
@@ -840,6 +864,10 @@ int SetModelSecondaryMotionLinks(ModelHandle handle, const FModelSecondaryMotion
         }
         return detail::SetError("configure secondary chains before their links");
     }
+    if (count > 0u && previous->contactPoints.Count() > 0u)
+    {
+        return detail::SetError("secondary links cannot be combined with weighted contact points");
+    }
     String error;
     model::FModelSecondaryMotionState candidate;
     if (!CopyCollisionSettings(previous, candidate, error))
@@ -884,6 +912,10 @@ int SetModelSecondaryMotionDistanceConstraints(ModelHandle handle, const FModelS
             return 0;
         }
         return detail::SetError("configure secondary chains before their distances");
+    }
+    if (count > 0u && previous->contactPoints.Count() > 0u)
+    {
+        return detail::SetError("secondary distance constraints cannot be combined with weighted contact points");
     }
     String error;
     model::FModelSecondaryMotionState candidate;
@@ -969,6 +1001,16 @@ int SetModelSecondaryMotionContactLinks(ModelHandle handle, const FModelSecondar
         }
         return detail::SetError("configure secondary chains before their contact links");
     }
+    if (count > 0u && previous->contactPoints.Count() > 0u)
+    {
+        for (uint32_t index = 0; index < count; ++index)
+        {
+            if (links[index].firstBone != links[index].secondBone)
+            {
+                return detail::SetError("weighted contact points only allow same-bone contact links");
+            }
+        }
+    }
     String error;
     model::FModelSecondaryMotionState candidate;
     if (!CopyCollisionSettings(previous, candidate, error))
@@ -985,6 +1027,67 @@ int SetModelSecondaryMotionContactLinks(ModelHandle handle, const FModelSecondar
     candidate.contactLinks.Clear();
     candidate.linkIterations = iterations;
     if (!candidate.contactLinks.AppendRange(links, count) || !model::ValidateSecondaryMotionContactLinks(candidate, error) || !Commit(*transform, candidate, error))
+    {
+        return Failure(error);
+    }
+    detail::ClearError();
+    return 0;
+}
+
+int SetModelSecondaryMotionContactPoints(ModelHandle handle, const FModelSecondaryMotionContactPoint* points, uint32_t pointCount, const FModelSecondaryMotionContactAnchor* anchors, uint32_t anchorCount, uint32_t iterations)
+{
+    detail::ModelResource* resource = nullptr;
+    detail::ModelTransform* transform = nullptr;
+    if (!Instance(handle, resource, transform))
+    {
+        return -1;
+    }
+    if (pointCount > 1024u || anchorCount > 16384u || (pointCount > 0u && !points) || (anchorCount > 0u && !anchors) || ((pointCount == 0u) != (anchorCount == 0u)) || iterations == 0u || iterations > 32u)
+    {
+        return detail::SetError("weighted secondary contact counts, pointers, or iterations are invalid");
+    }
+    const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    if (!previous)
+    {
+        if (pointCount == 0u)
+        {
+            detail::ClearError();
+            return 0;
+        }
+        return detail::SetError("configure secondary chains before weighted contact points");
+    }
+    if (pointCount > 0u && (previous->links.Count() > 0u || previous->distanceConstraints.Count() > 0u))
+    {
+        return detail::SetError("weighted contact points cannot be combined with secondary links or distance constraints");
+    }
+    if (pointCount > 0u)
+    {
+        for (uint32_t index = 0; index < previous->contactLinks.Count(); ++index)
+        {
+            const auto& link = previous->contactLinks.At(index);
+            if (link.firstBone != link.secondBone)
+            {
+                return detail::SetError("weighted contact points only allow same-bone contact links");
+            }
+        }
+    }
+    String error;
+    model::FModelSecondaryMotionState candidate;
+    if (!CopyCollisionSettings(previous, candidate, error))
+    {
+        return Failure(error);
+    }
+    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    {
+        if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
+        {
+            return Failure(error);
+        }
+    }
+    candidate.contactPoints.Clear();
+    candidate.contactAnchors.Clear();
+    candidate.linkIterations = iterations;
+    if (!candidate.contactPoints.AppendRange(points, pointCount) || !candidate.contactAnchors.AppendRange(anchors, anchorCount) || !ValidateWeightedContactPoints(resource->animation->source->Skeleton(), candidate, error) || !Commit(*transform, candidate, error))
     {
         return Failure(error);
     }

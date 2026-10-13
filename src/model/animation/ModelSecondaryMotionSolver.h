@@ -26,8 +26,9 @@ bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk:
 /**
  * 各小刻み更新で身体の接触と鎖の長さ・角度を解く。pointRadiusは節中心を包む半径で、失敗時はstateを保つ。
  * 形状は前回と今回で同数。高速な更新間移動の連続接触は保証しない。
+ * contactUnresolvedは骨長・角度・身体接触の幾何学的未解決だけを示し、入力・数値・確保・保存範囲の失敗ではfalseとなる。
  */
-bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius = 0.0f);
+bool StepSecondaryMotionChainWithCollisions(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, float pointRadius = 0.0f, bool* contactUnresolved = nullptr);
 
 /**
  * cacheのGetが返したshape viewを用いて時間0の接触・鎖制約を解く。viewの数と各配列を検証し、失敗時はstateを保つ。
