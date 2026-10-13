@@ -28,7 +28,7 @@ if (gk::SetModelSecondaryMotionChainColliderMask(model, skirtRoot, UINT64_C(240)
 
 skin weightに近い位置へ骨接触線分を置くには、`SetModelSecondaryMotionContactLinks`へ`FModelSecondaryMotionContactLink`配列を渡します。両端はboneローカルの`firstOffset`と`secondOffset`、線分半径は有限な0以上のmodel空間値です。端点が同じboneにある設定も使えます。異なるboneを結ぶ場合は、各boneが別々の鎖に属する自由boneでなければなりません。固定root、仮想末端、同じ鎖にある異なるboneは指定できず、端点とoffsetが同じ線分の重複も拒否します。最大1024本で、既定32回、明示時は1〜32回の反復です。反復数は接続線分・距離制約と共有します。不正な設定のsetterは既存状態を保ちます。`nullptr, 0`はこの接触線分だけを解除します。
 
-この線分の位置に応じて、各boneのpivotを保ったまま後続boneの向きを回し、骨長と最大曲げ角を保つ姿勢を探します。身体接触や他の制約と同時に解けない場合、更新は失敗し、直前に確定した揺れ状態と姿勢を保ちます。基準方向と接触位置が正反対になるなど回転軸を一意に定められない特異な配置は解けない場合があります。これは骨に結び付けた接触proxyであり、skin weight、衣服の幅やmesh面全体の接触は保証しません。
+通常は各boneのpivotを保ったまま後続boneの向きを回し、骨長と最大曲げ角を保つ姿勢を探します。骨原点間linkと距離制約がなく、各接触linkの両端が同じboneに付く構成では、個々の接触と鎖全体の許容方向を同時に解く経路へ切り替わります。複数の接触がある場合は鎖全体の経路を先に試します。単一接触ではpivotを固定する従来経路の成功結果を保ち、解けない場合だけ鎖全体の経路を試します。固定root、骨長、bone-local translationとscaleを保ちながら、祖先boneの回転で自由boneのmodel空間pivotを動かせます。接触linkが別boneを結ぶ構成や、骨原点間link・距離制約を含む構成は既存の連成経路を使います。鎖の`colliderMask`はbone-local接触linkには適用されず、登録した全身体形状を判定します。候補では接触許容幅の半分、描画FKでは従来どおり全許容幅を使います。身体接触や他の制約と同時に解けない場合、更新は失敗し、直前に確定した揺れ状態と姿勢を保ちます。基準方向と接触位置が正反対になるなど回転軸を一意に定められない特異な配置は解けない場合があります。これは骨に結び付けた接触proxyであり、skin weight、衣服の幅やmesh面全体の接触は保証しません。
 
 複数鎖の自由bone間の距離を保つには、`SetModelSecondaryMotionDistanceConstraints`へ`FModelSecondaryMotionDistanceConstraint`配列を渡します。各端点は別々に登録した鎖の自由boneで、最大1024組です。固定root・同じ鎖のbone・順序を反転した重複ペアは指定できません。`restDistance=0`は登録時の基準姿勢を測って距離として固定します。この基準姿勢は揺れを加える前のclip・blend・IK反映後の位置です。animationで毎frame基準距離を測り直す機能ではありません。正の`restDistance`はmodel空間の距離を直接指定します。`compliance=0`は距離を保ち、正の値は伸び縮みを許します。値が大きいほど柔らかく、両端は同じ動きやすさで補正します。
 
@@ -111,7 +111,7 @@ animationを停止しても、更新を続ければ速度は減衰し、重力�
 
 鎖どうしの接続線分を設定するviewerは`--secondary-links <config-file>`も指定します。このoptionには`--secondary-colliders`が必要です。各行は`半径 | firstBone secondBone`で、半径はmodel空間です。設定ファイルは[スカート接続線分](../samples/config/yumeka-secondary-links.txt)を参照してください。接続線分の端点は異なる鎖の自由boneに限り、同じペアの重複や固定root・仮想末端は使えません。
 
-骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。このoptionは揺れもの鎖と身体形状を設定した起動で使います。各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。空行と`#`コメントを無視します。YUMEKAの[衣服位置の球](../samples/config/yumeka-secondary-contact-links.txt)はSTART16の設定例です。同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
+骨ローカルの衣服接触線分を使うviewerには`--secondary-contact-links <config-file>`を指定します。このoptionは揺れもの鎖と身体形状を設定した起動で使います。各行は`半径 firstX firstY firstZ secondX secondY secondZ | firstBoneName secondBoneName`です。数値は有限で、半径はmodel空間、端点offsetは各boneのlocal空間です。同じboneの2端点も使え、異なるboneなら別々の鎖の自由boneを指定します。空行と`#`コメントを無視します。YUMEKAの[衣服位置の球](../samples/config/yumeka-secondary-contact-links.txt)はSTART16と18で使う設定です。同じboneの同じoffsetを両端に置き、主なskin寄与を持つ骨へ179個の小球を付けます。別boneの寄与まで包む形状ではなく、布面全体の非貫通は保証しません。複数形状が同じ骨へ相反する姿勢を要求すると、個々の接触が解けても全体の更新は失敗する場合があります。
 
 骨間距離を設定するviewerは`--secondary-distances <config-file>`を指定します。このoptionには`--secondary-motion`が必要ですが、身体colliderは不要です。各行は`restDistance compliance | firstBone secondBone`です。YUMEKAの[10本の距離設定](../samples/config/yumeka-secondary-distances.txt)は登録時の距離を使い、complianceは`0.001`です。START15は試験設定です。0秒・3.35秒から各120frameをDebug/Releaseで再生し、計480frameのGPU変形検査と保存24組の画像一致を確認しました。loop区間の平均侵入点数は15.833→15.483、最大深度は0.020639→0.023409で、布面の品質改善とは判定していません。実時間の計測は身体接触と距離制約が未収束になり、300warmup後340frameで停止しました。その後、更新中のファイル書き込みを省いたdelta記録で611番目の停止を再現し、骨長復元に沿う接触補正を加えました。同じ611 deltaはDebug/Releaseで完走し、通常の実時間3000frame/warmup300も完走しています。これは布面の非貫通や全設定の収束を保証するものではありません。
 
@@ -151,4 +151,4 @@ YUMEKAの骨球設定では、計測したスカート幅の中央値`0.0378` mo
 
 頂点接触は、対応するzero-morph FBXの個々の変形点を補正する任意の機能です。骨球の設定では無効です。どちらも布の面全体の接触を扱わないため、衣服全体が身体へ埋まらないことは保証しません。実モデルの比較結果は[TDD検証ログ](TDD_LOG.md)に記録しています。
 
-身体の球・カプセルと、登録した鎖の自由bone間の離散接触を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨の節と線分への接触処理であり、身体のmesh面の非貫通は保証しません。実モデルでの髪・スカートの揺れと復帰品質、代表設定での300FPS達成は完了条件に残っています。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。
+身体の球・カプセルと、登録した鎖の節・線分およびbone-local offset接触の離散判定を実装しています。更新間の高速なすり抜けを保証する連続衝突判定、cloth mesh、cloth self-collision、world transform（SRT）の慣性、SDK内部の物理専用固定更新ループは未対応です。この機能は一般的なrigid-body物理engineやcloth simulationを提供しません。骨proxyへの接触だけでは身体mesh面や衣服全体の非貫通を保証しません。実モデルでは侵入点数と深さの減少を確認していますが、布面侵入は残ります。代表設定での300FPS達成も未完了です。現在の測定値は[モデルviewerの処理時間](model-performance.md)を参照してください。

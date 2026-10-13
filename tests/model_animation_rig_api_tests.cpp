@@ -3335,6 +3335,109 @@ static bool TestSecondaryMotionContactLinkOutgoingBoneFk()
 }
 
 /**
+ * local offsetが0で接触点を直接動かせない場合も、ancestorの自由度から解く。
+ */
+static bool TestSingleOffsetAncestorFallback()
+{
+    using namespace gk::model::animation;
+    gk::model::FModelSecondaryMotionState state;
+    gk::model::FModelSecondaryMotionState previous;
+    auto* chain = new gk::model::FModelSecondaryMotionChain;
+    const uint32_t chainBones[2] = { 0, 1 };
+    const gk::Vec3 targets[3] = { { 0.0f, 0.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, { 0.0f, 2.0f, 0.0f } };
+    gk::String error;
+    if (!chain->bones.AppendRange(chainBones, 2) || !gk::model::animation::ResetSecondaryMotionChain(targets, 3, chain->simulation, error))
+    {
+        delete chain;
+        return false;
+    }
+    chain->settings.gravity = {};
+    chain->settings.maxAngleDegrees = 60.0f;
+    chain->settings.endOffset = { 0.0f, 1.0f, 0.0f };
+    chain->settings.constraintIterations = 32;
+    chain->colliderMask = 0;
+    if (!state.chains.Append(chain))
+    {
+        delete chain;
+        return false;
+    }
+    const gk::FModelSecondaryMotionContactLink contact{ 1, {}, 1, {}, 0.0f };
+    if (!state.contactLinks.Append(contact))
+    {
+        return false;
+    }
+
+    FModelSkeleton skeleton;
+    if (!skeleton.parents.Append(-1) || !skeleton.parents.Append(0))
+    {
+        return false;
+    }
+    FModelBoneTransform rootTransform{};
+    FModelBoneTransform childTransform{};
+    childTransform.position[1] = 1.0f;
+    if (!skeleton.restLocalTransforms.Append(rootTransform) || !skeleton.restLocalTransforms.Append(childTransform))
+    {
+        return false;
+    }
+    FModelPose base;
+    gk::Array<float> baseMatrices;
+    if (!InitializeModelPose(skeleton, base, error) || !EvaluateModelPose(skeleton, base, baseMatrices, error))
+    {
+        return false;
+    }
+    const gk::model::animation::FModelSecondaryMotionCollisionShape body{ { 0.0f, 1.0f, 0.0f }, { 0.0f, 1.0f, 0.0f }, 0.2f };
+    const gk::Vec3 pinnedRoot = chain->simulation.points.At(0).position;
+    const FModelBoneTransform localTranslationSnapshot[2] = { base.localTransforms.At(0), base.localTransforms.At(1) };
+    if (!gk::model::ConstrainSecondaryMotionLinks(state, previous, &body, 1, 0.0, error, &baseMatrices))
+    {
+        fprintf(stderr, "single-offset ancestor fallback did not find the feasible contact pose: %s\n", error.CStr());
+        return false;
+    }
+    if (!error.Empty())
+    {
+        return false;
+    }
+    const auto& solvedChain = *state.chains.At(0);
+    if (memcmp(&pinnedRoot, &solvedChain.simulation.points.At(0).position, sizeof(pinnedRoot)) != 0)
+    {
+        return false;
+    }
+    for (uint32_t point = 0; point < 2; ++point)
+    {
+        const gk::Vec3& first = solvedChain.simulation.points.At(point).position;
+        const gk::Vec3& second = solvedChain.simulation.points.At(point + 1).position;
+        const double dx = static_cast<double>(second.x) - first.x;
+        const double dy = static_cast<double>(second.y) - first.y;
+        const double dz = static_cast<double>(second.z) - first.z;
+        const double length = sqrt(dx * dx + dy * dy + dz * dz);
+        if (fabs(length - 1.0) > 2.0e-5 || dy / length < 0.5 - 1.0e-5)
+        {
+            return false;
+        }
+    }
+    FModelPose renderedPose;
+    gk::Array<float> renderedMatrices;
+    const gk::Vec3 renderedPoints[3] = { solvedChain.simulation.points.At(0).position, solvedChain.simulation.points.At(1).position, solvedChain.simulation.points.At(2).position };
+    if (!OrientModelPoseChain(skeleton, base, solvedChain.bones.Data(), solvedChain.bones.Count(), solvedChain.settings.endOffset, renderedPoints, renderedPose, error) || !EvaluateModelPose(skeleton, renderedPose, renderedMatrices, error) || !gk::model::CheckRenderedSecondaryMotionContactLinks(state, renderedMatrices, &body, 1, error))
+    {
+        fprintf(stderr, "single-offset ancestor fallback disagreed with rendered FK: %s\n", error.CStr());
+        return false;
+    }
+    for (uint32_t bone = 0; bone < 2; ++bone)
+    {
+        if (memcmp(localTranslationSnapshot[bone].position, renderedPose.localTransforms.At(bone).position, sizeof(localTranslationSnapshot[bone].position)) != 0)
+        {
+            return false;
+        }
+    }
+    const double dx = renderedMatrices.At(28) - body.start.x;
+    const double dy = renderedMatrices.At(29) - body.start.y;
+    const double dz = renderedMatrices.At(30) - body.start.z;
+    const double renderedDistance = sqrt(dx * dx + dy * dy + dz * dz);
+    return renderedDistance >= static_cast<double>(body.radius) * 0.999;
+}
+
+/**
  * public contact-link setterの複製、検証、置換、解除、instance寿命を確かめる。
  */
 static bool TestSecondaryMotionContactLinkApiLifecycle()
@@ -3893,5 +3996,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

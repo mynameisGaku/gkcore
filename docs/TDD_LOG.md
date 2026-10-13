@@ -1642,3 +1642,29 @@ START18の開始区間は、Jacket平均侵入10.308点・Skirt35.817点・Vest_
 Native commandはgkcore_model_benchmark.exe <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Skinning Test.fbx> <Swinging.fbx> --follow-motion --secondary-motion samples/config/yumeka-skinning-contact-motion.txt --secondary-colliders samples/config/yumeka-bone-colliders.txt --materials <material-config.txt>。GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_BENCHMARK_FRAMES=3000、GKCORE_BENCHMARK_WARMUP=0、GKCORE_BENCHMARK_DELTA_REPLAY_PATH=chain-joint-fixed-3000-deltas.txtです。描画検査は同じ引数へGKCORE_VERIFY_GPU_SKINNING=1、GKCORE_VERIFY_SKIN_POINTS=Skirt、GKCORE_SKIN_POINT_MESH_SUMMARY=1を付け、120frame・step1/60秒・開始0/3.35秒を指定しました。
 
 記録はchain-contact-{skin,skin-frame98,skin-frame33,skin-frame433}-fixture.json、chain-contact-frame433-{cone-certificate,90deg-witness}.json、chain-collider-mask-{red-build,green-test,sdk-red-build}.log、chain-mask-skin-3000-{debug,release}.log、chain-joint-functional-comparison.json、chain-mask-final-cpu-{debug,release}-test.log、chain-mask-{game,sdk}-manifest.json、chain-mask-consumer-run.logです。一時調査source、PPM、重複Debug画像、使用済みexport staging、重複したconsumerのbinコピーなど、生成809ファイルと空folder80個を片づけました。元asset・現在のbuild・最新PNGと数値記録は保持しています。調査source本文はchain-mask-cleanup.jsonへ保存し、削除前の絶対pathとSHA-256を個別照合しました。
+
+## 衣服位置の接触と鎖全体の姿勢を同時に解く
+
+2026-10-13、START18へ179個のbone-local offset球を重ねた構成は、固定1/60秒の再生で2frame後に停止しました。同じ骨へ複数の接触が付き、個々の回転投影と骨長・身体接触の復元を順番に行うと、先の接触を後の処理が崩す入力です。異なる方向の二つのoffset球、親の回転が必要な接触、同じboneの異なる端点を持つcapsuleを契約テストにし、offsetを無視する旧契約でREDを取得しました。
+
+同じboneに両端を付けた接触だけを使い、骨原点間link・距離制約を併用しない場合、対象鎖の全節方向と各offset接触をまとめて探索します。各節の単位方向から固定root・基準骨長・最大曲げ角を保つ位置列を再構成し、身体の節球・線分とすべての添付接触の侵入量を同時に減らします。offsetには最小回転による位置の変化率、祖先方向には両端点の平行移動の変化率を使います。候補探索は有限で、数値失敗・確保失敗と候補なしを区別します。正反対方向で回転が一意にならない候補は採用しません。既に接触を満たした探索初期値が、勾配0のため捨てられていた処理も修正しました。
+
+解は全対象鎖を一時配列へ作ってからまとめて反映し、float保存後の骨長・曲げ角・身体・offset接触を検査します。骨ローカルtranslationとscale、固定rootを変えず、自由boneのmodel空間pivotは祖先の回転によって移動できます。offsetは鎖maskの対象にせず、接触半径だけを加えた全身体形状を使います。候補のoffset接触は従来と同じ許容幅の半分、描画FKでは全幅を使います。単一接触では成功する従来のpivot固定投影を維持し、解けない場合だけ鎖全体へ切り替えます。cross-chainの端点や骨原点間link・距離補助を含む構成は既存の連成経路です。
+
+実際の停止入力から5点・4節・17接触を取り出し、独立した400,000候補の方向探索で、骨長・角度・すべての身体と添付接触を満たす姿勢が存在することを確認しました。テスト専用の数値fixtureへ入力と成立姿勢を保存し、同じ入力をRuntime解法で解いた後、独立した点・線分距離と最小回転の計算で再検査します。fixtureにはmesh、texture、animationデータやbone名を含めず、mainには配布しません。親が必要な単一接触はrig統合テストでも、元のlocal translationを保ち、実際の描画FKで接触が成立することを確認しました。巨大な不成立形状、実際の確保失敗、NaN形状、segment範囲外、定義の角度不一致は失敗と入力保持を検査します。
+
+START18へ179球を追加しました。13鎖・身体8形状、スカートの最大角90度・節半径0.038・32反復・mask240、髪と尻尾の全身体接触は前回と同じです。骨原点間link・距離補助・頂点接触は設定しません。Windows 11 Pro build26200、RTX4070 SUPER / driver617.42、Runtime v142 / MSVC19.29、Windows SDK10.0.22621.0で、固定1/60秒の3,000frameをDebug/Releaseとも完走しました。開始0秒・3.35秒の各120frameをbody-only対照と179球付きの両構成で描画し、Debug/Release計960frameのGPU位置・法線と実skin集計が有効でした。全mesh集計と保存4組の画像は構成間で一致しました。
+
+比較は同じ1,314点（Jacket443・Skirt440・Vest_Shirt431）を全8身体形状で検査し、鎖maskで集計を絞りません。開始区間の平均侵入点数はJacket10.308→0.117、Skirt35.817→14.950、Vest_Shirt41.992→18.050、最大深度は0.067606→0.009331、0.073506→0.046561、0.076412→0.053237 model unitでした。loop付近は1.900→0.242、22.525→15.150、22.075→14.875、最大深度0.046666→0.011510、0.065772→0.048603、0.067106→0.049902です。実際の布面侵入は減りましたが、残っています。2560×1920の側面画像も目視し、連続動作と形状の非貫通を同一視しません。
+
+START16の従来のSilly Dancing・Capoeira構成も、開始0秒・3.35秒の各120frameをDebug/Releaseで再生し、計480frameが有効でした。保存2組の画像と全mesh記録が構成間で一致し、前回Releaseの全mesh記録とも一致しています。高解像度のSTART18の120frameは別に記録しました。GPU実行を直列化し、検証ウィンドウは非表示にしています。
+
+Native commandはgkcore_model_benchmark.exe <YUMEKA FBX> 1.1166145684 0 .671678712 -.2517482195 external-blend-ik <Skinning Test.fbx> <Swinging.fbx> --follow-motion --secondary-motion samples/config/yumeka-skinning-contact-motion.txt --secondary-colliders samples/config/yumeka-bone-colliders.txt --secondary-contact-links samples/config/yumeka-secondary-contact-links.txt --materials <material-config.txt>。GKCORE_TEST_WINDOW_VISIBLE=0、GKCORE_BENCHMARK_FRAMES=3000、GKCORE_BENCHMARK_WARMUP=0、GKCORE_BENCHMARK_DELTA_REPLAY_PATH=chain-joint-fixed-3000-deltas.txtです。描画検査は同じ引数へGPU skinと実skin集計の検査を付け、step1/60秒・開始0/3.35秒・120frameを指定しました。
+
+独立した線分距離検査を固定4回の交互投影から、内部停留点と四つの端点境界の最小値へ変更しました。ほぼ平行な場合は外積から分母とパラメータを求め、大きな二乗値の差による桁落ちを避けます。交差・斜交・平行・浅い交角の内部最短点と端点最短点を別契約で確認しました。最終CPU Debug63/63（5.50秒）、Release63/63（5.02秒）成功です。独立したread-onlyレビュー、formatterのbyte照合、UTF-8 BOM/CRLF、noSTLと相対includeの監査、START CheckOnly、diff検査も通過しています。
+
+固定deltaだけでなく、通常の実時間deltaでも同じ179球付き構成をDebug/Release各3,000frame完走しました。delta traceは更新中にメモリーへ保持して終了時だけ書き出し、双方deltasRecorded=3000、completed=true、traceWritten=true、exit0でした。この確認は全てのmotion・delta・配置での収束保証ではありません。GPU出力を直列化し、micro FPS変更はしていません。
+
+ゲーム構築用372ファイルのRuntimeと5sampleをRelease buildしました。install済みSDKは59ファイルで許可リストに一致し、そのSDKをリンクした外部consumerがGPU Init・描画・Present・Shutdownを完了しました。consumerへコピーした全RuntimeファイルのSHA-256もinstall出力と一致しています。mainにはtests、数値fixture、私有asset、モデル固有の接触設定や開発記録を含めません。
+
+記録はjoint-attachment-contract-red-{build,test}.log、joint-attachment-native-contact1-{chain,witness}.json、joint-attachment-native-fixtures.jsonl、joint-attachment-final-cpu-{debug,release}-{build,test}.log、joint-attachment-masked-debug-3000.log、joint-attachment-final-release-3000.log、joint-attachment-realtime-{debug,release}-3000.logとdeltas.txt、joint-attachment-functional-comparison.json、joint-attachment-legacy-regression.json、joint-attachment-skin-comparison.json、joint-attachment-{game,sdk}-manifest.json、joint-attachment-consumer-run.log、joint-attachment-source-audit.jsonです。使用済みexport staging、一時調査sourceとcapture harness、PPMとPython cacheの生成400ファイル、空folder48個を片づけました。削除対象は生成物の絶対path・SHA-256を個別に照合し、調査source本文はjoint-attachment-cleanup.jsonへ保存しました。元asset・現在のbuild・最新PNGと数値記録は保持しています。次は複数boneのskin寄与と衣服幅を考慮し、骨側の接触形状が支えられていない布面の侵入を改善します。
