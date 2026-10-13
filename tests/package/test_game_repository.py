@@ -1,5 +1,6 @@
 ﻿"""ゲーム構築用checkoutの出力対象とCMake切り替えを固定する。"""
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,26 @@ import setup
 
 
 class GameRepositoryTests(unittest.TestCase):
+    def test_export_contains_example_build_sources_and_paired_dependencies(self):
+        source = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "game"
+            exporter.export_repository(source, destination)
+            cmake = (destination / "CMakeLists.txt").read_text(encoding="utf-8-sig")
+            # CMakeが直接使うexampleと、その自作header/cppを配布先だけで解決する。
+            referenced = set(re.findall(r"\bexamples/[A-Za-z0-9_./-]+\.(?:cpp|c|h)(?![A-Za-z])", cmake))
+            self.assertTrue(referenced)
+            for relative in referenced:
+                self.assertTrue((destination / relative).is_file(), relative)
+                if not relative.endswith(".cpp"):
+                    continue
+                text = (destination / relative).read_text(encoding="utf-8-sig")
+                for header in re.findall(r'#include\s+"(examples/support/[^"\n]+\.h)"', text):
+                    self.assertTrue((destination / header).is_file(), header)
+                    implementation = Path(header).with_suffix(".cpp")
+                    if (source / implementation).is_file():
+                        self.assertTrue((destination / implementation).is_file(), str(implementation))
+
     def test_main_cmake_removes_nested_test_capture_and_benchmark_blocks(self):
         source = """cmake_minimum_required(VERSION 3.20)
 option(GKCORE_BUILD_TESTS \"tests\" ON)

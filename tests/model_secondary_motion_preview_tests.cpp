@@ -1,7 +1,9 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "examples/support/ModelSecondaryMotionPreview.h"
 #include "examples/support/ModelSecondaryMotionDebugView.h"
+#include "examples/support/ModelPingPongMotion.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -19,6 +21,61 @@ bool Require(bool condition, const char* contract)
     }
     fprintf(stderr, "failed: %s\n", contract);
     return false;
+}
+
+/**
+ * clip両端で折り返し、巨大時刻も有限の範囲へ写す。
+ */
+bool TestPingPongMotionTimeContracts()
+{
+    double output = -7.0;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(0.0, 2.0, output) && output == 0.0, "ping-pong starts at clip time zero"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(1.25, 2.0, output) && output == 1.25, "ping-pong advances before the endpoint"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(2.0, 2.0, output) && output == 2.0, "ping-pong reaches the endpoint"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(2.75, 2.0, output) && output == 1.25, "ping-pong reverses after the endpoint"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(4.0, 2.0, output) && output == 0.0, "ping-pong repeats after a full period"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(1.25, 1.0, output) && output == 0.75, "each clip duration maps the shared phase independently"))
+        return false;
+    if (!Require(gk::examples::EvaluatePingPongMotionTime(1.0e300, 3.0, output) && output >= 0.0 && output <= 3.0, "large phase remains in clip range"))
+        return false;
+    output = -7.0;
+    const bool invalidRejected = !gk::examples::EvaluatePingPongMotionTime(-1.0, 2.0, output) && !gk::examples::EvaluatePingPongMotionTime(1.0, 0.0, output) && !gk::examples::EvaluatePingPongMotionTime(INFINITY, 2.0, output) && !gk::examples::EvaluatePingPongMotionTime(1.0, INFINITY, output);
+    return Require(invalidRejected, "invalid ping-pong input is rejected") && Require(output == -7.0, "invalid inputs preserve output");
+}
+
+/**
+ * option省略・指定・値optionの通過・重複時のatomic性を確認する。
+ */
+bool TestPingPongMotionOptionContracts()
+{
+    char* absent[] = { "viewer", "model.fbx", "1", "0", "0", "0", "animate", "--materials", "--ping-pong-motion", nullptr };
+    int count = 9;
+    bool enabled = true;
+    if (!Require(gk::examples::ParsePingPongMotionOptions(count, absent, enabled) && !enabled && count == 9 && strcmp(absent[8], "--ping-pong-motion") == 0, "materials value matching the flag remains untouched"))
+        return false;
+
+    char* selected[] = { "viewer", "model.fbx", "1", "0", "0", "0", "animate", "--ping-pong-motion", "--materials", "materials.txt", nullptr };
+    count = 10;
+    enabled = false;
+    if (!Require(gk::examples::ParsePingPongMotionOptions(count, selected, enabled) && enabled && count == 9 && strcmp(selected[7], "--materials") == 0 && strcmp(selected[8], "materials.txt") == 0 && selected[count] == nullptr, "single flag is removed while argument-bearing options remain"))
+        return false;
+
+    char* duplicate[] = { "viewer", "model.fbx", "1", "0", "0", "0", "animate", "--ping-pong-motion", "--ping-pong-motion", nullptr };
+    char* const original[] = { duplicate[0], duplicate[1], duplicate[2], duplicate[3], duplicate[4], duplicate[5], duplicate[6], duplicate[7], duplicate[8], nullptr };
+    count = 9;
+    enabled = false;
+    if (!Require(!gk::examples::ParsePingPongMotionOptions(count, duplicate, enabled), "duplicate flag is rejected") || !Require(count == 9 && !enabled && memcmp(duplicate, original, sizeof(original)) == 0, "duplicate rejection preserves arguments and output"))
+        return false;
+
+    char* nullArgument[] = { "viewer", "model.fbx", "1", "0", "0", "0", "animate", nullptr, nullptr };
+    count = 8;
+    enabled = true;
+    return Require(!gk::examples::ParsePingPongMotionOptions(count, nullArgument, enabled), "null argument is rejected") && Require(count == 8 && enabled && nullArgument[7] == nullptr, "null rejection preserves arguments and output");
 }
 
 /**
@@ -236,5 +293,5 @@ bool TestSecondaryContactPointPathContracts()
  */
 bool RunSecondaryMotionPreviewContracts()
 {
-    return TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts() && TestSecondaryLinkPathContracts() && TestSecondaryDistancePathContracts() && TestSecondaryContactLinkPathContracts() && TestSecondaryContactPointPathContracts();
+    return TestPingPongMotionTimeContracts() && TestPingPongMotionOptionContracts() && TestAbsentFlagAndMaterialsValue() && TestSingleFlagRemoval() && TestDuplicateFlagIsAtomic() && TestMotionAndColliderPathsPreserveFlagLikeMaterialsValue() && TestCollisionDebugFlagContracts() && TestSecondaryLinkPathContracts() && TestSecondaryDistancePathContracts() && TestSecondaryContactLinkPathContracts() && TestSecondaryContactPointPathContracts();
 }

@@ -189,3 +189,9 @@ Windows 11 build 26200、RTX 4070 SUPER、v142 / MSVC 19.29、Windows SDK 10.0.2
 START18はSkinning Test・Swingingの外部blend + IKへ、13鎖・身体8形状・複数boneの実weightで動く465接触球を重ねます。スカートの骨球0.038と脚mask240を保ち、脚上げで折り返せる角度180度を使います。Debug/Releaseの固定1/60秒と実時間で、それぞれ3,000frameを完走しました。骨長・曲げ角・身体接触・描画FKを検査して確定し、頂点位置は補正しません。
 
 Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621.0、1280×720、VSyncなし・標準効果・debug表示OFF・非表示windowのRelease実時間3,000frame/warmup0は95.079FPS、p95 10.628ms、Draw .411/Present2.884/IK .505/secondary6.665msでした。接触設定・実装・確認範囲が従来の179球構成とは異なるため、速度改善の対照比較には使いません。今回の目的は衣服位置の接触と停止の修正で、300FPSは未達です。記録はbuild/native-validation/skin-coverage-complete-release-real-3000.logへ保存しています。
+
+## スカートの連続動作を確認する構成
+
+接触の位置補正による人工速度を除き、前回からの物理予測を先に一括接触へ渡しました。START18の検査motionは往復再生です。近い合法姿勢が得られた後も候補を比較し続ける試作は、実時間1,000frameのdelta平均0.160508秒、114回の250ms以上の更新間隔となり、通常表示にも不向きでした。保存後の全制約を満たす候補を縮約し、その最初の成功で探索を終了します。
+
+同じWindows/GPU/toolchain、1280×720、非表示・標準効果・VSyncなし、13鎖・身体8形状・465球、Release実時間600frame/warmup0は31.025FPS、p95 31.645msでした。Draw .443、Present5.007、IK .554、揺れ更新26.152msです。更新内訳の記録を有効にした値で、往復再生と探索基準も変えているため、以前の95.079FPSとの単純な速度比較には使いません。動作は継続しましたが、300FPSは未達です。記録はbuild/native-validation/skirt-stability-bounded-search-realtime-600.logです。

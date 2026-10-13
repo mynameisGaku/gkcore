@@ -48,6 +48,8 @@ EXAMPLE_FILES = (
     "examples/support/FModelArmIkPreview.cpp",
     "examples/support/FModelMotionView.h",
     "examples/support/FModelMotionView.cpp",
+    "examples/support/ModelPingPongMotion.h",
+    "examples/support/ModelPingPongMotion.cpp",
     "examples/support/ModelSecondaryMotionPreview.h",
     "examples/support/ModelSecondaryMotionPreview.cpp",
     "examples/support/ModelSecondaryMotionDebugView.h",

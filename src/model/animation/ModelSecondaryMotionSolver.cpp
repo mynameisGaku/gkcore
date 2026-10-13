@@ -108,6 +108,152 @@ bool IsFinite(const gk::Vec3& value)
 }
 
 /**
+ * 押し出しを速度にせず、動く骨長・角度境界・接触面に必要な速度だけを求める。
+ */
+bool ConstrainContactVelocities(const gk::Vec3* targets, const FModelSecondaryMotionChainState& previous, const gk::FModelSecondaryMotionSettings& settings, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double previousWeight, double delta, double step, const gk::Array<FVector3>& positions, const gk::Array<FVector3>& oldPositions, const gk::Array<FVector3>& stepTargets, gk::Array<FVector3>& velocities, gk::String& error)
+{
+    // 固定rootはアニメーションが指定した移動速度を持つ。
+    for (uint32_t axis = 0; axis < 3u; ++axis)
+    {
+        velocities.At(0).value[axis] = (positions.At(0).value[axis] - oldPositions.At(0).value[axis]) / step;
+    }
+    const double angle = static_cast<double>(settings.maxAngleDegrees) * (3.1415926535897932384626433832795 / 180.0);
+    const double cosineLimit = cos(angle);
+    // 身体と鎖の速度制約を交互に投影し、固定root以外の予測速度を保つ。
+    for (uint32_t pass = 0; pass < settings.constraintIterations; ++pass)
+    {
+        for (uint32_t index = 1; index < positions.Count(); ++index)
+        {
+            FVector3 direction = Subtract(positions.At(index), positions.At(index - 1u));
+            const double length = Length(direction);
+            if (!(length > 0.0) || !Normalize(direction))
+            {
+                error.Assign("Secondary motion velocity segment is invalid");
+                return false;
+            }
+            const FVector3 animatedSegment = Subtract(stepTargets.At(index), stepTargets.At(index - 1u));
+            const FVector3 previousParent = Interpolate(ToDouble(previous.previousTargets.At(index - 1u)), ToDouble(targets[index - 1u]), previousWeight);
+            const FVector3 previousChild = Interpolate(ToDouble(previous.previousTargets.At(index)), ToDouble(targets[index]), previousWeight);
+            const FVector3 previousSegment = Subtract(previousChild, previousParent);
+            const double lengthRate = (Length(animatedSegment) - Length(previousSegment)) / step;
+            FVector3 relative = Subtract(velocities.At(index), velocities.At(index - 1u));
+            const double radialCorrection = lengthRate - Dot(relative, direction);
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                velocities.At(index).value[axis] += direction.value[axis] * radialCorrection;
+            }
+            FVector3 reference = animatedSegment;
+            FVector3 oldReference = previousSegment;
+            if (!Normalize(reference) || !Normalize(oldReference))
+            {
+                error.Assign("Secondary motion velocity reference is invalid");
+                return false;
+            }
+            if (settings.maxAngleDegrees == 0.0f)
+            {
+                // 角度0では親子の相対速度もアニメーション線分に一致させる。
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    velocities.At(index).value[axis] = velocities.At(index - 1u).value[axis] + (animatedSegment.value[axis] - previousSegment.value[axis]) / step;
+                }
+            }
+            else if (settings.maxAngleDegrees < 180.0f && Dot(direction, reference) <= cosineLimit + 128.0 * FLT_EPSILON)
+            {
+                relative = Subtract(velocities.At(index), velocities.At(index - 1u));
+                const double cosine = Dot(direction, reference);
+                FVector3 tangent = reference;
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    tangent.value[axis] -= direction.value[axis] * cosine;
+                }
+                const double tangentSquared = Dot(tangent, tangent);
+                FVector3 referenceDerivative = Subtract(animatedSegment, previousSegment);
+                const double referenceRadialRate = Dot(referenceDerivative, reference);
+                for (uint32_t axis = 0; axis < 3u; ++axis)
+                {
+                    referenceDerivative.value[axis] = (referenceDerivative.value[axis] - reference.value[axis] * referenceRadialRate) / (Length(animatedSegment) * step);
+                }
+                const double referenceRate = Dot(direction, referenceDerivative);
+                const double outwardRate = Dot(relative, tangent) / length + referenceRate;
+                if (outwardRate < 0.0 && tangentSquared > DBL_EPSILON)
+                {
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        velocities.At(index).value[axis] -= tangent.value[axis] * outwardRate * length / tangentSquared;
+                    }
+                }
+            }
+        }
+        for (uint32_t index = 1; index < positions.Count(); ++index)
+        {
+            for (uint32_t shapeIndex = 0; shapeIndex < shapeCount; ++shapeIndex)
+            {
+                const auto& shape = shapes[shapeIndex];
+                // 子の球と隣接線分を別々に扱い、線分上の速度には両端の寄与を使う。
+                for (uint32_t contactKind = 0; contactKind < 2u; ++contactKind)
+                {
+                    const FVector3& first = contactKind == 0u ? positions.At(index) : positions.At(index - 1u);
+                    const FVector3& second = positions.At(index);
+                    if (contactKind == 1u && index == 1u)
+                    {
+                        const double rootAxisAmount = shape.axisLengthSquared > 0.0 ? fmax(0.0, fmin(1.0, Dot(Subtract(first, shape.start), shape.axis) / shape.axisLengthSquared)) : 0.0;
+                        const FVector3 rootAxisPoint = Interpolate(shape.start, shape.end, rootAxisAmount);
+                        // 位置の接触許容幅より近い固定rootへ、特異な速度反応を要求しない。
+                        const double rootThreshold = shape.radius;
+                        if (Length(Subtract(first, rootAxisPoint)) < rootThreshold)
+                        {
+                            continue;
+                        }
+                    }
+                    double penetration = 0.0;
+                    double spanAmount = 0.0;
+                    FVector3 normal{};
+                    if (!QueryPreparedSecondaryMotionFreeSegmentContact(shape, first, second, penetration, spanAmount, normal, error, 1.0))
+                    {
+                        return false;
+                    }
+                    const double shapeWeight = previousWeight + step / delta;
+                    const double surfaceRadius = previousShapes[shapeIndex].radius + (static_cast<double>(currentShapes[shapeIndex].radius) - previousShapes[shapeIndex].radius) * shapeWeight;
+                    const double surfaceDistance = shape.radius - shape.tolerance - penetration;
+                    const double storageMargin = fmax(surfaceRadius, Length(contactKind == 0u ? first : Interpolate(first, second, spanAmount))) * 8.0 * FLT_EPSILON;
+                    if (surfaceDistance > surfaceRadius + storageMargin)
+                    {
+                        continue;
+                    }
+                    const FVector3 contactPosition = Interpolate(first, second, spanAmount);
+                    const double axisAmount = shape.axisLengthSquared > 0.0 ? fmax(0.0, fmin(1.0, Dot(Subtract(contactPosition, shape.start), shape.axis) / shape.axisLengthSquared)) : 0.0;
+                    const FVector3 previousAxisPoint = Interpolate(ToDouble(previousShapes[shapeIndex].start), ToDouble(previousShapes[shapeIndex].end), axisAmount);
+                    const FVector3 currentAxisPoint = Interpolate(ToDouble(currentShapes[shapeIndex].start), ToDouble(currentShapes[shapeIndex].end), axisAmount);
+                    FVector3 surfaceVelocity = Subtract(currentAxisPoint, previousAxisPoint);
+                    const double radiusRate = (static_cast<double>(currentShapes[shapeIndex].radius) - previousShapes[shapeIndex].radius) / delta;
+                    for (uint32_t axis = 0; axis < 3u; ++axis)
+                    {
+                        surfaceVelocity.value[axis] = surfaceVelocity.value[axis] / delta + normal.value[axis] * radiusRate;
+                    }
+                    const double firstWeight = contactKind == 0u || index == 1u ? 0.0 : 1.0 - spanAmount;
+                    const double secondWeight = contactKind == 0u ? 1.0 : spanAmount;
+                    const FVector3 contactVelocity = contactKind == 0u ? velocities.At(index) : Interpolate(velocities.At(index - 1u), velocities.At(index), spanAmount);
+                    const double inwardSpeed = Dot(Subtract(contactVelocity, surfaceVelocity), normal);
+                    const double denominator = firstWeight * firstWeight + secondWeight * secondWeight;
+                    if (inwardSpeed < 0.0 && denominator > DBL_EPSILON)
+                    {
+                        for (uint32_t axis = 0; axis < 3u; ++axis)
+                        {
+                            velocities.At(index).value[axis] -= normal.value[axis] * inwardSpeed * secondWeight / denominator;
+                            if (firstWeight > 0.0)
+                            {
+                                velocities.At(index - 1u).value[axis] -= normal.value[axis] * inwardSpeed * firstWeight / denominator;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return true;
+}
+
+/**
  * solver設定とdeltaを検証する。
  */
 bool ValidateSettings(const gk::FModelSecondaryMotionSettings& settings, double delta)
@@ -553,9 +699,13 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 return false;
             }
         }
+        if (integrateMotion && shapeCount > 0u && !ConstrainContactVelocities(targets, state, settings, previousShapes, currentShapes, contactShapes, shapeCount, static_cast<double>(substep) / substepCount, delta, step, positions, oldPositions, stepTargets, velocities, error))
+        {
+            return false;
+        }
         for (uint32_t index = 0; index < count; ++index)
         {
-            if (integrateMotion)
+            if (integrateMotion && shapeCount == 0u)
             {
                 for (uint32_t axis = 0; axis < 3; ++axis)
                 {

@@ -53,6 +53,8 @@ viewerは起動時にモデルと各外部motionの人型役割を推定して�
 
 `START.bat`の17は、Skinning TestとSwingingを外部blend + IKで適用し、`--follow-motion`と接触設定なしの`--secondary-motion`で揺れものを再生します。身体shapeや接触linkは設定せず、身体接触を検証する入口ではありません。以前の身体shapeに骨間linkと距離補助を重ねる構成では停止が残っています。
 
+`START.bat`の18は衣服の身体接触を確認する設定です。検査用motionの終端と先頭は姿勢がつながっていないため、`--ping-pong-motion`で各clipをその長さに合わせて往復再生します。元のmotionデータは変更しません。`M`でmotionを止めても揺れは自然に落ち着くまで更新し、`R`で時刻0と揺れの初期状態へ戻します。このoptionは外部motionのmodeで使え、通常のloop再生も引き続き選べます。
+
 18は17と同じ外部blend + IKに、13鎖の骨球、8個の身体球・capsule、複数boneの実weightで位置を決める465個の接触球を加えます。[鎖設定](../samples/config/yumeka-skinning-contact-motion.txt)はスカートの最大角度180度・節球半径0.038・脚4形状のmask240を使い、髪・尻尾は全身体形状を判定します。[衣服の接触球](../samples/config/yumeka-skinning-contact-points.txt)は別の骨の影響も含め、球中心を各boneの変換位置とweightから求めます。接触球は全8身体形状を使い、頂点位置は書き換えません。
 
 原点間link・距離補助・従来の179 offset球・頂点接触は18へ指定しません。デバッグ表示は`C`キーで切り替えられ、重み付き接触球も表示します。元のbind記録1,314点のうち、自由なスカート子boneの寄与が99%以上ある468点を、同じbone/weightの組にだけまとめています。固定rootや身体boneが主体の点、三角形の内側、布面全体の非貫通は保証しません。

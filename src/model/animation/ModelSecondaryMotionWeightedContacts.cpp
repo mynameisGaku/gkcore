@@ -21,6 +21,10 @@ const uint32_t kWeightedContactSeedAzimuths = 16;
 const double kWeightedContactToleranceFraction = 0.5;
 // 角度境界でfloat保存後の丸めを吸収する幅。
 const double kWeightedContactConeBoundary = 64.0 * FLT_EPSILON;
+// float保存後も角度制約の許容幅に余裕を残す角度幅。
+const double kWeightedContactStoredAngleMargin = 16.0 * FLT_EPSILON;
+// 保存後の骨長と角度を呼出し側と同じ幅で検査する。
+const double kWeightedContactStoredConstraintTolerance = 128.0 * FLT_EPSILON;
 
 /**
  * 座標が有限であることを確認する。
@@ -755,17 +759,17 @@ bool MakeCoherentSeed(const FSecondaryMotionContactChain* chains, uint32_t chain
                 continue;
             }
             const FSecondaryMotionReferenceSegment& referenceSegment = references[directionIndex];
-            gk::FVector3d reference = referenceSegment.direction;
-            if (!Normalize(reference))
+            gk::FVector3d current = currentDirections.At(directionIndex);
+            if (!Normalize(current))
             {
                 return false;
             }
-            gk::FVector3d tangent = Subtract(worldTangent, Multiply(reference, Dot(worldTangent, reference)));
-            if (!Normalize(tangent) && !BuildPerpendicular(reference, tangent))
+            gk::FVector3d tangent = Subtract(worldTangent, Multiply(current, Dot(worldTangent, current)));
+            if (!Normalize(tangent) && !BuildPerpendicular(current, tangent))
             {
                 return false;
             }
-            gk::FVector3d candidate = Add(Multiply(reference, cos(angle)), Multiply(tangent, sin(angle)));
+            gk::FVector3d candidate = Add(Multiply(current, cos(angle)), Multiply(tangent, sin(angle)));
             if (!NormalizeAndLimitSecondaryMotionDirection(referenceSegment.direction, chain.cosineLimit, candidate) || !directions.Append(candidate))
             {
                 return false;
@@ -816,6 +820,197 @@ bool MakeTargetedGradientSeed(const FSecondaryMotionContactChain* chains, uint32
         }
     }
     return true;
+}
+
+/**
+ * floatへ保存した候補が骨長と許容角を保つか確認する。
+ */
+bool IsStoredPoseWithinChainConstraints(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& positions)
+{
+    for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
+    {
+        const FSecondaryMotionContactChain& chain = chains[chainIndex];
+        for (uint32_t segment = 0; segment < chain.segmentCount; ++segment)
+        {
+            const uint32_t parentIndex = chain.firstPoint + segment;
+            const uint32_t childIndex = parentIndex + 1u;
+            gk::FVector3d parent{};
+            gk::FVector3d child{};
+            for (uint32_t axis = 0; axis < 3u; ++axis)
+            {
+                parent.value[axis] = static_cast<float>(positions.At(parentIndex).value[axis]);
+                child.value[axis] = static_cast<float>(positions.At(childIndex).value[axis]);
+            }
+            const gk::FVector3d current = Subtract(child, parent);
+            const double length = Length(current);
+            const FSecondaryMotionReferenceSegment& reference = references[chain.firstSegment + segment];
+            const double angleLimit = acos(chain.cosineLimit);
+            const double storedCosineLimit = cos(fmin(3.1415926535897932384626433832795, angleLimit + kWeightedContactStoredConstraintTolerance));
+            if (!(length > 0.0) || !isfinite(length) || fabs(length - reference.length) > reference.length * kWeightedContactStoredConstraintTolerance)
+            {
+                return false;
+            }
+            const double cosine = Dot(current, reference.direction) / length;
+            if (!isfinite(cosine) || cosine < storedCosineLimit)
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * float丸め後も骨制約と全接触を満たすか確認する。
+ */
+bool IsStoredCandidateClear(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& positions, bool& clear, gk::String& error)
+{
+    clear = false;
+    if (!IsStoredPoseWithinChainConstraints(chains, chainCount, references, positions))
+    {
+        return true;
+    }
+    gk::Array<gk::FVector3d> storedPositions;
+    gk::Array<gk::FVector3d> gradients;
+    gk::Array<FWeightedAnchorEvaluation> anchorEvaluations;
+    uint32_t segmentCount = 0;
+    for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
+    {
+        segmentCount += chains[chainIndex].segmentCount;
+    }
+    if (!storedPositions.Reserve(positions.Count()) || !gradients.Reserve(segmentCount) || !anchorEvaluations.Reserve(anchorCount))
+    {
+        error.Assign("Secondary motion weighted stored-pose workspace allocation failed");
+        return false;
+    }
+    for (uint32_t index = 0; index < positions.Count(); ++index)
+    {
+        gk::FVector3d stored{};
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            stored.value[axis] = static_cast<float>(positions.At(index).value[axis]);
+        }
+        if (!storedPositions.Append(stored))
+        {
+            error.Assign("Secondary motion weighted stored-pose workspace allocation failed");
+            return false;
+        }
+    }
+    for (uint32_t index = 0; index < segmentCount; ++index)
+    {
+        if (!gradients.Append(gk::FVector3d{}))
+        {
+            error.Assign("Secondary motion weighted stored-pose workspace allocation failed");
+            return false;
+        }
+    }
+    double merit = 0.0;
+    if (!EvaluateAll(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, storedPositions.Data(), merit, gradients.Data(), gradients.Count(), anchorEvaluations, error))
+    {
+        return false;
+    }
+    clear = merit == 0.0;
+    return true;
+}
+
+/**
+ * clear姿勢を接触制約を保ったまま入力方向へ近づける。
+ */
+bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const gk::Array<gk::FVector3d>& initialDirections, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& candidateDirections, gk::Array<gk::FVector3d>& candidatePositions, gk::Array<gk::FVector3d>& candidateGradients, gk::Array<FWeightedAnchorEvaluation>& candidateAnchors, bool& preservedClearance, gk::String& error)
+{
+    if (!IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, candidatePositions, preservedClearance, error))
+    {
+        return false;
+    }
+    double lowerFraction = 0.0;
+    double upperFraction = 1.0;
+    for (uint32_t probe = 0; probe < 12u; ++probe)
+    {
+        const double fraction = (lowerFraction + upperFraction) * 0.5;
+        gk::Array<gk::FVector3d> trialDirections;
+        gk::Array<gk::FVector3d> trialPositions;
+        gk::Array<gk::FVector3d> trialGradients;
+        gk::Array<FWeightedAnchorEvaluation> trialAnchors;
+        if (!trialDirections.Reserve(candidateDirections.Count()) || !trialPositions.Reserve(candidatePositions.Count()) || !trialGradients.Reserve(candidateGradients.Count()) || !trialAnchors.Reserve(anchorCount))
+        {
+            error.Assign("Secondary motion weighted proximity workspace allocation failed");
+            return false;
+        }
+        uint32_t segmentOffset = 0;
+        bool valid = true;
+        for (uint32_t chainIndex = 0; chainIndex < chainCount && valid; ++chainIndex)
+        {
+            const FSecondaryMotionContactChain& chain = chains[chainIndex];
+            const double angleLimit = acos(chain.cosineLimit);
+            const double safeCosineLimit = cos(fmax(0.0, angleLimit - kWeightedContactStoredAngleMargin));
+            for (uint32_t localSegment = 0; localSegment < chain.segmentCount; ++localSegment)
+            {
+                const uint32_t index = segmentOffset + localSegment;
+                gk::FVector3d direction = Add(Multiply(initialDirections.At(index), 1.0 - fraction), Multiply(candidateDirections.At(index), fraction));
+                if (!NormalizeAndLimitSecondaryMotionDirection(references[chain.firstSegment + localSegment].direction, safeCosineLimit, direction) || !trialDirections.Append(direction))
+                {
+                    valid = false;
+                    break;
+                }
+            }
+            segmentOffset += chain.segmentCount;
+        }
+        if (!valid)
+        {
+            lowerFraction = fraction;
+            continue;
+        }
+        for (uint32_t index = 0; index < candidateGradients.Count(); ++index)
+        {
+            if (!trialGradients.Append(gk::FVector3d{}))
+            {
+                error.Assign("Secondary motion weighted proximity workspace allocation failed");
+                return false;
+            }
+        }
+        double trialMerit = 0.0;
+        if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialMerit, trialGradients, trialAnchors, error))
+        {
+            if (!error.Empty())
+            {
+                return false;
+            }
+            lowerFraction = fraction;
+            continue;
+        }
+        bool storedClear = false;
+        if (trialMerit == 0.0 && !IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, trialPositions, storedClear, error))
+        {
+            return false;
+        }
+        if (trialMerit == 0.0 && storedClear)
+        {
+            upperFraction = fraction;
+            preservedClearance = true;
+            candidatePositions.MoveFrom(trialPositions);
+            candidateGradients.MoveFrom(trialGradients);
+            candidateAnchors.MoveFrom(trialAnchors);
+        }
+        else
+        {
+            lowerFraction = fraction;
+        }
+    }
+    return true;
+}
+
+/**
+ * 入力位置から候補位置までの二乗変位を合計する。
+ */
+double PositionDisplacementSquared(const gk::Array<gk::FVector3d>& initialPositions, const gk::Array<gk::FVector3d>& candidatePositions)
+{
+    double displacement = 0.0;
+    for (uint32_t index = 0; index < initialPositions.Count(); ++index)
+    {
+        const gk::FVector3d delta = Subtract(candidatePositions.At(index), initialPositions.At(index));
+        displacement += Dot(delta, delta);
+    }
+    return displacement;
 }
 
 /**
@@ -1059,6 +1254,15 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
     {
         return false;
     }
+    bool storedInputClear = false;
+    if (initialMerit == 0.0 && !IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions, storedInputClear, error))
+    {
+        return false;
+    }
+    if (initialMerit == 0.0 && storedInputClear)
+    {
+        return true;
+    }
     if (initialMerit != DBL_MAX && !BuildTargetContactChains(anchors, contacts, contactCount, anchorEvaluations, chainCount, targetChains, error))
     {
         return false;
@@ -1111,8 +1315,8 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             coherentSeedChains[chainIndex] = true;
         }
     }
-    double bestMerit = DBL_MAX;
     bool foundClear = false;
+    double bestDisplacementSquared = DBL_MAX;
     gk::Array<gk::FVector3d> bestPositions;
     if (!bestPositions.Reserve(totalPoints))
     {
@@ -1125,15 +1329,20 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
         error.Assign("Secondary motion weighted seed allocation failed");
         return false;
     }
-    for (uint32_t strategyIndex = 0; strategyIndex < 3u && !foundClear; ++strategyIndex)
+    for (uint32_t strategyIndex = 0; strategyIndex < 3u; ++strategyIndex)
     {
         // 単位勾配と従来の相対量方式を保ち、最後に共役勾配を試す。
         const bool preserveMagnitude = strategyIndex != 0u;
         const bool useConjugate = strategyIndex == 2u;
         bool tryInitial = true;
-        const uint32_t maximumSeedIndex = strategyIndex == 2u ? kWeightedContactSeedAzimuths + 3u : kWeightedContactSeedAzimuths;
-        for (uint32_t seedIndex = 0; seedIndex <= maximumSeedIndex && !foundClear; ++seedIndex)
+        const uint32_t maximumSeedIndex = strategyIndex == 2u ? kWeightedContactSeedAzimuths + 6u : 3u;
+        uint32_t firstClearSeedIndex = UINT32_MAX;
+        for (uint32_t seedIndex = 0; seedIndex <= maximumSeedIndex; ++seedIndex)
         {
+            if (firstClearSeedIndex != UINT32_MAX)
+            {
+                break;
+            }
             if (tryInitial)
             {
                 seedDirections.Clear();
@@ -1147,9 +1356,23 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
                 }
                 tryInitial = false;
             }
-            else if (seedIndex <= kWeightedContactSeedAzimuths)
+            else if (seedIndex <= 3u)
             {
-                const uint32_t directionIndex = seedIndex - 1u;
+                const uint32_t localSeedIndex = seedIndex - 1u;
+                const uint32_t directionIndex = localSeedIndex * 5u;
+                const double phase = 6.2831853071795864769 * static_cast<double>(directionIndex) / static_cast<double>(kWeightedContactSeedAzimuths);
+                const gk::FVector3d worldTangent = { { cos(phase), sin(phase), 0.5 } };
+                const double angleFractions[3] = { 0.0222222222222222, 0.0555555555555556, 0.1111111111111111 };
+                const double angleFraction = angleFractions[localSeedIndex];
+                if (!MakeCoherentSeed(chains, chainCount, references, directions, coherentSeedChains, worldTangent, angleFraction, seedDirections))
+                {
+                    error.Assign("Secondary motion weighted coherent seed is invalid");
+                    return false;
+                }
+            }
+            else if (seedIndex <= kWeightedContactSeedAzimuths + 3u)
+            {
+                const uint32_t directionIndex = seedIndex - 4u;
                 const double phase = 6.2831853071795864769 * static_cast<double>(directionIndex) / static_cast<double>(kWeightedContactSeedAzimuths);
                 const gk::FVector3d worldTangent = { { cos(phase), sin(phase), 0.5 } };
                 if (!MakeCoherentSeed(chains, chainCount, references, directions, coherentSeedChains, worldTangent, 0.5, seedDirections))
@@ -1161,7 +1384,7 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             else
             {
                 // 停滞した姿勢の近くから探索を再開する角度を選ぶ。
-                const uint32_t localSeedIndex = seedIndex - kWeightedContactSeedAzimuths - 1u;
+                const uint32_t localSeedIndex = seedIndex - kWeightedContactSeedAzimuths - 4u;
                 const double angleFractions[3] = { 0.0222222222222222, 0.0555555555555556, 0.1111111111111111 };
                 if (!MakeTargetedGradientSeed(chains, chainCount, references, directions, gradients, targetChains, angleFractions[localSeedIndex], seedDirections))
                 {
@@ -1213,32 +1436,46 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             {
                 return false;
             }
-            if (seedMerit < bestMerit)
-            {
-                bestMerit = seedMerit;
-                bestPositions.Clear();
-                for (uint32_t index = 0; index < seedPositions.Count(); ++index)
-                {
-                    if (!bestPositions.Append(seedPositions.At(index)))
-                    {
-                        error.Assign("Secondary motion weighted result allocation failed");
-                        return false;
-                    }
-                }
-            }
             if (clear)
             {
-                bestPositions.Clear();
-                for (uint32_t index = 0; index < seedPositions.Count(); ++index)
+                bool preservedClearance = false;
+                if (!ContractClearCandidate(chains, chainCount, references, roots, directions, anchors, anchorCount, contacts, contactCount, trialDirections, seedPositions, seedGradients, seedAnchors, preservedClearance, error))
                 {
-                    if (!bestPositions.Append(seedPositions.At(index)))
+                    return false;
+                }
+                if (!preservedClearance)
+                {
+                    continue;
+                }
+                const double candidateDisplacementSquared = PositionDisplacementSquared(positions, seedPositions);
+                if (!isfinite(candidateDisplacementSquared))
+                {
+                    error.Assign("Secondary motion weighted candidate displacement is invalid");
+                    return false;
+                }
+                if (candidateDisplacementSquared < bestDisplacementSquared)
+                {
+                    bestDisplacementSquared = candidateDisplacementSquared;
+                    bestPositions.Clear();
+                    for (uint32_t index = 0; index < seedPositions.Count(); ++index)
                     {
-                        error.Assign("Secondary motion weighted result allocation failed");
-                        return false;
+                        if (!bestPositions.Append(seedPositions.At(index)))
+                        {
+                            error.Assign("Secondary motion weighted result allocation failed");
+                            return false;
+                        }
                     }
                 }
                 foundClear = true;
+                if (firstClearSeedIndex == UINT32_MAX)
+                {
+                    firstClearSeedIndex = seedIndex;
+                }
             }
+        }
+        if (foundClear)
+        {
+            break;
         }
     }
     if (!foundClear)

@@ -260,7 +260,7 @@ Write-Host ' 14. YUMEKAでスカート骨を結ぶ接触補助を表示'
 Write-Host ' 15. YUMEKAでスカート骨の間隔保持と身体接触を表示（試験設定）'
 Write-Host ' 16. YUMEKAで衣服位置に合わせた骨接触を表示'
 Write-Host ' 17. YUMEKAでSkinning Test・Swingingと揺れを再生（身体接触なし）'
-Write-Host ' 18. YUMEKAでSkinning Test・Swingingと衣服の身体接触を再生'
+Write-Host ' 18. YUMEKAでSkinning Test・Swingingと衣服の身体接触を往復再生'
 Write-Host '  0. 終了'
 if (-not (Test-RequiredFile 'Visual Studio solution' $solutionPath))
 {
@@ -303,7 +303,7 @@ if ($CheckOnly)
     {
         $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging blend + IK' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
         $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging 揺れもの（身体接触なし）' (@($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondaryPath, '--materials', $yumekaMaterialsPath))) -and $allChecksPassed
-        $skinningBoneContactArguments = @($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondarySkinningContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--secondary-contact-points', $yumekaContactPointsPath, '--materials', $yumekaMaterialsPath)
+        $skinningBoneContactArguments = @($yumekaPath, '1.1166145684', '0', '0.671678712', '-0.2517482195', 'external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondarySkinningContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--ping-pong-motion', '--secondary-contact-points', $yumekaContactPointsPath, '--materials', $yumekaMaterialsPath)
         $allChecksPassed = (Invoke-Viewer 'YUMEKA Skinning Test + Swinging 揺れもの（衣服の身体接触）' $skinningBoneContactArguments) -and $allChecksPassed
     }
     else
@@ -465,7 +465,7 @@ switch ($selection)
         $swingingPath = Get-MotionPath 'Swinging.fbx'
         if ($skinningTestPath -and $swingingPath)
         {
-            $arguments = $yumekaArguments + @('external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondarySkinningContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--secondary-contact-points', $yumekaContactPointsPath, '--materials', $yumekaMaterialsPath)
+            $arguments = $yumekaArguments + @('external-blend-ik', $skinningTestPath, $swingingPath, '--follow-motion', '--secondary-motion', $yumekaSecondarySkinningContactPath, '--secondary-colliders', $yumekaBoneCollidersPath, '--ping-pong-motion', '--secondary-contact-points', $yumekaContactPointsPath, '--materials', $yumekaMaterialsPath)
             $result = Invoke-Viewer 'YUMEKA Skinning Test + Swinging 揺れもの（衣服の身体接触）' $arguments
         }
     }

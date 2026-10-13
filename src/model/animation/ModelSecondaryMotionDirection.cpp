@@ -424,6 +424,50 @@ bool RefineDirection(const FPreparedSecondaryMotionCollisionShape* shapes, uint3
     return true;
 }
 
+/**
+ * 全形状clearを保てる範囲で候補方向を入力方向へ近づける。
+ */
+bool ContractClearDirection(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& parent, double length, bool firstSegment, const gk::FVector3d& reference, double cosineLimit, double toleranceFraction, const gk::FVector3d& initialDirection, gk::FVector3d& direction, FDirectionMerit& merit, gk::String& error)
+{
+    const gk::FVector3d clearDirection = direction;
+    const FDirectionMerit clearMerit = merit;
+    double lowerFraction = 0.0;
+    double upperFraction = 1.0;
+    for (uint32_t probe = 0; probe < 12u; ++probe)
+    {
+        const double fraction = (lowerFraction + upperFraction) * 0.5;
+        gk::FVector3d trialDirection = Add(Multiply(initialDirection, 1.0 - fraction), Multiply(clearDirection, fraction));
+        if (!Normalize(trialDirection) || !ClampToCone(reference, cosineLimit, trialDirection))
+        {
+            lowerFraction = fraction;
+            continue;
+        }
+        FDirectionMerit trialMerit{};
+        bool trialValid = false;
+        if (!EvaluateDirection(shapes, shapeCount, parent, length, firstSegment, trialDirection, toleranceFraction, trialMerit, trialValid, error))
+        {
+            return false;
+        }
+        if (trialValid && trialMerit.hasClearance)
+        {
+            upperFraction = fraction;
+            direction = trialDirection;
+            merit = trialMerit;
+        }
+        else
+        {
+            lowerFraction = fraction;
+        }
+    }
+    if (upperFraction == 1.0)
+    {
+        direction = clearDirection;
+        merit = clearMerit;
+    }
+    error.Clear();
+    return true;
+}
+
 }
 
 bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const gk::FVector3d& parent, double length, bool firstSegment, const gk::FVector3d& referenceDirection, double cosineLimit, gk::FVector3d& direction, gk::String& error, double toleranceFraction)
@@ -467,7 +511,29 @@ bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotio
         return true;
     }
     gk::FVector3d bestDirection = seed;
-    // 参照方向も独立seedとして評価し、良い方から局所探索を始める。
+    // 現在方向から局所探索し、近いclear解を先に探す。
+    gk::FVector3d localDirection = seed;
+    FDirectionMerit localMerit = bestMerit;
+    if (!RefineDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, localDirection, localMerit, error))
+    {
+        return false;
+    }
+    if (localMerit.hasClearance)
+    {
+        if (!ContractClearDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, seed, localDirection, localMerit, error))
+        {
+            return false;
+        }
+        direction = localDirection;
+        error.Clear();
+        return true;
+    }
+    if (MeritImproves(localMerit, bestMerit))
+    {
+        bestDirection = localDirection;
+        bestMerit = localMerit;
+    }
+    // 参照方向も候補として評価するが、近い局所解より先には採用しない。
     gk::FVector3d referenceSeed = reference;
     FDirectionMerit referenceMerit{};
     bool referenceValid = false;
@@ -475,26 +541,20 @@ bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotio
     {
         return false;
     }
-    if (referenceValid && (MeritImproves(referenceMerit, bestMerit) || (referenceMerit.hasClearance && !bestMerit.hasClearance)))
+    if (referenceValid && referenceMerit.hasClearance)
+    {
+        if (!ContractClearDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, seed, referenceSeed, referenceMerit, error))
+        {
+            return false;
+        }
+        direction = referenceSeed;
+        error.Clear();
+        return true;
+    }
+    if (referenceValid && MeritImproves(referenceMerit, bestMerit))
     {
         bestDirection = referenceSeed;
         bestMerit = referenceMerit;
-    }
-    if (bestMerit.hasClearance)
-    {
-        direction = bestDirection;
-        error.Clear();
-        return true;
-    }
-    if (!RefineDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, bestDirection, bestMerit, error))
-    {
-        return false;
-    }
-    if (bestMerit.hasClearance)
-    {
-        direction = bestDirection;
-        error.Clear();
-        return true;
     }
     // 局所勾配が停滞した場合だけ、有限なcone格子を試す。
     gk::FVector3d gridDirections[33]{};
@@ -513,7 +573,7 @@ bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotio
         {
             continue;
         }
-        const gk::FVector3d difference = Subtract(gridDirections[index], initialDirection);
+        const gk::FVector3d difference = Subtract(gridDirections[index], seed);
         const double movement = Dot(difference, difference);
         const bool improves = MeritImproves(trialMerit, bestMerit);
         const bool sameClearanceSmallerMove = trialMerit.hasClearance && bestMerit.hasClearance && movement < bestMovement;
@@ -538,6 +598,10 @@ bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotio
     }
     if (bestMerit.hasClearance)
     {
+        if (!ContractClearDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, seed, bestDirection, bestMerit, error))
+        {
+            return false;
+        }
         direction = bestDirection;
         error.Clear();
         return true;
@@ -548,6 +612,10 @@ bool FindPreparedSecondaryMotionCollisionDirection(const FPreparedSecondaryMotio
     }
     if (bestMerit.hasClearance)
     {
+        if (!ContractClearDirection(shapes, shapeCount, parent, length, firstSegment, reference, cosineLimit, toleranceFraction, seed, bestDirection, bestMerit, error))
+        {
+            return false;
+        }
         direction = bestDirection;
         error.Clear();
         return true;

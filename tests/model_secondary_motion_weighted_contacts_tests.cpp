@@ -3,6 +3,7 @@
 #include <gkcore/FModelSecondaryMotionContactAnchor.h>
 #include "model/animation/ModelSecondaryMotionWeightedContacts.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
+#include "model/animation/ModelSecondaryMotionDirection.h"
 #include "foundation/Memory.h"
 
 #include <math.h>
@@ -74,10 +75,6 @@ bool IsSolved(const gk::Array<gk::FVector3d>& positions, const FSecondaryMotionW
         {
             return false;
         }
-    }
-    if (body.radius > 0.75f && positions.At(1).value[2] * positions.At(3).value[2] <= 0.25)
-    {
-        return false;
     }
     gk::FVector3d mixed{};
     double weightSum = 0.0;
@@ -298,6 +295,68 @@ bool TestTinyBodyContactDoesNotOvercorrect()
     if (positions.Count() != 2u || Distance(positions.At(0), root) > 1.0e-12 || fabs(Distance(root, solvedChild) - 1.0) > 0.0011 || (solvedChild.value[0] - root.value[0]) < 0.0 || Distance(solvedChild, sphereCenter) < sourceBody.radius * 0.999 || solvedDisplacement >= 0.001)
     {
         return Fail("the tiny body contact either remained penetrating or moved the chain far beyond the nearby clear solution");
+    }
+    return true;
+}
+
+bool TestRotatedCurrentPoseKeepsNearbyClearCorrection()
+{
+    const gk::model::animation::FModelSecondaryMotionCollisionShape sourceBody = { { 0.0f, 0.9999f, 0.0f }, { 0.0f, 0.9999f, 0.0f }, 0.001f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&sourceBody, 1, prepared, error))
+    {
+        return Fail("could not prepare the rotated-pose contact sphere");
+    }
+    FSecondaryMotionContactChain chain{};
+    chain.firstPoint = 0;
+    chain.firstSegment = 0;
+    chain.segmentCount = 1;
+    chain.cosineLimit = 0.0;
+    chain.shapes = prepared.Data();
+    chain.shapeCount = prepared.Count();
+    const FSecondaryMotionReferenceSegment reference = { { { 1.0, 0.0, 0.0 } }, 1.0 };
+    const gk::FVector3d root = { { 0.0, 0.0, 0.0 } };
+    const gk::FVector3d initialChild = { { 0.0, 1.0, 0.0 } };
+    gk::Array<gk::FVector3d> positions;
+    if (!positions.Append(root) || !positions.Append(initialChild))
+    {
+        return Fail("could not allocate the rotated-pose contact points");
+    }
+    if (!ResolvePreparedSecondaryMotionWeightedContacts(&chain, 1, &reference, 1, nullptr, 0, nullptr, 0, positions, error))
+    {
+        return Fail(error.Empty() ? "the solver rejected a nearby clear rotated-pose correction" : error.CStr());
+    }
+    const gk::FVector3d& solvedChild = positions.At(1);
+    if (Distance(positions.At(0), root) > 1.0e-12 || fabs(Distance(root, solvedChild) - 1.0) > 0.0011 || Distance(solvedChild, initialChild) >= 0.003 || Distance(solvedChild, { { sourceBody.start.x, sourceBody.start.y, sourceBody.start.z } }) < sourceBody.radius * 0.999)
+    {
+        return Fail("the nearby rotated-pose contact was cleared by a large pose jump");
+    }
+    return true;
+}
+
+bool TestBodyDirectionPrefersNearbyClearPoseToClearReference()
+{
+    const gk::model::animation::FModelSecondaryMotionCollisionShape sourceBody = { { 0.0f, 0.9999f, 0.0f }, { 0.0f, 0.9999f, 0.0f }, 0.001f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&sourceBody, 1, prepared, error))
+    {
+        return Fail("could not prepare the body-direction local-clearance sphere");
+    }
+    const gk::FVector3d root = { { 0.0, 0.0, 0.0 } };
+    const gk::FVector3d reference = { { 1.0, 0.0, 0.0 } };
+    const gk::FVector3d initial = { { 0.0, 1.0, 0.0 } };
+    gk::FVector3d direction = initial;
+    if (!FindPreparedSecondaryMotionCollisionDirection(prepared.Data(), prepared.Count(), root, 1.0, false, reference, 0.0, direction, error, 0.5))
+    {
+        return Fail(error.Empty() ? "the body-direction solver rejected a nearby clear witness" : error.CStr());
+    }
+    const gk::FVector3d endpoint = { { direction.value[0], direction.value[1], direction.value[2] } };
+    const gk::FVector3d bodyCenter = { { sourceBody.start.x, sourceBody.start.y, sourceBody.start.z } };
+    if (Distance(direction, initial) >= 0.003 || fabs(Distance(root, endpoint) - 1.0) > 1.0e-12 || Distance(endpoint, bodyCenter) < sourceBody.radius * 0.999)
+    {
+        return Fail("the body-direction solver snapped from a nearby clear pose to the distant reference");
     }
     return true;
 }
@@ -708,5 +767,5 @@ bool TestWeightedSpheresCompeteWithChainBodyCapsules()
 
 int main()
 {
-    return TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestRootZeroOffsetAndFixedOnlyContacts() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
+    return TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestRootZeroOffsetAndFixedOnlyContacts() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
 }

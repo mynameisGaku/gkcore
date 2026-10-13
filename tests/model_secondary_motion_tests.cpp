@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionSolver.h"
+#include "model/animation/ModelSecondaryMotionCollision.h"
 #include "foundation/Memory.h"
 
 #include <math.h>
@@ -219,6 +220,332 @@ bool TestGravityRemainsFinite()
     if (!(state.points.At(1).position.y < -0.001f))
         return Fail("gravity did not affect the free chain point");
     return true;
+}
+
+/**
+ * 静止した身体への位置補正が鎖へ人工速度を加えないことを確認する。
+ */
+bool TestStaticContactDoesNotCreateVelocity()
+{
+    const gk::Vec3 targets[3] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 2.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape body = { { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.2f };
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 3, state, error))
+    {
+        return Fail(error.CStr());
+    }
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 60.0f;
+    settings.constraintIterations = 16;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(targets, 3, settings, 1.0 / 120.0, &body, &body, 1, state, error, 0.0f, &unresolved))
+    {
+        fprintf(stderr, "static contact correction failed: unresolved=%d error=%s\n", unresolved ? 1 : 0, error.CStr());
+        return false;
+    }
+
+    double maximumCorrection = 0.0;
+    double maximumSpeed = 0.0;
+    gk::FVector3d solvedPositions[3]{};
+    for (uint32_t index = 0; index < 3u; ++index)
+    {
+        const auto& point = state.points.At(index);
+        solvedPositions[index] = { { point.position.x, point.position.y, point.position.z } };
+        const double correction = Distance(point.position, targets[index]);
+        const double speed = Distance(point.velocity, {});
+        if (correction > maximumCorrection)
+        {
+            maximumCorrection = correction;
+        }
+        if (speed > maximumSpeed)
+        {
+            maximumSpeed = speed;
+        }
+        if (index == 0u && (correction > 1.0e-6 || speed > 1.0e-6))
+        {
+            return Fail("static contact moved or accelerated the pinned root");
+        }
+        if (index > 0u)
+        {
+            const double boneLength = Distance(state.points.At(index).position, state.points.At(index - 1u).position);
+            const double targetLength = Distance(targets[index], targets[index - 1u]);
+            const double directionDot = (static_cast<double>(state.points.At(index).position.x) - state.points.At(index - 1u).position.x) * (static_cast<double>(targets[index].x) - targets[index - 1u].x);
+            const double directionCosine = directionDot / (boneLength * targetLength);
+            if (fabs(boneLength - targetLength) > targetLength * 0.001 || directionCosine < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            {
+                fprintf(stderr, "static contact violated chain geometry: point=%u length=%.9g cosine=%.9g\n", index, boneLength, directionCosine);
+                return false;
+            }
+        }
+    }
+    if (!CheckSecondaryMotionContacts(&body, 1, solvedPositions, 3, error))
+    {
+        fprintf(stderr, "static contact left the body penetrated: %s\n", error.CStr());
+        return false;
+    }
+    if (maximumCorrection < 1.0e-4)
+    {
+        return Fail("static contact fixture did not require a measurable position correction");
+    }
+    const double legacyDifferenceSpeed = maximumCorrection / (1.0 / 120.0);
+    if (legacyDifferenceSpeed < 10.0)
+    {
+        return Fail("single-substep contact fixture would not expose position-derived velocity");
+    }
+    if (maximumSpeed > 1.0e-5)
+    {
+        fprintf(stderr, "static contact correction injected velocity: correction=%.9g speed=%.9g\n", maximumCorrection, maximumSpeed);
+        return false;
+    }
+    fprintf(stderr, "single-substep static contact: correction=%.9g solverSpeed=%.9g legacyPositionSpeed=%.9g\n", maximumCorrection, maximumSpeed, legacyDifferenceSpeed);
+    return true;
+}
+
+/**
+ * 接触のない鎖は従来どおり、積分位置差から速度を保つ。
+ */
+bool TestNoContactVelocityIntegrationUnchanged()
+{
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetLine(state, error))
+    {
+        return Fail(error.CStr());
+    }
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const gk::Vec3 oldPosition = state.points.At(1).position;
+    state.points.At(1).velocity = { 0.0f, 1.0f, 0.0f };
+    const double delta = 1.0 / 120.0;
+    if (!StepSecondaryMotionChain(targets, 2, MakeQuietSettings(), delta, state, error))
+    {
+        return Fail(error.CStr());
+    }
+    const gk::Vec3 measuredVelocity = { static_cast<float>((state.points.At(1).position.x - oldPosition.x) / delta), static_cast<float>((state.points.At(1).position.y - oldPosition.y) / delta), static_cast<float>((state.points.At(1).position.z - oldPosition.z) / delta) };
+    if (Distance(state.points.At(1).velocity, measuredVelocity) > 1.0e-5)
+    {
+        return Fail("contact-free velocity integration changed its position-difference behavior");
+    }
+    return true;
+}
+
+/**
+ * 身体とrootが一緒に動くときroot速度と全骨制約を保つ。
+ */
+bool TestMovingRootWithBodyContact()
+{
+    const gk::Vec3 initialTargets[3] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 2.0f, 0.0f, 0.0f } };
+    const gk::Vec3 movedTargets[3] = { { 0.0f, 0.01f, 0.0f }, { 1.0f, 0.01f, 0.0f }, { 2.0f, 0.01f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape previousBody = { { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.2f };
+    const FModelSecondaryMotionCollisionShape currentBody = { { 1.0f, 0.01f, 0.0f }, { 1.0f, 0.01f, 0.0f }, 0.2f };
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(initialTargets, 3, state, error))
+    {
+        return Fail(error.CStr());
+    }
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 60.0f;
+    const double delta = 1.0 / 120.0;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(movedTargets, 3, settings, delta, &previousBody, &currentBody, 1, state, error, 0.0f, &unresolved))
+    {
+        fprintf(stderr, "moving-root body contact failed: unresolved=%d error=%s\n", unresolved ? 1 : 0, error.CStr());
+        return false;
+    }
+    const gk::Vec3 expectedRootVelocity = { 0.0f, static_cast<float>(0.01 / delta), 0.0f };
+    if (Distance(state.points.At(0).position, movedTargets[0]) > 1.0e-6 || Distance(state.points.At(0).velocity, expectedRootVelocity) > 1.0e-4)
+    {
+        return Fail("body contact changed the moving root position or velocity");
+    }
+    gk::FVector3d solvedPositions[3]{};
+    for (uint32_t index = 0; index < 3u; ++index)
+    {
+        const auto& point = state.points.At(index);
+        solvedPositions[index] = { { point.position.x, point.position.y, point.position.z } };
+        if (index > 0u)
+        {
+            const double length = Distance(point.position, state.points.At(index - 1u).position);
+            const double targetLength = Distance(movedTargets[index], movedTargets[index - 1u]);
+            const double axisDot = (static_cast<double>(point.position.x) - state.points.At(index - 1u).position.x) * (static_cast<double>(movedTargets[index].x) - movedTargets[index - 1u].x) + (static_cast<double>(point.position.y) - state.points.At(index - 1u).position.y) * (static_cast<double>(movedTargets[index].y) - movedTargets[index - 1u].y);
+            if (fabs(length - targetLength) > 0.001 || axisDot / (length * targetLength) < cos(settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) - 0.001)
+            {
+                return Fail("moving-root body contact violated a bone length or bend limit");
+            }
+        }
+    }
+    return CheckSecondaryMotionContacts(&currentBody, 1, solvedPositions, 3, error) || Fail(error.CStr());
+}
+
+/**
+ * 接触形状が離れた位置でも、鎖の伸縮速度を軸方向へ保つ。
+ */
+bool TestBodyStepPreservesStretchRate()
+{
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetLine(state, error))
+    {
+        return Fail(error.CStr());
+    }
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.01f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape clearBody = { { 8.0f, 4.0f, 0.0f }, { 8.0f, 4.0f, 0.0f }, 0.2f };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 180.0f;
+    const double delta = 1.0 / 120.0;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, delta, &clearBody, &clearBody, 1, state, error, 0.0f, &unresolved))
+    {
+        return Fail(error.CStr());
+    }
+    const gk::Vec3 edge = { state.points.At(1).position.x - state.points.At(0).position.x, state.points.At(1).position.y - state.points.At(0).position.y, state.points.At(1).position.z - state.points.At(0).position.z };
+    const double length = Distance(state.points.At(1).position, state.points.At(0).position);
+    const double radialSpeed = ((state.points.At(1).velocity.x - state.points.At(0).velocity.x) * edge.x + (state.points.At(1).velocity.y - state.points.At(0).velocity.y) * edge.y + (state.points.At(1).velocity.z - state.points.At(0).velocity.z) * edge.z) / length;
+    const double expectedLengthRate = 0.01 / delta;
+    if (fabs(length - 1.01) > 0.001 || fabs(radialSpeed - expectedLengthRate) > 0.05)
+    {
+        fprintf(stderr, "body-step stretch rate mismatch: length=%.9g radial=%.9g expected=%.9g\n", length, radialSpeed, expectedLengthRate);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 動くsphereに対する接触法線速度をshape速度から相対評価する。
+ */
+bool TestMovingSphereUsesRelativeContactNormal()
+{
+    const gk::Vec3 targets[3] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 2.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape previousBody = { { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.2f };
+    const FModelSecondaryMotionCollisionShape currentBody = { { 1.0f, 0.01f, 0.0f }, { 1.0f, 0.01f, 0.0f }, 0.2f };
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetSecondaryMotionChain(targets, 3, state, error))
+    {
+        return Fail(error.CStr());
+    }
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 60.0f;
+    const double delta = 1.0 / 120.0;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(targets, 3, settings, delta, &previousBody, &currentBody, 1, state, error, 0.0f, &unresolved))
+    {
+        fprintf(stderr, "moving-sphere contact failed: unresolved=%d error=%s\n", unresolved ? 1 : 0, error.CStr());
+        return false;
+    }
+    const auto& point = state.points.At(1);
+    const double nx = static_cast<double>(point.position.x) - currentBody.start.x;
+    const double ny = static_cast<double>(point.position.y) - currentBody.start.y;
+    const double nz = static_cast<double>(point.position.z) - currentBody.start.z;
+    const double normalLength = sqrt(nx * nx + ny * ny + nz * nz);
+    const double shapeVelocityY = (currentBody.start.y - previousBody.start.y) / delta;
+    const double relativeNormalSpeed = ((point.velocity.x) * nx + (point.velocity.y - shapeVelocityY) * ny + point.velocity.z * nz) / normalLength;
+    if (fabs(normalLength - currentBody.radius) > 0.01 || relativeNormalSpeed < -0.01)
+    {
+        fprintf(stderr, "moving-sphere inward relative speed: distance=%.9g relativeNormal=%.9g\n", normalLength, relativeNormalSpeed);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 曲げ角の可動境界がreference回転へ追従し、内向き角速度を残す。
+ */
+bool TestMovingConeBoundaryVelocity()
+{
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetLine(state, error))
+    {
+        return Fail(error.CStr());
+    }
+    const double initialAngle = 30.0 * 3.14159265358979323846 / 180.0;
+    state.points.At(1).position = { static_cast<float>(cos(initialAngle)), static_cast<float>(sin(initialAngle)), 0.0f };
+    const double referenceAngle = -10.0 * 3.14159265358979323846 / 180.0;
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { static_cast<float>(cos(referenceAngle)), static_cast<float>(sin(referenceAngle)), 0.0f } };
+    const FModelSecondaryMotionCollisionShape clearBody = { { 8.0f, 4.0f, 0.0f }, { 8.0f, 4.0f, 0.0f }, 0.2f };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.frequencyHz = 0.01f;
+    settings.dampingRatio = 0.0f;
+    settings.maxAngleDegrees = 30.0f;
+    const double delta = 1.0 / 120.0;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, delta, &clearBody, &clearBody, 1, state, error, 0.0f, &unresolved))
+    {
+        fprintf(stderr, "moving cone boundary failed: unresolved=%d error=%s\n", unresolved ? 1 : 0, error.CStr());
+        return false;
+    }
+    const auto& root = state.points.At(0);
+    const auto& end = state.points.At(1);
+    const double edgeX = end.position.x - root.position.x;
+    const double edgeY = end.position.y - root.position.y;
+    const double length = sqrt(edgeX * edgeX + edgeY * edgeY);
+    const double finalAngle = atan2(edgeY, edgeX);
+    const double relativeAngle = finalAngle - referenceAngle;
+    const double radialSpeed = (end.velocity.x * edgeX + end.velocity.y * edgeY) / length;
+    const double tangentX = -sin(finalAngle);
+    const double tangentY = cos(finalAngle);
+    const double tangentSpeed = end.velocity.x * tangentX + end.velocity.y * tangentY;
+    const double expectedBoundarySpeed = sin(referenceAngle) / delta;
+    if (fabs(length - 1.0) > 0.001 || fabs(relativeAngle - settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) > 0.002 || fabs(radialSpeed) > 0.02 || fabs(tangentSpeed - expectedBoundarySpeed) > 0.1)
+    {
+        fprintf(stderr, "moving cone velocity mismatch: angle=%.9g radial=%.9g tangent=%.9g expected=%.9g\n", relativeAngle, radialSpeed, tangentSpeed, expectedBoundarySpeed);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 静止したreferenceの曲げ角境界を越える速度成分を取り除く。
+ */
+bool TestStaticConeBoundaryRemovesOutwardVelocity()
+{
+    FModelSecondaryMotionChainState state;
+    gk::String error;
+    if (!ResetLine(state, error))
+    {
+        return Fail(error.CStr());
+    }
+    state.points.At(1).velocity = { 0.0f, 100.0f, 0.0f };
+    const gk::Vec3 targets[2] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f } };
+    const FModelSecondaryMotionCollisionShape clearBody = { { 8.0f, 4.0f, 0.0f }, { 8.0f, 4.0f, 0.0f }, 0.2f };
+    gk::FModelSecondaryMotionSettings settings = MakeQuietSettings();
+    settings.maxAngleDegrees = 30.0f;
+    const double delta = 1.0 / 120.0;
+    bool unresolved = false;
+    if (!StepSecondaryMotionChainWithCollisions(targets, 2, settings, delta, &clearBody, &clearBody, 1, state, error, 0.0f, &unresolved))
+    {
+        fprintf(stderr, "static cone boundary failed: unresolved=%d error=%s\n", unresolved ? 1 : 0, error.CStr());
+        return false;
+    }
+    const auto& root = state.points.At(0);
+    const auto& end = state.points.At(1);
+    const double angle = atan2(static_cast<double>(end.position.y) - root.position.y, static_cast<double>(end.position.x) - root.position.x);
+    const double coneTangentX = -sin(angle);
+    const double coneTangentY = cos(angle);
+    const double outwardSpeed = end.velocity.x * coneTangentX + end.velocity.y * coneTangentY;
+    if (fabs(angle - settings.maxAngleDegrees * 3.14159265358979323846 / 180.0) > 0.002 || outwardSpeed > 0.01)
+    {
+        fprintf(stderr, "static cone retained outward speed: angle=%.9g outward=%.9g\n", angle, outwardSpeed);
+        return false;
+    }
+    return true;
+}
+
+/**
+ * 接触ありの速度保存条件をすべて実行する。
+ */
+bool TestContactVelocityContracts()
+{
+    bool passed = true;
+    passed = TestStaticContactDoesNotCreateVelocity() && passed;
+    passed = TestNoContactVelocityIntegrationUnchanged() && passed;
+    passed = TestMovingRootWithBodyContact() && passed;
+    passed = TestBodyStepPreservesStretchRate() && passed;
+    passed = TestMovingSphereUsesRelativeContactNormal() && passed;
+    passed = TestMovingConeBoundaryVelocity() && passed;
+    passed = TestStaticConeBoundaryRemovesOutwardVelocity() && passed;
+    return passed;
 }
 
 /**
@@ -539,7 +866,7 @@ bool TestChainCountLimits()
 
 int main()
 {
-    if (!TestResetAndStationaryChain() || !TestMovingAnchorLagAndConstraints() || !TestDampedReturn() || !TestGravityRemainsFinite() || !TestFrameRateConvergence() || !TestTeleportAndHitchReset() || !TestOppositeDirectionResets() || !TestZeroDeltaUpdatesOnlyRoot() || !TestInvalidInputsPreserveState() || !TestResetFailuresPreserveState() || !TestCollisionUnresolvedStatusIsSpecificAndAtomic() || !TestChainCountLimits())
+    if (!TestResetAndStationaryChain() || !TestMovingAnchorLagAndConstraints() || !TestDampedReturn() || !TestGravityRemainsFinite() || !TestContactVelocityContracts() || !TestFrameRateConvergence() || !TestTeleportAndHitchReset() || !TestOppositeDirectionResets() || !TestZeroDeltaUpdatesOnlyRoot() || !TestInvalidInputsPreserveState() || !TestResetFailuresPreserveState() || !TestCollisionUnresolvedStatusIsSpecificAndAtomic() || !TestChainCountLimits())
         return 1;
     return 0;
 }

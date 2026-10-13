@@ -5,6 +5,7 @@
 #include "examples/support/ModelMappingReport.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
+#include "examples/support/ModelPingPongMotion.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
 #include "examples/support/ModelSecondaryMotionDebugView.h"
 #include "tests/support/ModelSkinPointsCapture.h"
@@ -537,6 +538,12 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
+    bool pingPongMotion = false;
+    if (!gk::examples::ParsePingPongMotionOptions(argc, argv, pingPongMotion))
+    {
+        fprintf(stderr, "invalid or duplicate --ping-pong-motion option\n");
+        return 2;
+    }
     if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath) || (secondaryContactLinkPath && (!secondaryColliderPath || !secondaryMotionPath)) || (secondaryContactPointPath && (!secondaryColliderPath || !secondaryMotionPath)))
     {
         fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders; --secondary-contact-links and --secondary-contact-points require secondary motion chains and colliders\n");
@@ -544,7 +551,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--secondary-contact-links <config-file>] [--secondary-contact-points <config-file>]\n");
+        fprintf(stderr, "usage: real_model_capture_tests <model-file> <scale> <centerX> <centerY> <centerZ> [static|static-unlit|preview|front|rotate|animate|ik|chain|blend|external|external-blend|external-ik|external-blend-ik] [motion paths] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--ping-pong-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--secondary-contact-links <config-file>] [--secondary-contact-points <config-file>]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -568,7 +575,7 @@ int main(int argc, char** argv)
     const bool externalBlendMode = requestedMode && (strcmp(requestedMode, "external-blend") == 0 || strcmp(requestedMode, "external-blend-ik") == 0);
     // modeごとの引数個数が正しいかを示す。
     const bool modeArgumentsValid = (externalMode && !externalBlendMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
-    if (!ParseFloat(argv[2], scale) || !(scale > 0.0f) || !ParseFloat(argv[3], center[0]) || !ParseFloat(argv[4], center[1]) || !ParseFloat(argv[5], center[2]) || !ParseMode(requestedMode, mode, frameCount) || (externalIkMode && !ReadAnimationFrameCount(frameCount)) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
+    if (!ParseFloat(argv[2], scale) || !(scale > 0.0f) || !ParseFloat(argv[3], center[0]) || !ParseFloat(argv[4], center[1]) || !ParseFloat(argv[5], center[2]) || !ParseMode(requestedMode, mode, frameCount) || (externalIkMode && !ReadAnimationFrameCount(frameCount)) || !modeArgumentsValid || (pingPongMotion && !externalMode && !externalBlendMode) || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
     {
         fprintf(stderr, "invalid scale, center, capture mode, or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : "invalid arguments");
         return 2;
@@ -661,7 +668,11 @@ int main(int argc, char** argv)
             {
                 printf("animation-map primary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(externalAnimation), externalDuration);
             }
-            passed = passed && Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)");
+            passed = passed && Check(gk::ApplyModelAnimation(model, externalAnimation, 0, !pingPongMotion), "ApplyModelAnimation(primary)");
+            if (passed && pingPongMotion)
+            {
+                passed = Check(gk::SetModelAnimationLoop(model, false, 0), "SetModelAnimationLoop(primary)");
+            }
             if (passed)
             {
                 passed = ReportAnimationMapping(model, 0, "primary");
@@ -688,6 +699,10 @@ int main(int argc, char** argv)
                     printf("animation-map secondary: sourceRoles=%u duration=%.6f\n", CountAnimationRoles(secondaryAnimation), secondaryDuration);
                 }
                 passed = passed && Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)");
+                if (passed && pingPongMotion)
+                {
+                    passed = Check(gk::SetModelAnimationLoop(model, false, 1), "SetModelAnimationLoop(secondary)");
+                }
                 if (passed)
                 {
                     passed = ReportAnimationMapping(model, 1, "secondary");
@@ -812,7 +827,14 @@ int main(int argc, char** argv)
             }
             else if (externalIkMode)
             {
-                setAnimationTime = Check(gk::SetModelAnimationTime(model, animatedIkSampleSeconds, 0), "SetModelAnimationTime(primary)") && (!externalBlendMode || Check(gk::SetModelAnimationTime(model, animatedIkSampleSeconds, 1), "SetModelAnimationTime(secondary)"));
+                // 同じ入力位相からclipごとのsample時刻を求める。
+                double primarySampleTime = animatedIkSampleSeconds;
+                double secondarySampleTime = animatedIkSampleSeconds;
+                if (pingPongMotion)
+                {
+                    setAnimationTime = gk::examples::EvaluatePingPongMotionTime(animatedIkSampleSeconds, externalDuration, primarySampleTime) && (!externalBlendMode || gk::examples::EvaluatePingPongMotionTime(animatedIkSampleSeconds, secondaryDuration, secondarySampleTime));
+                }
+                setAnimationTime = setAnimationTime && Check(gk::SetModelAnimationTime(model, primarySampleTime, 0), "SetModelAnimationTime(primary)") && (!externalBlendMode || Check(gk::SetModelAnimationTime(model, secondarySampleTime, 1), "SetModelAnimationTime(secondary)"));
                 if (setAnimationTime)
                 {
                     printf("external-ik-time frame=%u input=%.9f primary=%.9f", frame, animatedIkSampleSeconds, gk::GetModelAnimationTime(model, 0));
@@ -826,7 +848,18 @@ int main(int argc, char** argv)
                 }
             }
             else if (externalMode || externalBlendMode)
-                setAnimationTime = Check(gk::SetModelAnimationTime(model, externalDuration * externalTimeRatio, 0), "SetModelAnimationTime(primary)") && (!externalBlendMode || Check(gk::SetModelAnimationTime(model, secondaryDuration * externalTimeRatio, 1), "SetModelAnimationTime(secondary)"));
+            {
+                // capture frame数から作る、単調な主clip位相。
+                const double externalPhaseSeconds = pingPongMotion ? static_cast<double>(frame) * 0.5 : externalDuration * externalTimeRatio;
+                // 各slotへ設定するclip内時刻。
+                double primarySampleTime = externalPhaseSeconds;
+                double secondarySampleTime = externalBlendMode ? secondaryDuration * externalTimeRatio : 0.0;
+                if (pingPongMotion)
+                {
+                    setAnimationTime = gk::examples::EvaluatePingPongMotionTime(externalPhaseSeconds, externalDuration, primarySampleTime) && (!externalBlendMode || gk::examples::EvaluatePingPongMotionTime(externalPhaseSeconds, secondaryDuration, secondarySampleTime));
+                }
+                setAnimationTime = setAnimationTime && Check(gk::SetModelAnimationTime(model, primarySampleTime, 0), "SetModelAnimationTime(primary)") && (!externalBlendMode || Check(gk::SetModelAnimationTime(model, secondarySampleTime, 1), "SetModelAnimationTime(secondary)"));
+            }
             passed = CheckEvents() && setAnimationTime;
             if (passed && applyExternalIk)
             {

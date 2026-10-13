@@ -4016,6 +4016,8 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
     {
         auto* currentChain = new gk::model::FModelSecondaryMotionChain;
         auto* previousChain = new gk::model::FModelSecondaryMotionChain;
+        currentChain->settings.gravity = {};
+        currentChain->settings.windAcceleration = {};
         currentChain->settings.maxAngleDegrees = 90.0f;
         currentChain->settings.teleportDistance = 10.0f;
         currentChain->settings.endOffset = { 0.1f, 0.0f, 0.0f };
@@ -4111,6 +4113,140 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
         return false;
     }
 
+    // 固定姿勢で必要な接触補正が速度へ混入しないことを確認する。
+    snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        memcpy(points.Data(), beforePrimary + snapshotOffset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
+        snapshotOffset += points.Count();
+    }
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        auto& currentPoints = candidate.chains.At(chainIndex)->simulation.points;
+        auto& previousChain = *previous.chains.At(chainIndex);
+        for (uint32_t pointIndex = 0; pointIndex < currentPoints.Count(); ++pointIndex)
+        {
+            previousChain.simulation.previousTargets.At(pointIndex) = candidate.chains.At(chainIndex)->simulation.previousTargets.At(pointIndex);
+            previousChain.simulation.points.At(pointIndex).velocity = {};
+        }
+        for (uint32_t pointIndex = 0; pointIndex < currentPoints.Count(); ++pointIndex)
+        {
+            currentPoints.At(pointIndex).velocity = {};
+        }
+        previousChain.simulation.points.At(0).position = currentPoints.At(0).position;
+    }
+    gk::model::animation::FModelSecondaryMotionPoint staticBefore[6]{};
+    snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        memcpy(staticBefore + snapshotOffset, points.Data(), sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
+        snapshotOffset += points.Count();
+    }
+    error.Clear();
+    const bool staticAccepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 1.0 / 60.0, error);
+    double maximumStaticCorrection = 0.0;
+    double maximumStaticSpeed = 0.0;
+    snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        for (uint32_t pointIndex = 1; pointIndex < points.Count(); ++pointIndex)
+        {
+            const auto& before = staticBefore[snapshotOffset + pointIndex];
+            const auto& after = points.At(pointIndex);
+            const double dx = static_cast<double>(after.position.x) - before.position.x;
+            const double dy = static_cast<double>(after.position.y) - before.position.y;
+            const double dz = static_cast<double>(after.position.z) - before.position.z;
+            const double correction = sqrt(dx * dx + dy * dy + dz * dz);
+            const double speed = sqrt(static_cast<double>(after.velocity.x) * after.velocity.x + static_cast<double>(after.velocity.y) * after.velocity.y + static_cast<double>(after.velocity.z) * after.velocity.z);
+            if (correction > maximumStaticCorrection)
+            {
+                maximumStaticCorrection = correction;
+            }
+            if (speed > maximumStaticSpeed)
+            {
+                maximumStaticSpeed = speed;
+            }
+        }
+        snapshotOffset += points.Count();
+    }
+    const bool staticVelocityClear = staticAccepted && maximumStaticCorrection >= 1.0e-4 && maximumStaticSpeed <= 1.0e-5;
+    if (!staticVelocityClear)
+    {
+        fprintf(stderr, "static weighted contact injected velocity: accepted=%d correction=%.9g speed=%.9g error=%s\n", staticAccepted ? 1 : 0, maximumStaticCorrection, maximumStaticSpeed, error.CStr());
+    }
+
+    // 接触補正方向へ向かう速度だけを除き、接線速度と速度上限を保つ。
+    uint32_t inwardChain = UINT32_MAX;
+    uint32_t inwardPoint = UINT32_MAX;
+    double correctionDirection[3]{};
+    snapshotOffset = 0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u && inwardChain == UINT32_MAX; ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        for (uint32_t pointIndex = 1; pointIndex < points.Count(); ++pointIndex)
+        {
+            const auto& before = staticBefore[snapshotOffset + pointIndex].position;
+            const auto& after = points.At(pointIndex).position;
+            correctionDirection[0] = static_cast<double>(after.x) - before.x;
+            correctionDirection[1] = static_cast<double>(after.y) - before.y;
+            correctionDirection[2] = static_cast<double>(after.z) - before.z;
+            const double correctionLength = sqrt(correctionDirection[0] * correctionDirection[0] + correctionDirection[1] * correctionDirection[1] + correctionDirection[2] * correctionDirection[2]);
+            if (correctionLength > 1.0e-4)
+            {
+                correctionDirection[0] /= correctionLength;
+                correctionDirection[1] /= correctionLength;
+                correctionDirection[2] /= correctionLength;
+                inwardChain = chainIndex;
+                inwardPoint = pointIndex;
+                break;
+            }
+        }
+        snapshotOffset += points.Count();
+    }
+    bool predictorPreserved = inwardChain != UINT32_MAX;
+    if (predictorPreserved)
+    {
+        snapshotOffset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+        {
+            auto& points = candidate.chains.At(chainIndex)->simulation.points;
+            memcpy(points.Data(), staticBefore + snapshotOffset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
+            snapshotOffset += points.Count();
+        }
+        auto& correctedPoint = candidate.chains.At(inwardChain)->simulation.points.At(inwardPoint);
+        double referenceAxis[3] = { 0.0, 0.0, 1.0 };
+        if (fabs(correctionDirection[2]) > 0.9)
+        {
+            referenceAxis[1] = 1.0;
+            referenceAxis[2] = 0.0;
+        }
+        double tangent[3] = { correctionDirection[1] * referenceAxis[2] - correctionDirection[2] * referenceAxis[1], correctionDirection[2] * referenceAxis[0] - correctionDirection[0] * referenceAxis[2], correctionDirection[0] * referenceAxis[1] - correctionDirection[1] * referenceAxis[0] };
+        const double tangentLength = sqrt(tangent[0] * tangent[0] + tangent[1] * tangent[1] + tangent[2] * tangent[2]);
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            tangent[axis] /= tangentLength;
+        }
+        correctedPoint.velocity = { static_cast<float>(-0.5 * correctionDirection[0] + 0.25 * tangent[0]), static_cast<float>(-0.5 * correctionDirection[1] + 0.25 * tangent[1]), static_cast<float>(-0.5 * correctionDirection[2] + 0.25 * tangent[2]) };
+        error.Clear();
+        predictorPreserved = gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 1.0 / 60.0, error);
+        const auto& resultVelocity = candidate.chains.At(inwardChain)->simulation.points.At(inwardPoint).velocity;
+        const double resultNorm = sqrt(static_cast<double>(resultVelocity.x) * resultVelocity.x + static_cast<double>(resultVelocity.y) * resultVelocity.y + static_cast<double>(resultVelocity.z) * resultVelocity.z);
+        const double correctionDot = static_cast<double>(resultVelocity.x) * correctionDirection[0] + static_cast<double>(resultVelocity.y) * correctionDirection[1] + static_cast<double>(resultVelocity.z) * correctionDirection[2];
+        const double tangentDot = static_cast<double>(resultVelocity.x) * tangent[0] + static_cast<double>(resultVelocity.y) * tangent[1] + static_cast<double>(resultVelocity.z) * tangent[2];
+        predictorPreserved = predictorPreserved && resultNorm <= sqrt(0.3125) + 1.0e-5 && correctionDot >= -1.0e-5 && fabs(tangentDot - 0.25) <= 1.0e-4;
+        if (!predictorPreserved)
+        {
+            fprintf(stderr, "weighted contact changed allowed predictor velocity: norm=%.9g inwardDot=%.9g tangent=%.9g error=%s\n", resultNorm, correctionDot, tangentDot, error.CStr());
+        }
+    }
+    if (!predictorPreserved)
+    {
+        return false;
+    }
+
     const auto RestoreCurrentPose = [&]()
     {
         uint32_t offset = 0;
@@ -4121,29 +4257,73 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
             offset += points.Count();
         }
     };
-    const auto IsUnchangedNoRetry = [&](double step, const char* stage)
+    const auto MatchesColdSolve = [&](double step, const char* stage, bool teleport)
     {
+        gk::model::animation::FModelSecondaryMotionPoint savedPreviousPoints[6]{};
+        gk::Vec3 savedPreviousRoots[2]{};
+        uint32_t offset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+        {
+            auto& previousChain = *previous.chains.At(chainIndex);
+            memcpy(savedPreviousPoints + offset, previousChain.simulation.points.Data(), sizeof(gk::model::animation::FModelSecondaryMotionPoint) * previousChain.simulation.points.Count());
+            savedPreviousRoots[chainIndex] = previousChain.simulation.previousTargets.At(0);
+            for (uint32_t pointIndex = 1; pointIndex < previousChain.simulation.points.Count(); ++pointIndex)
+            {
+                previousChain.simulation.points.At(pointIndex).position.y += 0.35f;
+                previousChain.simulation.points.At(pointIndex).position.z -= 0.2f;
+            }
+            if (teleport)
+            {
+                previousChain.simulation.previousTargets.At(0).x += 0.25f;
+            }
+            offset += previousChain.simulation.points.Count();
+        }
+
+        // previousがない冷間実行の結果を、比較基準として保存する。
         RestoreCurrentPose();
         error.Clear();
-        const bool accepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, step, error);
-        bool unchanged = !accepted && strcmp(error.CStr(), "secondary weighted contacts could not preserve body contact and chain constraints together") == 0;
-        uint32_t offset = 0;
+        const bool coldAccepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, uninitializedPrevious, skeleton, baseMatrices, &body, 1, step, error);
+        char coldError[512]{};
+        snprintf(coldError, sizeof(coldError), "%s", error.CStr());
+        gk::model::animation::FModelSecondaryMotionPoint coldPoints[6]{};
+        offset = 0;
         for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
         {
             const auto& points = candidate.chains.At(chainIndex)->simulation.points;
-            unchanged = unchanged && memcmp(points.Data(), beforePrimary + offset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count()) == 0;
+            memcpy(coldPoints + offset, points.Data(), sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count());
             offset += points.Count();
         }
-        if (!unchanged)
+
+        // skip対象ではpreviousを変えても冷間実行と同じ結果になる。
+        RestoreCurrentPose();
+        error.Clear();
+        const bool previousAccepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, step, error);
+        bool independent = coldAccepted == previousAccepted && strcmp(error.CStr(), coldError) == 0;
+        offset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
         {
-            fprintf(stderr, "weighted warm-start skip contract failed at %s: accepted=%d error=%s\n", stage, accepted ? 1 : 0, error.CStr());
+            const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+            independent = independent && memcmp(points.Data(), coldPoints + offset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count()) == 0;
+            offset += points.Count();
         }
-        return unchanged;
+        offset = 0;
+        for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+        {
+            auto& previousChain = *previous.chains.At(chainIndex);
+            memcpy(previousChain.simulation.points.Data(), savedPreviousPoints + offset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * previousChain.simulation.points.Count());
+            previousChain.simulation.previousTargets.At(0) = savedPreviousRoots[chainIndex];
+            offset += previousChain.simulation.points.Count();
+        }
+        if (!independent)
+        {
+            fprintf(stderr, "weighted contact skip reused previous state at %s: cold=%d/%s previous=%d/%s\n", stage, coldAccepted ? 1 : 0, coldError, previousAccepted ? 1 : 0, error.CStr());
+        }
+        return independent;
     };
-    const bool largeDeltaSkipped = IsUnchangedNoRetry(0.25, "delta threshold");
+    const bool largeDeltaSkipped = MatchesColdSolve(0.25, "delta threshold", false);
     candidate.chains.At(0)->settings.teleportDistance = 0.1f;
     candidate.chains.At(1)->settings.teleportDistance = 0.1f;
-    const bool teleportSkipped = IsUnchangedNoRetry(0.0, "teleport threshold");
+    const bool teleportSkipped = MatchesColdSolve(0.0, "teleport threshold", true);
     candidate.chains.At(0)->settings.teleportDistance = 10.0f;
     candidate.chains.At(1)->settings.teleportDistance = 10.0f;
     const uint32_t savedPreviousBone = previous.chains.At(0)->bones.At(1);
@@ -4152,7 +4332,165 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
     error.Clear();
     const bool topologyRejected = !gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error) && !error.Empty() && candidate.chains.At(0)->simulation.points.At(1).position.x == beforePrimary[1].position.x && candidate.chains.At(0)->simulation.points.At(1).position.y == beforePrimary[1].position.y && candidate.chains.At(0)->simulation.points.At(1).position.z == beforePrimary[1].position.z;
     previous.chains.At(0)->bones.At(1) = savedPreviousBone;
-    return largeDeltaSkipped && teleportSkipped && topologyRejected;
+    return staticVelocityClear && predictorPreserved && largeDeltaSkipped && teleportSkipped && topologyRejected;
+}
+
+/**
+ * 小deltaでは前回状態からの物理予測姿勢をbody候補より先に選ぶ。
+ */
+static bool TestWeightedContactPrefersPhysicalPrediction()
+{
+    gk::model::animation::FModelSkeleton skeleton;
+    const int32_t parents[5] = { -1, 0, 1, 0, 3 };
+    gk::model::animation::FModelBoneTransform rest[5]{};
+    rest[1].position[0] = 0.2f;
+    rest[2].position[0] = 1.0f;
+    rest[3].position[0] = 0.2f;
+    rest[4].position[0] = -1.0f;
+    gk::String error;
+    if (!skeleton.parents.AppendRange(parents, 5) || !skeleton.restLocalTransforms.AppendRange(rest, 5))
+    {
+        return false;
+    }
+    gk::model::animation::FModelPose pose;
+    gk::Array<float> baseMatrices;
+    if (!gk::model::animation::InitializeModelPose(skeleton, pose, error) || !gk::model::animation::EvaluateModelPose(skeleton, pose, baseMatrices, error))
+    {
+        fprintf(stderr, "weighted prediction skeleton setup failed: %s\n", error.CStr());
+        return false;
+    }
+
+    gk::model::FModelSecondaryMotionState candidate;
+    gk::model::FModelSecondaryMotionState previous;
+    const uint32_t chainBones[2][2] = { { 1, 2 }, { 3, 4 } };
+    const gk::Vec3 targets[2][3] = { { { 0.2f, 0.0f, 0.0f }, { 1.2f, 0.0f, 0.0f }, { 1.3f, 0.0f, 0.0f } }, { { 0.2f, 0.0f, 0.0f }, { -0.8f, 0.0f, 0.0f }, { -0.9f, 0.0f, 0.0f } } };
+    const double delta = 1.0 / 120.0;
+    const gk::model::animation::FModelSecondaryMotionCollisionShape body = { { 0.2f, 0.0f, 0.0f }, { 0.2f, 0.0f, 0.0f }, 0.95f };
+    gk::model::animation::FModelSecondaryMotionPoint initialPoints[2][3]{};
+    gk::model::animation::FModelSecondaryMotionChainState predicted[2];
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        auto* currentChain = new gk::model::FModelSecondaryMotionChain;
+        auto* previousChain = new gk::model::FModelSecondaryMotionChain;
+        currentChain->settings.frequencyHz = 0.5f;
+        currentChain->settings.dampingRatio = 0.1f;
+        currentChain->settings.gravity = { 0.0f, -0.1f, 0.0f };
+        currentChain->settings.windAcceleration = {};
+        currentChain->settings.maxAngleDegrees = 100.0f;
+        currentChain->settings.endOffset = { 0.1f, 0.0f, 0.0f };
+        currentChain->settings.teleportDistance = 1.0f;
+        currentChain->settings.constraintIterations = 12;
+        previousChain->settings = currentChain->settings;
+        gk::model::animation::FModelSecondaryMotionPoint currentStatePoints[3]{};
+        gk::model::animation::FModelSecondaryMotionPoint previousStatePoints[3]{};
+        for (uint32_t pointIndex = 0; pointIndex < 3u; ++pointIndex)
+        {
+            currentStatePoints[pointIndex].position = targets[chainIndex][pointIndex];
+            previousStatePoints[pointIndex].position = pointIndex == 0u ? gk::Vec3{ 0.2f, 0.0f, 0.0f } : (pointIndex == 1u ? gk::Vec3{ 0.2f, 1.0f, 0.0f } : gk::Vec3{ 0.2f, 1.1f, 0.0f });
+            if (pointIndex > 0u)
+            {
+                previousStatePoints[pointIndex].velocity = { 0.0f, 0.5f, 0.0f };
+            }
+            initialPoints[chainIndex][pointIndex] = currentStatePoints[pointIndex];
+        }
+        const bool ready = currentChain->bones.AppendRange(chainBones[chainIndex], 2) && currentChain->simulation.previousTargets.AppendRange(targets[chainIndex], 3) && currentChain->simulation.points.AppendRange(currentStatePoints, 3) && previousChain->bones.AppendRange(chainBones[chainIndex], 2) && previousChain->simulation.previousTargets.AppendRange(targets[chainIndex], 3) && previousChain->simulation.points.AppendRange(previousStatePoints, 3) && candidate.chains.Append(currentChain) && previous.chains.Append(previousChain) && predicted[chainIndex].points.AppendRange(previousStatePoints, 3) && predicted[chainIndex].previousTargets.AppendRange(targets[chainIndex], 3);
+        if (!ready)
+        {
+            if (candidate.chains.Count() <= chainIndex)
+            {
+                delete currentChain;
+            }
+            if (previous.chains.Count() <= chainIndex)
+            {
+                delete previousChain;
+            }
+            return false;
+        }
+        if (!gk::model::animation::StepSecondaryMotionChain(targets[chainIndex], 3, currentChain->settings, delta, predicted[chainIndex], error))
+        {
+            fprintf(stderr, "weighted no-body physical prediction failed: chain=%u error=%s\n", chainIndex, error.CStr());
+            return false;
+        }
+    }
+    candidate.linkIterations = 24;
+    const gk::FModelSecondaryMotionContactPoint weightedPoint = { 0, 2, 0.0f };
+    const gk::FModelSecondaryMotionContactAnchor anchors[2] = { { 2, {}, 0.5f }, { 4, {}, 0.5f } };
+    if (!candidate.contactPoints.Append(weightedPoint) || !candidate.contactAnchors.AppendRange(anchors, 2))
+    {
+        return false;
+    }
+
+    const double predictedWeightedY = (predicted[0].points.At(1).position.y + predicted[1].points.At(1).position.y) * 0.5;
+    const double weightedClearance = predictedWeightedY - body.start.y;
+    double maximumPredictionMotion = 0.0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        for (uint32_t pointIndex = 1; pointIndex < 3u; ++pointIndex)
+        {
+            const double motion = sqrt(pow(static_cast<double>(predicted[chainIndex].points.At(pointIndex).position.x - previous.chains.At(chainIndex)->simulation.points.At(pointIndex).position.x), 2.0) + pow(static_cast<double>(predicted[chainIndex].points.At(pointIndex).position.y - previous.chains.At(chainIndex)->simulation.points.At(pointIndex).position.y), 2.0) + pow(static_cast<double>(predicted[chainIndex].points.At(pointIndex).position.z - previous.chains.At(chainIndex)->simulation.points.At(pointIndex).position.z), 2.0));
+            maximumPredictionMotion = fmax(maximumPredictionMotion, motion);
+        }
+    }
+    if (weightedClearance <= body.radius + 0.01 || maximumPredictionMotion < 1.0e-4)
+    {
+        fprintf(stderr, "weighted prediction fixture is not clear or dynamic: clearance=%.9g radius=%.9g motion=%.9g\n", weightedClearance, body.radius, maximumPredictionMotion);
+        return false;
+    }
+
+    gk::model::FModelSecondaryMotionState noPrevious;
+    error.Clear();
+    if (!gk::model::ConstrainSecondaryMotionContactPoints(candidate, noPrevious, skeleton, baseMatrices, &body, 1, delta, error))
+    {
+        fprintf(stderr, "weighted cold body candidate failed: %s\n", error.CStr());
+        return false;
+    }
+    gk::model::animation::FModelSecondaryMotionPoint coldPoints[2][3]{};
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        memcpy(coldPoints[chainIndex], points.Data(), sizeof(coldPoints[chainIndex]));
+        memcpy(candidate.chains.At(chainIndex)->simulation.points.Data(), initialPoints[chainIndex], sizeof(initialPoints[chainIndex]));
+    }
+    double coldPredictionDistance = 0.0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        for (uint32_t pointIndex = 0; pointIndex < 3u; ++pointIndex)
+        {
+            const auto& cold = coldPoints[chainIndex][pointIndex].position;
+            const auto& expected = predicted[chainIndex].points.At(pointIndex).position;
+            const double dx = static_cast<double>(cold.x) - expected.x;
+            const double dy = static_cast<double>(cold.y) - expected.y;
+            const double dz = static_cast<double>(cold.z) - expected.z;
+            coldPredictionDistance += sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+
+    error.Clear();
+    if (!gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, delta, error))
+    {
+        fprintf(stderr, "weighted physical prediction candidate failed: %s\n", error.CStr());
+        return false;
+    }
+    double selectedPredictionDistance = 0.0;
+    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    {
+        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
+        for (uint32_t pointIndex = 0; pointIndex < 3u; ++pointIndex)
+        {
+            const auto& selected = points.At(pointIndex).position;
+            const auto& expected = predicted[chainIndex].points.At(pointIndex).position;
+            const double dx = static_cast<double>(selected.x) - expected.x;
+            const double dy = static_cast<double>(selected.y) - expected.y;
+            const double dz = static_cast<double>(selected.z) - expected.z;
+            selectedPredictionDistance += sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+    if (!(selectedPredictionDistance + 0.01 < coldPredictionDistance))
+    {
+        fprintf(stderr, "weighted solver did not prefer physical prediction: selectedDistance=%.9g coldDistance=%.9g clearance=%.9g motion=%.9g\n", selectedPredictionDistance, coldPredictionDistance, weightedClearance, maximumPredictionMotion);
+        return false;
+    }
+    return true;
 }
 
 /**
@@ -4480,5 +4818,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactPrefersPhysicalPrediction() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }
