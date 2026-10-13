@@ -7,6 +7,7 @@
 #include "foundation/FVector3d.h"
 #include "foundation/String.h"
 #include "model/animation/FPreparedSecondaryMotionCollisionShape.h"
+#include "model/animation/FSecondaryMotionChainAttachmentContact.h"
 #include "model/animation/FSecondaryMotionReferenceSegment.h"
 
 /**
@@ -20,6 +21,10 @@ namespace gk::model::animation
  */
 bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, gk::Array<gk::FVector3d>& positions, gk::String& error, double toleranceFraction = 1.0);
 
+/**
+ * 鎖の身体接触と添付線分を同時に解く。各添付定義はsegmentの基準方向と鎖の角度制約に一致させる。候補が見つからない場合はpositionsを保ち、errorを空のまま返す。
+ */
+bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, gk::Array<gk::FVector3d>& positions, gk::String& error, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount);
 }
 
 #endif
