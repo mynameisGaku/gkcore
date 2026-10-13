@@ -386,7 +386,12 @@ int Update(ModelHandle handle, double delta, bool reset)
             bool advanced = false;
             // 接触だけが未解決なら、現在の終端姿勢を一括solverで再検査できる。
             bool contactUnresolved = false;
-            if (currentShapes.Count() > 0 && chain.colliderMask != UINT64_MAX)
+            if (candidate.contactPoints.Count() > 0u && currentShapes.Count() > 0u)
+            {
+                // 重み付き接触は全鎖solverが一括所有し、個別の押し出しを予測へ混ぜない。
+                advanced = model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+            }
+            else if (currentShapes.Count() > 0 && chain.colliderMask != UINT64_MAX)
             {
                 // subsetだけcacheの拡張shapeを渡し、solver側の二重半径加算を避ける。
                 model::animation::FModelSecondaryMotionStepShapes previousView{};

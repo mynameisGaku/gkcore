@@ -4,6 +4,7 @@
 #include "model/animation/ModelSecondaryMotionAttachments.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
+#include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/ModelSecondaryMotionWeightedContacts.h"
 
 #include <float.h>
@@ -492,7 +493,7 @@ bool EvaluateRenderedAnchor(const FModelSecondaryMotionContactAnchor& anchor, co
 }
 
 /**
- * 前回の確定方向から、現在のrootと基準骨長に沿う再試行seedを作る。
+ * 前回から現在の目標へ物理予測し、時間0では確定方向と現在骨長を再試行に使う。
  */
 bool BuildPreviousDirectionSeed(const FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const Array<FVector3d>& currentPositions, const Array<FSecondaryMotionContactChain>& chains, const Array<FSecondaryMotionReferenceSegment>& references, double delta, Array<FVector3d>& seed, bool& eligible, String& error)
 {
@@ -553,6 +554,39 @@ bool BuildPreviousDirectionSeed(const FModelSecondaryMotionState& candidate, con
     {
         error.Assign("secondary weighted contact warm-start allocation failed");
         return false;
+    }
+    if (delta > 0.0)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+        {
+            const auto& currentChain = *candidate.chains.At(chainIndex);
+            const auto& previousChain = *previous.chains.At(chainIndex);
+            animation::FModelSecondaryMotionChainState prediction;
+            // 接触の順序による姿勢跳びを持ち込まず、既存のばね・減衰・骨制約で予測する。
+            if (!prediction.points.AppendRange(previousChain.simulation.points.Data(), previousChain.simulation.points.Count()) || !prediction.previousTargets.AppendRange(previousChain.simulation.previousTargets.Data(), previousChain.simulation.previousTargets.Count()))
+            {
+                error.Assign("secondary weighted contact prediction state allocation failed");
+                return false;
+            }
+            if (!animation::StepSecondaryMotionChain(currentChain.simulation.previousTargets.Data(), currentChain.simulation.previousTargets.Count(), currentChain.settings, delta, prediction, error))
+            {
+                return false;
+            }
+            for (uint32_t point = 0; point < prediction.points.Count(); ++point)
+            {
+                if (!seed.Append(ToDouble(prediction.points.At(point).position)))
+                {
+                    error.Assign("secondary weighted contact prediction point allocation failed");
+                    return false;
+                }
+            }
+        }
+        if (seed.Count() != currentPositions.Count())
+        {
+            error.Assign("secondary weighted contact prediction point count is invalid");
+            return false;
+        }
+        return true;
     }
     for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
     {
@@ -934,11 +968,31 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
         contacts.At(pointIndex).shapes = shapeCount > 0u ? pointPreparedShapes.Data() + offset : nullptr;
     }
 
-    bool solved = animation::ResolvePreparedSecondaryMotionWeightedContacts(chains.Data(), chains.Count(), references.Data(), references.Count(), anchors.Data(), anchors.Count(), contacts.Data(), contacts.Count(), positions, error, candidate.linkIterations);
-    if (!solved && error.Empty())
+    Array<FVector3d> warmStart;
+    bool eligible = false;
+    bool solved = false;
+    if (delta > 0.0 && !BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, delta, warmStart, eligible, error))
     {
-        Array<FVector3d> warmStart;
-        bool eligible = false;
+        return false;
+    }
+    if (eligible)
+    {
+        solved = animation::ResolvePreparedSecondaryMotionWeightedContacts(chains.Data(), chains.Count(), references.Data(), references.Count(), anchors.Data(), anchors.Count(), contacts.Data(), contacts.Count(), warmStart, error, candidate.linkIterations);
+        if (solved)
+        {
+            positions.MoveFrom(warmStart);
+        }
+        else if (!error.Empty())
+        {
+            return false;
+        }
+    }
+    if (!solved)
+    {
+        solved = animation::ResolvePreparedSecondaryMotionWeightedContacts(chains.Data(), chains.Count(), references.Data(), references.Count(), anchors.Data(), anchors.Count(), contacts.Data(), contacts.Count(), positions, error, candidate.linkIterations);
+    }
+    if (!solved && error.Empty() && delta == 0.0)
+    {
         if (!BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, delta, warmStart, eligible, error))
         {
             return false;
@@ -1055,8 +1109,8 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     }
 
     // 位置・速度の両方を検証し終えてから候補鎖へ一括反映する。
-    const double step = delta > 0.0 && delta < 0.25 ? delta / ceil(delta * 120.0) : 0.0;
-    if (step > 0.0)
+    const bool projectVelocity = delta > 0.0 && delta < 0.25;
+    if (projectVelocity)
     {
         for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
         {
@@ -1086,9 +1140,19 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
             const uint32_t first = chains.At(chainIndex).firstPoint;
             for (uint32_t point = 1; point < chain.simulation.points.Count(); ++point)
             {
-                const auto& current = chain.simulation.points.At(point);
-                const Vec3& before = storedPositions.At(first + point);
-                const FVector3d velocity{ { static_cast<double>(current.velocity.x) + (static_cast<double>(before.x) - beforePositions.At(first + point).value[0]) / step, static_cast<double>(current.velocity.y) + (static_cast<double>(before.y) - beforePositions.At(first + point).value[1]) / step, static_cast<double>(current.velocity.z) + (static_cast<double>(before.z) - beforePositions.At(first + point).value[2]) / step } };
+                const FVector3d correction = Subtract(ToDouble(storedPositions.At(first + point)), beforePositions.At(first + point));
+                const double correctionLength = Length(correction);
+                FVector3d velocity = ToDouble(stagedVelocities.At(first + point));
+                if (correctionLength > 0.0)
+                {
+                    // 幾何補正を勢いへ変換せず、補正に逆行する予測速度の成分だけを取り除く。
+                    const FVector3d correctionDirection = Multiply(correction, 1.0 / correctionLength);
+                    const double inwardVelocity = velocity.value[0] * correctionDirection.value[0] + velocity.value[1] * correctionDirection.value[1] + velocity.value[2] * correctionDirection.value[2];
+                    if (inwardVelocity < 0.0)
+                    {
+                        velocity = Subtract(velocity, Multiply(correctionDirection, inwardVelocity));
+                    }
+                }
                 if (!StorePosition(velocity, stagedVelocities.At(first + point), error))
                 {
                     return false;

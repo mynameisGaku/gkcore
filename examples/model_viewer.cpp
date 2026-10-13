@@ -5,6 +5,7 @@
 #include "examples/support/ModelMappingReport.h"
 #include "examples/support/FModelArmIkPreview.h"
 #include "examples/support/FModelMotionView.h"
+#include "examples/support/ModelPingPongMotion.h"
 #include "examples/support/ModelSecondaryMotionPreview.h"
 #include "examples/support/ModelSecondaryMotionDebugView.h"
 #if defined(GKCORE_MODEL_BENCHMARK)
@@ -381,6 +382,12 @@ int main(int argc, char** argv)
         fprintf(stderr, "invalid or duplicate --follow-motion option\n");
         return 2;
     }
+    bool pingPongMotion = false;
+    if (!gk::examples::ParsePingPongMotionOptions(argc, argv, pingPongMotion))
+    {
+        fprintf(stderr, "invalid or duplicate --ping-pong-motion option\n");
+        return 2;
+    }
     if ((secondaryColliderPath && !secondaryMotionPath) || (vertexContacts && !secondaryColliderPath) || (secondaryLinkPath && !secondaryColliderPath) || (secondaryDistancePath && !secondaryMotionPath) || (secondaryContactLinkPath && (!secondaryColliderPath || !secondaryMotionPath)) || (secondaryContactPointPath && (!secondaryColliderPath || !secondaryMotionPath)))
     {
         fprintf(stderr, "--secondary-colliders and --secondary-distances require --secondary-motion; --secondary-vertex-contact and --secondary-links require colliders; --secondary-contact-links and --secondary-contact-points require secondary motion chains and colliders\n");
@@ -393,7 +400,7 @@ int main(int argc, char** argv)
     }
     if (argc < 6 || argc > 11)
     {
-        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--secondary-contact-links <config-file>] [--secondary-contact-points <config-file>] [--collision-debug]\n");
+        fprintf(stderr, "usage: model_viewer <model-file> <scale> <centerX> <centerY> <centerZ> [mode args] [--materials <config-file>] [--model-bones <path>] [--motion-bones <path>] [--blend-bones <path>] [--follow-motion] [--ping-pong-motion] [--secondary-motion <config-file>] [--secondary-colliders <config-file>] [--secondary-vertex-contact] [--secondary-links <config-file>] [--secondary-distances <config-file>] [--secondary-contact-links <config-file>] [--secondary-contact-points <config-file>] [--collision-debug]\n");
         return 2;
     }
     float scale = 0.0f;
@@ -418,7 +425,7 @@ int main(int argc, char** argv)
     const bool externalBlendMode = strcmp(mode, "external-blend") == 0 || strcmp(mode, "external-blend-ik") == 0;
     // modeに必要な引数が揃っているかを示す。
     const bool modeArgumentsValid = (externalMode && !externalBlendMode && effectiveArgc == 8) || (externalBlendMode && effectiveArgc == 9) || (!externalMode && !externalBlendMode && effectiveArgc <= 7);
-    if (!IsKnownMode(mode) || !modeArgumentsValid || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
+    if (!IsKnownMode(mode) || !modeArgumentsValid || (pingPongMotion && !externalMode && !externalBlendMode) || (hasMaterialConfig && !materialConfigPath[0]) || !gk::examples::ValidateHumanoidMapOptions(humanoidMapOptions, externalMode || externalBlendMode, externalBlendMode, &humanoidMapError))
     {
         fprintf(stderr, "invalid viewer mode or humanoid bone options: %s\n", humanoidMapError ? humanoidMapError : mode);
         return 2;
@@ -510,6 +517,9 @@ int main(int argc, char** argv)
     gk::ModelAnimationHandle externalAnimation{};
     // blend枠へ適用後に解放するmotion handle。
     gk::ModelAnimationHandle secondaryAnimation{};
+    // 折り返し再生で使うclipごとの長さ。
+    double primaryMotionDuration = 0.0;
+    double secondaryMotionDuration = 0.0;
     // 各枠へ登録した骨対応の表示情報を保持する。
     gk::examples::FModelMappingReport primaryMappingReport{};
     gk::examples::FModelMappingReport secondaryMappingReport{};
@@ -521,8 +531,17 @@ int main(int argc, char** argv)
             fprintf(stderr, "LoadModelAnimation(primary): %s\n", gk::GetLastErrorMessage());
             failed = true;
         }
-        else if (!(humanoidMapOptions.motionPath ? Check(gk::SetAnimationHumanoidBoneMap(externalAnimation, humanoidMapOptions.motionPath), "SetAnimationHumanoidBoneMap(primary)") : Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)")) || !Check(gk::ApplyModelAnimation(model, externalAnimation, 0, true), "ApplyModelAnimation(primary)"))
+        else if (!(humanoidMapOptions.motionPath ? Check(gk::SetAnimationHumanoidBoneMap(externalAnimation, humanoidMapOptions.motionPath), "SetAnimationHumanoidBoneMap(primary)") : Check(gk::AutoMapAnimationHumanoidBones(externalAnimation), "AutoMapAnimationHumanoidBones(primary)")) || !Check(gk::ApplyModelAnimation(model, externalAnimation, 0, !pingPongMotion), "ApplyModelAnimation(primary)"))
             failed = true;
+        if (!failed)
+        {
+            primaryMotionDuration = gk::GetAnimationClipDuration(externalAnimation, 0);
+            if (!isfinite(primaryMotionDuration) || primaryMotionDuration <= 0.0 || (pingPongMotion && !Check(gk::SetModelAnimationLoop(model, false, 0), "SetModelAnimationLoop(primary)")))
+            {
+                fprintf(stderr, "primary motion has an invalid duration\n");
+                failed = true;
+            }
+        }
         if (!failed && externalBlendMode)
         {
             secondaryAnimation = gk::LoadModelAnimation(argv[8]);
@@ -533,6 +552,15 @@ int main(int argc, char** argv)
             }
             else if (!(humanoidMapOptions.blendPath ? Check(gk::SetAnimationHumanoidBoneMap(secondaryAnimation, humanoidMapOptions.blendPath), "SetAnimationHumanoidBoneMap(secondary)") : Check(gk::AutoMapAnimationHumanoidBones(secondaryAnimation), "AutoMapAnimationHumanoidBones(secondary)")) || !Check(gk::SetModelAnimationBlend(model, secondaryAnimation, 0, 0.5f), "SetModelAnimationBlend(external)"))
                 failed = true;
+            if (!failed)
+            {
+                secondaryMotionDuration = gk::GetAnimationClipDuration(secondaryAnimation, 0);
+                if (!isfinite(secondaryMotionDuration) || secondaryMotionDuration <= 0.0 || (pingPongMotion && !Check(gk::SetModelAnimationLoop(model, false, 1), "SetModelAnimationLoop(secondary)")))
+                {
+                    fprintf(stderr, "secondary motion has an invalid duration\n");
+                    failed = true;
+                }
+            }
         }
         if (!failed && !gk::examples::BuildModelMappingReport(model, 0, u8"主モーション", primaryMappingReport))
         {
@@ -622,6 +650,8 @@ int main(int argc, char** argv)
     bool bloomEnabled = false;
     // motion再生を一時停止しているかを示す。
     bool motionPlaying = true;
+    // ping-pong再生を開始した時点からの経過時間。
+    double pingPongPhaseSeconds = 0.0;
     // 外部motion間blendを有効にしているかを示す。
     bool externalBlendEnabled = externalBlendMode;
 #if defined(GKCORE_MODEL_BENCHMARK)
@@ -763,10 +793,16 @@ int main(int argc, char** argv)
         {
             collisionDebug = !collisionDebug;
         }
-        if (gk::WasKeyPressed(gk::Key::R))
+        // R keyで再生時刻も初期化するかを示す。
+        const bool resetMotionTime = gk::WasKeyPressed(gk::Key::R);
+        if (resetMotionTime)
         {
             rotationY = 0.0f;
-            if (secondaryMotionPath && !Check(gk::ResetModelSecondaryMotion(model), "ResetModelSecondaryMotion"))
+            if (pingPongMotion)
+            {
+                pingPongPhaseSeconds = 0.0;
+            }
+            if (secondaryMotionPath && !pingPongMotion && !Check(gk::ResetModelSecondaryMotion(model), "ResetModelSecondaryMotion"))
             {
                 failed = true;
                 break;
@@ -801,10 +837,31 @@ int main(int argc, char** argv)
                 break;
             }
         }
-        if ((strcmp(mode, "blend") == 0 || strcmp(mode, "animate") == 0 || externalMode || externalBlendMode) && !Check(gk::UpdateModelAnimation(model, deltaSeconds), "UpdateModelAnimation"))
+        if (!pingPongMotion && (strcmp(mode, "blend") == 0 || strcmp(mode, "animate") == 0 || externalMode || externalBlendMode) && !Check(gk::UpdateModelAnimation(model, deltaSeconds), "UpdateModelAnimation"))
         {
             failed = true;
             break;
+        }
+        if (pingPongMotion)
+        {
+            if (motionPlaying && !resetMotionTime)
+            {
+                pingPongPhaseSeconds += deltaSeconds;
+            }
+            // 各clipの長さに合わせて写したslot時刻。
+            double primaryTime = 0.0;
+            double secondaryTime = 0.0;
+            if (!isfinite(pingPongPhaseSeconds) || !gk::examples::EvaluatePingPongMotionTime(pingPongPhaseSeconds, primaryMotionDuration, primaryTime) || !Check(gk::SetModelAnimationTime(model, primaryTime, 0), "SetModelAnimationTime(ping-pong primary)") || (externalBlendMode && (!gk::examples::EvaluatePingPongMotionTime(pingPongPhaseSeconds, secondaryMotionDuration, secondaryTime) || !Check(gk::SetModelAnimationTime(model, secondaryTime, 1), "SetModelAnimationTime(ping-pong secondary)"))))
+            {
+                fprintf(stderr, "ping-pong motion time could not be evaluated\n");
+                failed = true;
+                break;
+            }
+            if (resetMotionTime && secondaryMotionPath && !Check(gk::ResetModelSecondaryMotion(model), "ResetModelSecondaryMotion(ping-pong reset)"))
+            {
+                failed = true;
+                break;
+            }
         }
 #if defined(GKCORE_MODEL_BENCHMARK)
         // IKの目標計算と設定だけを、描画予約・Presentから分けて測る。
@@ -853,7 +910,8 @@ int main(int argc, char** argv)
             break;
         }
 #endif
-        if (secondaryMotionPath && !Check(gk::UpdateModelSecondaryMotion(model, deltaSeconds), "UpdateModelSecondaryMotion"))
+        // resetしたframeは接触だけを解き、時間を進めず初期姿勢を表示する。
+        if (secondaryMotionPath && !Check(gk::UpdateModelSecondaryMotion(model, resetMotionTime ? 0.0 : deltaSeconds), "UpdateModelSecondaryMotion"))
         {
             failed = true;
             break;
