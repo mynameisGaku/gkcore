@@ -57,7 +57,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelIk.cpp
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/ModelSecondaryMotionDirection.cpp
-    src/model/animation/ModelSecondaryMotionChainContacts.cpp
+    src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp
     src/model/animation/ModelSecondaryMotionWeightedContacts.cpp
     src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp

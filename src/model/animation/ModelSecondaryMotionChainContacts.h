@@ -9,6 +9,7 @@
 #include "model/animation/FPreparedSecondaryMotionCollisionShape.h"
 #include "model/animation/FSecondaryMotionChainAttachmentContact.h"
 #include "model/animation/FSecondaryMotionReferenceSegment.h"
+#include "model/animation/FSecondaryMotionContactLinearSystem.h"
 
 /**
  * 鎖全体の骨長・曲げ角を保つ身体接触計算。
@@ -27,9 +28,9 @@ bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionC
 bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, gk::Array<gk::FVector3d>& positions, gk::String& error, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount);
 
 /**
- * 既存の鎖身体接触・bone-local接触のmeritと方向勾配を、全身solver向けの配列範囲で評価する。
+ * 既存の鎖身体接触・bone-local接触のmeritと方向勾配を、全身solver向けの配列範囲で評価する。linearSystem指定時はfirstSegmentから接触行も集める。
  */
-bool EvaluatePreparedSecondaryMotionChainContactsMerit(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* directionGradients, uint32_t gradientCount, gk::String& error);
+bool EvaluatePreparedSecondaryMotionChainContactsMerit(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* directionGradients, uint32_t gradientCount, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem = nullptr, uint32_t firstSegment = 0, bool useClearanceMargin = false);
 }
 
 #endif
