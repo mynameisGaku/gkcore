@@ -761,16 +761,20 @@ bool IsStoredCandidateClear(const FSecondaryMotionContactChain* chains, uint32_t
 /**
  * 接触行どうしの影響を減衰付き連立方程式で解き、現在姿勢の近くで候補を探す。
  */
-bool RefineCoupledSeed(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, uint32_t maximumIterations, gk::Array<gk::FVector3d>& directions, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& gradients, double& merit, bool& clear, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error)
+bool RefineCoupledSeed(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, uint32_t maximumIterations, gk::Array<gk::FVector3d>& directions, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& gradients, double& merit, bool& clear, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, bool& progressed, gk::String& error)
 {
     // 関係する自由度を同時に更新し、単独勾配では進みにくい接触を扱う。
     FSecondaryMotionContactLinearSystem linearSystem;
     double relativeDamping = 1.0e-3;
     clear = false;
+    progressed = false;
     for (uint32_t iteration = 0; iteration < maximumIterations; ++iteration)
     {
         if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, directions, positions, merit, gradients, anchorEvaluations, error, &linearSystem, true))
         {
+            // 上限で評価を中断した姿勢は、途中までの侵入量で次の候補へ引き継がない。
+            progressed = false;
+            merit = DBL_MAX;
             // 計算量の上限では従来探索へ戻し、入力や確保の失敗は呼出し側へ伝える。
             return error.Empty();
         }
@@ -865,6 +869,7 @@ bool RefineCoupledSeed(const FSecondaryMotionContactChain* chains, uint32_t chai
                     merit = trialMerit;
                     clear = merit == 0.0;
                     improved = true;
+                    progressed = true;
                     relativeDamping = fmax(1.0e-12, relativeDamping * (search == 0u ? 0.3 : 2.0));
                     break;
                 }
@@ -1477,14 +1482,34 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
         error.Assign("Secondary motion weighted seed allocation failed");
         return false;
     }
-    for (uint32_t strategyIndex = 0; strategyIndex < 4u; ++strategyIndex)
+    // 接触の解消へ最も近づいた途中姿勢を、後続の連立探索へ引き継ぐ。
+    gk::Array<gk::FVector3d> closestAttemptDirections;
+    // 余白なしの接触評価で最も小さかった侵入量。
+    double closestAttemptMerit = DBL_MAX;
+    // 保存時の余白を含む連立探索の途中姿勢は、元条件の候補と分けて比較する。
+    gk::Array<gk::FVector3d> closestCoupledDirections;
+    // 保存時の余白も含めた接触評価で最も小さかった侵入量。
+    double closestCoupledMerit = DBL_MAX;
+    for (uint32_t attemptIndex = 0; attemptIndex < 6u; ++attemptIndex)
     {
-        // 既存の探索が尽きた場合だけ、近傍から連立補正を試す。
+        // 現在の方向から一度だけ連立補正し、近い成立姿勢を広いseed探索より先に使う。
+        const bool localCoupledOnly = attemptIndex == 0u;
+        // 局所探索が失敗した後は、従来の三方式、途中姿勢の引き継ぎ、最後の継続の順を保つ。
+        const uint32_t strategyIndex = localCoupledOnly ? 3u : attemptIndex - 1u;
         const bool preserveMagnitude = strategyIndex != 0u;
-        const bool useCoupled = strategyIndex == 3u;
+        const bool useCoupled = strategyIndex >= 3u;
+        // 最後の候補では最良の連立姿勢だけを再開する。
+        const bool continueCoupled = strategyIndex == 4u;
+        if (continueCoupled && closestCoupledDirections.Count() == 0u)
+        {
+            continue;
+        }
         const bool useConjugate = strategyIndex == 2u;
-        bool tryInitial = true;
-        const uint32_t maximumSeedIndex = strategyIndex == 2u ? kWeightedContactSeedAzimuths + 6u : 3u;
+        // 引き継ぎ候補を先頭へ加え、元の初期方向と既存seedも残す。
+        const auto& previousAttemptDirections = continueCoupled ? closestCoupledDirections : closestAttemptDirections;
+        const uint32_t additionalSeedCount = !localCoupledOnly && useCoupled && referenceCount > 0u && previousAttemptDirections.Count() == referenceCount ? 1u : 0u;
+        // 全seedが失敗した後の継続は、最も改善した連立候補から一度だけ行う。
+        const uint32_t maximumSeedIndex = localCoupledOnly || continueCoupled ? 0u : (strategyIndex == 2u ? kWeightedContactSeedAzimuths + 6u : 3u) + additionalSeedCount;
         uint32_t firstClearSeedIndex = UINT32_MAX;
         for (uint32_t seedIndex = 0; seedIndex <= maximumSeedIndex; ++seedIndex)
         {
@@ -1492,7 +1517,16 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             {
                 break;
             }
-            if (tryInitial)
+            if (seedIndex == 0u && additionalSeedCount != 0u)
+            {
+                seedDirections.Clear();
+                if (!seedDirections.AppendRange(previousAttemptDirections.Data(), previousAttemptDirections.Count()))
+                {
+                    error.Assign("Secondary motion weighted handoff seed allocation failed");
+                    return false;
+                }
+            }
+            else if (seedIndex == additionalSeedCount)
             {
                 seedDirections.Clear();
                 for (uint32_t index = 0; index < directions.Count(); ++index)
@@ -1503,11 +1537,10 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
                         return false;
                     }
                 }
-                tryInitial = false;
             }
-            else if (seedIndex <= 3u)
+            else if (seedIndex <= 3u + additionalSeedCount)
             {
-                const uint32_t localSeedIndex = seedIndex - 1u;
+                const uint32_t localSeedIndex = seedIndex - additionalSeedCount - 1u;
                 const uint32_t directionIndex = localSeedIndex * 5u;
                 const double phase = 6.2831853071795864769 * static_cast<double>(directionIndex) / static_cast<double>(kWeightedContactSeedAzimuths);
                 const gk::FVector3d worldTangent = { { cos(phase), sin(phase), 0.5 } };
@@ -1519,9 +1552,9 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
                     return false;
                 }
             }
-            else if (seedIndex <= kWeightedContactSeedAzimuths + 3u)
+            else if (seedIndex <= kWeightedContactSeedAzimuths + 3u + additionalSeedCount)
             {
-                const uint32_t directionIndex = seedIndex - 4u;
+                const uint32_t directionIndex = seedIndex - additionalSeedCount - 4u;
                 const double phase = 6.2831853071795864769 * static_cast<double>(directionIndex) / static_cast<double>(kWeightedContactSeedAzimuths);
                 const gk::FVector3d worldTangent = { { cos(phase), sin(phase), 0.5 } };
                 if (!MakeCoherentSeed(chains, chainCount, references, directions, coherentSeedChains, worldTangent, 0.5, seedDirections))
@@ -1533,7 +1566,7 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             else
             {
                 // 停滞した姿勢の近くから探索を再開する角度を選ぶ。
-                const uint32_t localSeedIndex = seedIndex - kWeightedContactSeedAzimuths - 4u;
+                const uint32_t localSeedIndex = seedIndex - additionalSeedCount - kWeightedContactSeedAzimuths - 4u;
                 const double angleFractions[3] = { 0.0222222222222222, 0.0555555555555556, 0.1111111111111111 };
                 if (!MakeTargetedGradientSeed(chains, chainCount, references, directions, gradients, targetChains, angleFractions[localSeedIndex], seedDirections))
                 {
@@ -1581,9 +1614,11 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
                 }
             }
             bool clear = seedMerit == 0.0;
+            // 上限で探索を省いた場合は、変化していない方向を継続候補へ保存しない。
+            bool coupledProgressed = false;
             if (useCoupled)
             {
-                if (seedMerit != DBL_MAX && !RefineCoupledSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, error))
+                if (seedMerit != DBL_MAX && !RefineCoupledSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, coupledProgressed, error))
                 {
                     return false;
                 }
@@ -1591,6 +1626,24 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             else if (!RefineSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, preserveMagnitude, useConjugate, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, error))
             {
                 return false;
+            }
+            if (!clear && (!useCoupled || coupledProgressed) && isfinite(seedMerit) && seedMerit >= 0.0 && seedMerit < DBL_MAX)
+            {
+                // 余白あり・なしの侵入量を混ぜず、同じ評価方法どうしで最良姿勢を選ぶ。
+                auto& closestDirections = useCoupled ? closestCoupledDirections : closestAttemptDirections;
+                double& closestMerit = useCoupled ? closestCoupledMerit : closestAttemptMerit;
+                if (seedMerit < closestMerit)
+                {
+                    // コピーを完成させてから保存し、確保に失敗した場合は入力位置を保つ。
+                    gk::Array<gk::FVector3d> savedDirections;
+                    if (!savedDirections.AppendRange(trialDirections.Data(), trialDirections.Count()))
+                    {
+                        error.Assign("Secondary motion weighted handoff direction allocation failed");
+                        return false;
+                    }
+                    closestDirections.MoveFrom(savedDirections);
+                    closestMerit = seedMerit;
+                }
             }
             if (clear)
             {
