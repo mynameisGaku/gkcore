@@ -213,7 +213,7 @@ struct FWeightedAnchorEvaluation
 /**
  * 各鎖の身体接触と重み付き点接触を評価し、方向勾配を集める。
  */
-bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::FVector3d* positions, double& merit, gk::FVector3d* gradients, uint32_t gradientCount, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error)
+bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::FVector3d* positions, double& merit, gk::FVector3d* gradients, uint32_t gradientCount, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem = nullptr, bool useClearanceMargin = false)
 {
     merit = 0.0;
     if (gradientCount > 0 && !gradients)
@@ -229,7 +229,7 @@ bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount
     {
         const FSecondaryMotionContactChain& chain = chains[chainIndex];
         double chainMerit = 0.0;
-        if (!EvaluatePreparedSecondaryMotionChainContactsMerit(chain.shapes, chain.shapeCount, references + chain.firstSegment, chain.segmentCount, chain.cosineLimit, 1.0, chain.attachments, chain.attachmentCount, positions + chain.firstPoint, chain.segmentCount + 1u, chainMerit, gradients + chain.firstSegment, chain.segmentCount, error))
+        if (!EvaluatePreparedSecondaryMotionChainContactsMerit(chain.shapes, chain.shapeCount, references + chain.firstSegment, chain.segmentCount, chain.cosineLimit, 1.0, chain.attachments, chain.attachmentCount, positions + chain.firstPoint, chain.segmentCount + 1u, chainMerit, gradients + chain.firstSegment, chain.segmentCount, error, linearSystem, chain.firstSegment, useClearanceMargin))
         {
             return false;
         }
@@ -318,6 +318,7 @@ bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount
             {
                 return false;
             }
+            penetration += useClearanceMargin ? contact.shapes[shapeIndex].tolerance * 0.125 : 0.0;
             if (!(penetration > 0.0))
             {
                 continue;
@@ -326,6 +327,11 @@ bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount
             if (!isfinite(merit))
             {
                 error.Assign("Secondary motion weighted contact merit is outside the numeric range");
+                return false;
+            }
+            // 判定条件は保ち、float保存で境界の内側へ戻らない補正を求める。
+            if (linearSystem && !linearSystem->BeginRow(penetration, error))
+            {
                 return false;
             }
             for (uint32_t localAnchor = 0; localAnchor < contact.anchorCount; ++localAnchor)
@@ -343,6 +349,10 @@ bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount
                 {
                     const double scale = references[chain.firstSegment + ancestor].length * weightedPenetration;
                     gradients[chain.firstSegment + ancestor] = Add(gradients[chain.firstSegment + ancestor], Multiply(normal, scale));
+                    if (linearSystem && !linearSystem->AddCoefficient(chain.firstSegment + ancestor, Multiply(normal, references[chain.firstSegment + ancestor].length * anchor.weight), error))
+                    {
+                        return false;
+                    }
                 }
                 gk::FVector3d childGradient{};
                 for (uint32_t childAxis = 0; childAxis < 3; ++childAxis)
@@ -354,6 +364,10 @@ bool EvaluateAll(const FSecondaryMotionContactChain* chains, uint32_t chainCount
                 }
                 const double currentScale = references[globalSegment].length * weightedPenetration;
                 gradients[globalSegment] = Add(gradients[globalSegment], Multiply(childGradient, currentScale));
+                if (linearSystem && !linearSystem->AddCoefficient(globalSegment, Multiply(childGradient, references[globalSegment].length * anchor.weight), error))
+                {
+                    return false;
+                }
             }
         }
     }
@@ -422,7 +436,7 @@ bool MakeTrialDirections(const FSecondaryMotionContactChain* chains, uint32_t ch
 /**
  * 初期または試行方向から全鎖位置を作り、全接触を評価する。
  */
-bool EvaluateDirections(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& directions, gk::Array<gk::FVector3d>& positions, double& merit, gk::Array<gk::FVector3d>& gradients, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error)
+bool EvaluateDirections(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& directions, gk::Array<gk::FVector3d>& positions, double& merit, gk::Array<gk::FVector3d>& gradients, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem = nullptr, bool useClearanceMargin = false)
 {
     uint32_t expectedGradientCount = 0;
     for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
@@ -453,12 +467,16 @@ bool EvaluateDirections(const FSecondaryMotionContactChain* chains, uint32_t cha
             return false;
         }
     }
+    if (linearSystem && !linearSystem->Reset(directions.Data(), directions.Count(), error))
+    {
+        return false;
+    }
     if (!BuildPositions(chains, chainCount, references, roots, directions, positions))
     {
         error.Assign("Secondary motion weighted candidate position is outside the float range");
         return false;
     }
-    return EvaluateAll(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions.Data(), merit, gradients.Data(), gradients.Count(), anchorEvaluations, error);
+    return EvaluateAll(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions.Data(), merit, gradients.Data(), gradients.Count(), anchorEvaluations, error, linearSystem, useClearanceMargin);
 }
 
 /**
@@ -733,6 +751,136 @@ bool RefineSeed(const FSecondaryMotionContactChain* chains, uint32_t chainCount,
         }
     }
     return true;
+}
+
+/**
+ * float保存後に元の骨長・角度・接触条件が成立しているか確認する。
+ */
+bool IsStoredCandidateClear(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& positions, bool& clear, gk::String& error);
+
+/**
+ * 接触行どうしの影響を減衰付き連立方程式で解き、現在姿勢の近くで候補を探す。
+ */
+bool RefineCoupledSeed(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, uint32_t maximumIterations, gk::Array<gk::FVector3d>& directions, gk::Array<gk::FVector3d>& positions, gk::Array<gk::FVector3d>& gradients, double& merit, bool& clear, gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, gk::String& error)
+{
+    // 関係する自由度を同時に更新し、単独勾配では進みにくい接触を扱う。
+    FSecondaryMotionContactLinearSystem linearSystem;
+    double relativeDamping = 1.0e-3;
+    clear = false;
+    for (uint32_t iteration = 0; iteration < maximumIterations; ++iteration)
+    {
+        if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, directions, positions, merit, gradients, anchorEvaluations, error, &linearSystem, true))
+        {
+            // 計算量の上限では従来探索へ戻し、入力や確保の失敗は呼出し側へ伝える。
+            return error.Empty();
+        }
+        if (merit == DBL_MAX)
+        {
+            return true;
+        }
+        // 探索の余白をすべて消し切る必要はなく、元の保存条件が成立した時点で採用へ進む。
+        if (!IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions, clear, error))
+        {
+            return false;
+        }
+        if (clear)
+        {
+            merit = 0.0;
+            return true;
+        }
+        bool improved = false;
+        for (uint32_t attempt = 0; attempt < 16u && !improved; ++attempt)
+        {
+            gk::Array<gk::FVector3d> stepDirections;
+            if (!linearSystem.Solve(relativeDamping, stepDirections, error))
+            {
+                if (!error.Empty())
+                {
+                    return false;
+                }
+                relativeDamping *= 10.0;
+                continue;
+            }
+            double maximumStep = 0.0;
+            for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
+            {
+                const auto& chain = chains[chainIndex];
+                for (uint32_t segment = 0; segment < chain.segmentCount; ++segment)
+                {
+                    const uint32_t index = chain.firstSegment + segment;
+                    ProjectGradient(references[index].direction, chain.cosineLimit, directions.At(index), true, stepDirections.At(index));
+                    const double stepLength = Length(stepDirections.At(index));
+                    if (!isfinite(stepLength))
+                    {
+                        error.Assign("Secondary motion coupled contact step is invalid");
+                        return false;
+                    }
+                    maximumStep = fmax(maximumStep, stepLength);
+                }
+            }
+            if (!(maximumStep > 0.0))
+            {
+                return true;
+            }
+            // 長すぎる連立補正は全体を縮めず、減衰を増やして近傍の解を求め直す。
+            const double maximumTangentStep = tan(0.35);
+            if (maximumStep > maximumTangentStep)
+            {
+                relativeDamping *= fmax(2.0, fmin(1.0e6, maximumStep / maximumTangentStep));
+                continue;
+            }
+            double angle = atan(maximumStep);
+            for (uint32_t search = 0; search < kWeightedContactLineSearchSteps; ++search)
+            {
+                gk::Array<gk::FVector3d> trialDirections;
+                gk::Array<gk::FVector3d> trialPositions;
+                gk::Array<gk::FVector3d> trialGradients;
+                gk::Array<FWeightedAnchorEvaluation> trialAnchors;
+                if (!trialDirections.Reserve(directions.Count()) || !trialPositions.Reserve(positions.Count()) || !trialGradients.Reserve(gradients.Count()) || !trialAnchors.Reserve(anchorCount))
+                {
+                    error.Assign("Secondary motion coupled contact workspace allocation failed");
+                    return false;
+                }
+                if (!MakeTrialDirections(chains, chainCount, references, directions, stepDirections, true, maximumStep, angle, trialDirections))
+                {
+                    angle *= 0.5;
+                    continue;
+                }
+                double trialMerit = 0.0;
+                if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialMerit, trialGradients, trialAnchors, error, nullptr, true))
+                {
+                    if (!error.Empty())
+                    {
+                        return false;
+                    }
+                    angle *= 0.5;
+                    continue;
+                }
+                if (trialMerit < merit)
+                {
+                    directions.MoveFrom(trialDirections);
+                    positions.MoveFrom(trialPositions);
+                    gradients.MoveFrom(trialGradients);
+                    anchorEvaluations.MoveFrom(trialAnchors);
+                    merit = trialMerit;
+                    clear = merit == 0.0;
+                    improved = true;
+                    relativeDamping = fmax(1.0e-12, relativeDamping * (search == 0u ? 0.3 : 2.0));
+                    break;
+                }
+                angle *= 0.5;
+            }
+            if (!improved)
+            {
+                relativeDamping *= 10.0;
+            }
+        }
+        if (!improved || clear)
+        {
+            return true;
+        }
+    }
+    return IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions, clear, error);
 }
 
 /**
@@ -1329,10 +1477,11 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
         error.Assign("Secondary motion weighted seed allocation failed");
         return false;
     }
-    for (uint32_t strategyIndex = 0; strategyIndex < 3u; ++strategyIndex)
+    for (uint32_t strategyIndex = 0; strategyIndex < 4u; ++strategyIndex)
     {
-        // 単位勾配と従来の相対量方式を保ち、最後に共役勾配を試す。
+        // 既存の探索が尽きた場合だけ、近傍から連立補正を試す。
         const bool preserveMagnitude = strategyIndex != 0u;
+        const bool useCoupled = strategyIndex == 3u;
         const bool useConjugate = strategyIndex == 2u;
         bool tryInitial = true;
         const uint32_t maximumSeedIndex = strategyIndex == 2u ? kWeightedContactSeedAzimuths + 6u : 3u;
@@ -1432,7 +1581,14 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
                 }
             }
             bool clear = seedMerit == 0.0;
-            if (!RefineSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, preserveMagnitude, useConjugate, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, error))
+            if (useCoupled)
+            {
+                if (seedMerit != DBL_MAX && !RefineCoupledSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, error))
+                {
+                    return false;
+                }
+            }
+            else if (!RefineSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, preserveMagnitude, useConjugate, trialDirections, seedPositions, seedGradients, seedMerit, clear, seedAnchors, error))
             {
                 return false;
             }

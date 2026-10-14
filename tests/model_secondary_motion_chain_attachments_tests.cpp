@@ -934,11 +934,79 @@ bool TestRecordedNativeJointAttachmentFixture(const char* fixturePath)
     return true;
 }
 
+/**
+ * 線形系の容量上限は入力異常と区別できるよう空のerrorで伝える。
+ */
+bool TestContactLinearSystemRowBudgetIsQuiet()
+{
+    gk::String error;
+    const gk::FVector3d direction = { { 1.0, 0.0, 0.0 } };
+    FSecondaryMotionContactLinearSystem linearSystem;
+    if (!linearSystem.Reset(&direction, 1, error))
+    {
+        return Fail("contact linear system reset failed");
+    }
+    for (uint32_t row = 0; row < 4096; ++row)
+    {
+        if (!linearSystem.BeginRow(0.01, error) || !linearSystem.AddCoefficient(0, { { 0.0, 1.0, 0.0 } }, error))
+        {
+            return Fail("contact linear system rejected a row within its budget");
+        }
+    }
+
+    const FModelSecondaryMotionCollisionShape body = { { 1.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 0.2f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    FSecondaryMotionReferenceSegment reference{};
+    reference.direction = direction;
+    reference.length = 1.0;
+    const gk::FVector3d positions[2] = { { { 0.0, 0.0, 0.0 } }, { { 1.0, 0.0, 0.0 } } };
+    gk::FVector3d gradient[1]{};
+    double merit = 0.0;
+    if (!PrepareSecondaryMotionCollisionShapes(&body, 1, prepared, error))
+    {
+        return Fail("contact linear system budget fixture preparation failed");
+    }
+    if (EvaluatePreparedSecondaryMotionChainContactsMerit(prepared.Data(), prepared.Count(), &reference, 1, -1.0, 1.0, nullptr, 0, positions, 2, merit, gradient, 1, error, &linearSystem) || !error.Empty())
+    {
+        return Fail("contact row budget exhaustion was not returned as a quiet search limit");
+    }
+
+    gk::FVector3d directions[256];
+    for (uint32_t directionIndex = 0; directionIndex < 256; ++directionIndex)
+    {
+        directions[directionIndex] = direction;
+    }
+    FSecondaryMotionContactLinearSystem entryLimitedSystem;
+    if (!entryLimitedSystem.Reset(directions, 256, error))
+    {
+        return Fail("contact entry budget fixture reset failed");
+    }
+    for (uint32_t row = 0; row < 256; ++row)
+    {
+        if (!entryLimitedSystem.BeginRow(0.01, error))
+        {
+            return Fail("contact entry budget fixture row creation failed");
+        }
+        for (uint32_t directionIndex = 0; directionIndex < 256; ++directionIndex)
+        {
+            if (!entryLimitedSystem.AddCoefficient(directionIndex, { { 0.0, 1.0, 0.0 } }, error))
+            {
+                return Fail("contact entry budget fixture coefficient creation failed");
+            }
+        }
+    }
+    if (EvaluatePreparedSecondaryMotionChainContactsMerit(prepared.Data(), prepared.Count(), &reference, 1, -1.0, 1.0, nullptr, 0, positions, 2, merit, gradient, 1, error, &entryLimitedSystem) || !error.Empty())
+    {
+        return Fail("contact entry budget exhaustion was not returned as a quiet search limit");
+    }
+    return true;
+}
+
 }
 
 int main(int argc, char** argv)
 {
-    if (argc != 2 || !TestSegmentSegmentDistanceExactCases() || !TestJointSameChainOffsetSpheres() || !TestJointAttachmentFailureIsAtomic() || !TestJointAttachmentInvalidSegmentIsAtomic() || !TestSameBoneCapsuleWithDifferentOffsets() || !TestJointContactsUseAncestorDegreesOfFreedom() || !TestRecordedNativeJointAttachmentFixture(argv[1]))
+    if (argc != 2 || !TestSegmentSegmentDistanceExactCases() || !TestJointSameChainOffsetSpheres() || !TestJointAttachmentFailureIsAtomic() || !TestJointAttachmentInvalidSegmentIsAtomic() || !TestSameBoneCapsuleWithDifferentOffsets() || !TestJointContactsUseAncestorDegreesOfFreedom() || !TestRecordedNativeJointAttachmentFixture(argv[1]) || !TestContactLinearSystemRowBudgetIsQuiet())
     {
         return 1;
     }
