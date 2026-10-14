@@ -27,6 +27,9 @@ loop中はclip長で折り返し、loopなしでは両端へ制限します。
 IKと揺れものの設定・状態は保持します。
 揺れも現在の姿勢へ戻したい場合は`ResetModelSecondaryMotion`を続けて呼びます。
 
+再生時刻やIK姿勢を瞬間的に切り替える場合も、変更後に`ResetModelSecondaryMotion`を呼んでください。
+揺れもののteleport判定は鎖rootの移動を使うため、rootを動かさず姿勢だけを切り替えたときは自動リセットされません。
+
 `CreateModelInstance`は形状・材質を共有し、新しい位置設定と独立した再生状態を持つモデルを作ります。
 読み込み直後はclipを再生せず、初期姿勢と既定morph係数を表示します。
 

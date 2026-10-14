@@ -6,6 +6,7 @@
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionSolver.h"
 #include "model/animation/ModelSecondaryMotionWeightedContacts.h"
+#include "model/animation/ModelSecondaryMotionContactVelocity.h"
 
 #include <float.h>
 #include <math.h>
@@ -199,6 +200,44 @@ bool BuildAttachmentDefinition(const FModelSecondaryMotionChain& chain, uint32_t
         return false;
     }
     output = candidate;
+    return true;
+}
+
+/**
+ * 端点を現在位置に固定し、アニメーションによる接触点定義の変化だけを速度へ変換する。
+ * 過去の回転軸が決まらない履歴ではdefinedをfalseに保ち、不正値や計算失敗ではfalseを返す。
+ */
+bool AttachmentMotionVelocity(const FModelSecondaryMotionChain& previousChain, uint32_t segment, uint32_t bone, const Vec3& offset, const Array<float>& previousMatrices, const animation::FSecondaryMotionAttachmentDefinition& currentDefinition, const FVector3d& parent, const FVector3d& child, double delta, FVector3d& output, bool& defined, String& error)
+{
+    defined = false;
+    animation::FSecondaryMotionAttachmentDefinition previousDefinition{};
+    animation::FSecondaryMotionAttachmentEvaluation currentEvaluation{};
+    animation::FSecondaryMotionAttachmentEvaluation previousEvaluation{};
+    if (!BuildAttachmentDefinition(previousChain, segment, bone, offset, previousMatrices, previousDefinition, error) || !animation::EvaluateSecondaryMotionAttachment(currentDefinition, parent, child, currentEvaluation, error))
+    {
+        return false;
+    }
+    // 過去の基準と現在の線分が反対向きなら回転軸を決められず、速度補正だけを見送る。
+    const FVector3d segmentDirection = Subtract(child, parent);
+    const double segmentLength = Length(segmentDirection);
+    const double previousCosine = (previousDefinition.direction.value[0] * segmentDirection.value[0] + previousDefinition.direction.value[1] * segmentDirection.value[1] + previousDefinition.direction.value[2] * segmentDirection.value[2]) / segmentLength;
+    if (isfinite(previousCosine) && 1.0 + fmax(-1.0, fmin(1.0, previousCosine)) <= 1.0e-12)
+    {
+        error.Clear();
+        return true;
+    }
+    if (!animation::EvaluateSecondaryMotionAttachment(previousDefinition, parent, child, previousEvaluation, error))
+    {
+        return false;
+    }
+    const FVector3d motion = Multiply(Subtract(currentEvaluation.position, previousEvaluation.position), 1.0 / delta);
+    if (!IsFinite(motion))
+    {
+        error.Assign("secondary weighted contact attachment motion is invalid");
+        return false;
+    }
+    output = motion;
+    defined = true;
     return true;
 }
 
@@ -692,6 +731,29 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
         return false;
     }
 
+    // 同時刻の履歴だけを使い、初回・長い更新間隔・teleportでは速度の接触補正を省く。
+    bool projectVelocity = delta > 0.0 && delta < 0.25 && previous.velocityHistoryValid && previous.previousBaseMatrices.Count() == baseMatrices.Count() && previous.previousCollisionShapes.Count() == shapeCount && previous.chains.Count() == candidate.chains.Count();
+    for (uint32_t chainIndex = 0; projectVelocity && chainIndex < candidate.chains.Count(); ++chainIndex)
+    {
+        const auto* old = previous.chains.At(chainIndex);
+        const auto& chain = *candidate.chains.At(chainIndex);
+        if (!old || old->simulation.previousTargets.Count() != chain.simulation.previousTargets.Count() || old->simulation.previousTargets.Count() == 0u)
+        {
+            projectVelocity = false;
+            break;
+        }
+        const FVector3d rootMotion = Subtract(ToDouble(chain.simulation.previousTargets.At(0u)), ToDouble(old->simulation.previousTargets.At(0u)));
+        if (!IsFinite(rootMotion) || !isfinite(chain.settings.teleportDistance) || chain.settings.teleportDistance < 0.0f)
+        {
+            error.Assign("secondary weighted contact velocity history is invalid");
+            return false;
+        }
+        if (Length(rootMotion) > chain.settings.teleportDistance)
+        {
+            projectVelocity = false;
+        }
+    }
+
     Array<FVector3d> positions;
     Array<FVector3d> beforePositions;
     Array<FVector3d> storedDoublePositions;
@@ -699,7 +761,15 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     Array<Vec3> stagedVelocities;
     Array<FSecondaryMotionContactChain> chains;
     Array<FSecondaryMotionReferenceSegment> references;
+    // 速度補正で使う、同じ線分の前回のアニメーション方向と長さ。
+    Array<FSecondaryMotionReferenceSegment> previousReferences;
+    // 各鎖の身体形状と元の形状番号を対応させるbit集合。
+    Array<uint64_t> colliderMasks;
     Array<FSecondaryMotionWeightedContactAnchor> anchors;
+    // 端点の移動と分けて加える、寄与定義自身の移動速度。
+    Array<FVector3d> anchorMotionVelocities;
+    // 鎖順の旧contact linkごとに、先端と終端の定義移動速度を並べる。
+    Array<FVector3d> attachmentMotionVelocities;
     Array<FSecondaryMotionWeightedContactPoint> contacts;
     Array<FModelSecondaryMotionCollisionShape> chainExpandedShapes;
     Array<FPreparedSecondaryMotionCollisionShape> chainPreparedShapes;
@@ -722,6 +792,11 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     if (!positions.Reserve(static_cast<uint32_t>(totalPositions)) || !beforePositions.Reserve(static_cast<uint32_t>(totalPositions)) || !storedDoublePositions.Reserve(static_cast<uint32_t>(totalPositions)) || !storedPositions.Reserve(static_cast<uint32_t>(totalPositions)) || !stagedVelocities.Reserve(static_cast<uint32_t>(totalPositions)) || !chains.Reserve(candidate.chains.Count()) || !references.Reserve(static_cast<uint32_t>(totalSegments)) || !anchors.Reserve(candidate.contactAnchors.Count()) || !contacts.Reserve(candidate.contactPoints.Count()) || !chainPointOffsets.Reserve(candidate.chains.Count()) || !chainReferenceOffsets.Reserve(candidate.chains.Count()) || !chainShapeOffsets.Reserve(candidate.chains.Count()) || !chainShapeCounts.Reserve(candidate.chains.Count()) || !attachmentCounts.Reserve(candidate.chains.Count()) || !attachmentOffsets.Reserve(candidate.chains.Count()) || !boneChain.Reserve(skeleton.parents.Count()) || !boneSegment.Reserve(skeleton.parents.Count()))
     {
         error.Assign("secondary weighted contact workspace allocation failed");
+        return false;
+    }
+    if (projectVelocity && (!previousReferences.Reserve(static_cast<uint32_t>(totalSegments)) || !colliderMasks.Reserve(candidate.chains.Count()) || !anchorMotionVelocities.Reserve(candidate.contactAnchors.Count())))
+    {
+        error.Assign("secondary weighted contact velocity history allocation failed");
         return false;
     }
     for (uint32_t bone = 0; bone < skeleton.parents.Count(); ++bone)
@@ -749,6 +824,11 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
         if (!chainPointOffsets.Append(positions.Count()) || !chainReferenceOffsets.Append(references.Count()) || !chainShapeOffsets.Append(0u) || !chainShapeCounts.Append(0u) || !attachmentCounts.Append(0u) || !attachmentOffsets.Append(0u))
         {
             error.Assign("secondary weighted contact range allocation failed");
+            return false;
+        }
+        if (projectVelocity && !colliderMasks.Append(chain.colliderMask))
+        {
+            error.Assign("secondary weighted contact velocity mask allocation failed");
             return false;
         }
         const uint32_t firstPoint = positions.Count();
@@ -787,6 +867,22 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
             {
                 error.Assign("secondary weighted contact reference allocation failed");
                 return false;
+            }
+            if (projectVelocity)
+            {
+                const FVector3d oldDirection = Subtract(ToDouble(previousChain->simulation.previousTargets.At(segment + 1u)), ToDouble(previousChain->simulation.previousTargets.At(segment)));
+                const double oldLength = Length(oldDirection);
+                if (!(oldLength > 0.0) || !isfinite(oldLength))
+                {
+                    error.Assign("secondary weighted contact previous reference is invalid");
+                    return false;
+                }
+                const FSecondaryMotionReferenceSegment oldReference{ Multiply(oldDirection, 1.0 / oldLength), oldLength };
+                if (!previousReferences.Append(oldReference))
+                {
+                    error.Assign("secondary weighted contact previous reference allocation failed");
+                    return false;
+                }
             }
         }
         FSecondaryMotionContactChain chainDescription{};
@@ -931,7 +1027,9 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
         }
     }
     Array<animation::FSecondaryMotionChainAttachmentContact> groupedAttachments;
-    if (!groupedAttachments.Reserve(resolvedAttachments.Count()))
+    // 鎖順へ並べたlinkから元の設定を参照する番号。
+    Array<uint32_t> groupedAttachmentSources;
+    if (!groupedAttachments.Reserve(resolvedAttachments.Count()) || !groupedAttachmentSources.Reserve(resolvedAttachments.Count()))
     {
         error.Assign("secondary weighted contact attachment group allocation failed");
         return false;
@@ -950,7 +1048,7 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
             const uint32_t shapeCountForLink = resolvedAttachmentShapeCounts.At(index);
             attachment.shapes = shapeCountForLink > 0u ? attachmentPreparedShapes.Data() + shapeOffset : nullptr;
             attachment.shapeCount = shapeCountForLink;
-            if (!groupedAttachments.Append(attachment))
+            if (!groupedAttachments.Append(attachment) || !groupedAttachmentSources.Append(index))
             {
                 error.Assign("secondary weighted contact attachment group append failed");
                 return false;
@@ -1109,8 +1207,8 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     }
 
     // 位置・速度の両方を検証し終えてから候補鎖へ一括反映する。
-    const bool projectVelocity = delta > 0.0 && delta < 0.25;
-    if (projectVelocity)
+    const bool removeCorrectionVelocity = delta > 0.0 && delta < 0.25;
+    if (removeCorrectionVelocity)
     {
         for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
         {
@@ -1158,6 +1256,79 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
                     return false;
                 }
             }
+        }
+    }
+    if (projectVelocity)
+    {
+        for (uint32_t anchorIndex = 0; anchorIndex < anchors.Count(); ++anchorIndex)
+        {
+            const auto& anchor = anchors.At(anchorIndex);
+            const auto& source = candidate.contactAnchors.At(anchorIndex);
+            FVector3d motion{};
+            if (anchor.chainIndex == FixedChainIndex)
+            {
+                FVector3d oldPosition{};
+                if (!TransformPoint(previous.previousBaseMatrices, source.bone, source.offset, oldPosition, error))
+                {
+                    return false;
+                }
+                motion = Multiply(Subtract(anchor.constantPosition, oldPosition), 1.0 / delta);
+            }
+            else
+            {
+                const uint32_t parentIndex = chains.At(anchor.chainIndex).firstPoint + anchor.segmentIndex;
+                // 履歴の回転軸が決まらない場合と、処理の失敗を別々に受け取る。
+                bool defined = false;
+                if (!AttachmentMotionVelocity(*previous.chains.At(anchor.chainIndex), anchor.segmentIndex, source.bone, source.offset, previous.previousBaseMatrices, anchor.definition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), delta, motion, defined, error))
+                {
+                    return false;
+                }
+                if (!defined)
+                {
+                    projectVelocity = false;
+                    break;
+                }
+            }
+            if (!IsFinite(motion) || !anchorMotionVelocities.Append(motion))
+            {
+                error.Assign("secondary weighted contact anchor motion allocation or numeric failure");
+                return false;
+            }
+        }
+        for (uint32_t chainIndex = 0; projectVelocity && chainIndex < chains.Count(); ++chainIndex)
+        {
+            const auto& chain = chains.At(chainIndex);
+            for (uint32_t linkIndex = 0; linkIndex < chain.attachmentCount; ++linkIndex)
+            {
+                const uint32_t groupedIndex = attachmentOffsets.At(chainIndex) + linkIndex;
+                const auto& attachment = groupedAttachments.At(groupedIndex);
+                const auto& source = candidate.contactLinks.At(groupedAttachmentSources.At(groupedIndex));
+                const uint32_t parentIndex = chain.firstPoint + attachment.segmentIndex;
+                FVector3d firstMotion{};
+                FVector3d secondMotion{};
+                // 接触線分の両端で、履歴から速度を計算できたかを保持する。
+                bool firstDefined = false;
+                bool secondDefined = false;
+                if (!AttachmentMotionVelocity(*previous.chains.At(chainIndex), attachment.segmentIndex, source.firstBone, source.firstOffset, previous.previousBaseMatrices, attachment.firstDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), delta, firstMotion, firstDefined, error) || !AttachmentMotionVelocity(*previous.chains.At(chainIndex), attachment.segmentIndex, source.secondBone, source.secondOffset, previous.previousBaseMatrices, attachment.secondDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), delta, secondMotion, secondDefined, error))
+                {
+                    return false;
+                }
+                if (!firstDefined || !secondDefined)
+                {
+                    projectVelocity = false;
+                    break;
+                }
+                if (!attachmentMotionVelocities.Append(firstMotion) || !attachmentMotionVelocities.Append(secondMotion))
+                {
+                    error.Assign("secondary weighted contact link motion allocation failed");
+                    return false;
+                }
+            }
+        }
+        // 有限回で同時に満たせない速度候補は捨て、成立済みの位置と既存速度を保つ。
+        if (projectVelocity && animation::ProjectSecondaryMotionContactVelocities(chains, references, previousReferences, colliderMasks, anchors, anchorMotionVelocities, attachmentMotionVelocities, contacts, previous.previousCollisionShapes, shapes, shapeCount, delta, storedDoublePositions, stagedVelocities, error) == animation::ESecondaryMotionContactVelocityResult::Failed)
+        {
+            return false;
         }
     }
     for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
