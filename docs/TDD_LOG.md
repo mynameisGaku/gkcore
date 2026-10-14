@@ -1800,3 +1800,30 @@ Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK
 prepare_game_repository.pyの385ファイルをゲーム構築用checkoutへ反映し、全ファイルの一致とReleaseの5 example buildを確認しました。install SDK61ファイルの許可リスト、consumerへ配置したRuntimeとSDKのhash一致も確認しました。tests・匿名fixture・調査器・私有asset・試作設定・開発記録はmainへ含めません。sourceのBOM/CRLF・formatter・noSTL・相対includeを確認し、別agentがstrategyとseedの順序、quiet budget、candidate確保のatomic性、縮小fixtureの全参照を読み取り専用でレビューしました。
 
 記録はbuild/native-validation/contact-continuation-*へ保存しています。前回、一時生成物の削除は自動承認レビューが「blocked by policy」として拒否したため、今回も別の手段で削除していません。以前のcleanup planは今回再利用したprobeを含むためそのまま実行できません。元asset・現在build・最新ログを保持し、使い終わった調査用buildの整理は未完了です。
+
+
+## 骨長と複数接触を保つ速度補正
+
+2026-10-15、位置補正の合計方向だけへ速度を投影する既存処理を、2球の同時接触で検査しました。合計方向との内積は約6.17e-10でも、一方の接触面への速度は-0.142065429 model unit/sで内向きでした。骨長方向の相対速度にも0.957967778の残差があり、位置が成立しても次の積分で接触へ戻る条件をREDとして固定しました。位置そのもの、固定root、接触設定は変更していません。
+
+身体球・カプセル、鎖の節・線分、bone-local offsetの接触線分、重み付き接触球と、骨長・角度境界をまとめて扱う速度補正を追加しました。各boneには長さ方向を動かさない曲げ速度を割り当て、親の速度を子へ伝えます。骨長の変化、固定root、動く身体形状と半径変化、動く曲げ基準、アニメーションで変わる接触点の定義を固定寄与へ含めます。最大角度0のboneには3軸のアニメーション差分速度を使い、回転の有限差分と瞬間的な骨長速度を同時に強制しません。接触定義の速度は現在と前回の定義を同じ保存済み端点で評価し、端点運動を重複して加算しません。
+
+最初の点空間での速度反復は、実モデルで32回反復しても骨長速度の残差が約1e-4に残り、全frameで候補を採用できませんでした。8segmentの固定root・末端接触fixtureでも残差0.0152713982388をREDで捕捉し、曲げ方向で解く方式へ変更してGREENとしました。複数接触だけを投影する試作は時系列の最大変化が約37.9度へ減りましたが、骨長と接触定義の運動を保たないため採用していません。
+
+移動・膨張する球、接線速度の保持、最大角度0の3軸追従、動く角度境界、固定・動的な重み付き寄与、同じboneの接触線分、長い鎖の全骨長条件、自由点のない不成立、数値異常・確保失敗のatomic性を専用CPUテストで確認しました。32反復、1024点・4096行・65536係数の上限とfloat保存後の元制約検査を設けています。上限境界の網羅テストは今回追加していません。有限な未収束は元の速度を保つUnresolved、入力・数値・確保の失敗はFailed、全条件成立はAppliedとして区別します。Stringは確保失敗時に診断文字列も保存できないため、空の診断で成否を判断しません。空のStringから最初の確保を失敗させてもFailedとなり、全速度が変更されない契約を確認しました。
+
+前回の骨行列はinstanceが所有し、成功した更新とResetで保存します。設定変更は履歴を破棄し、rootのteleport・長いdelta・接触定義の不定な回転では速度補正だけを省きます。途中の更新失敗は姿勢・simulation配列・描画cacheを保ち、速度履歴だけを無効にします。確保失敗で履歴が有効のまま残るREDを追加して修正しました。成功Commit後には旧状態を借りたguardを解除します。clipやIKの瞬間変更でrootが動かない場合は、利用側でResetする必要があります。
+
+Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、YUMEKA＋Skinning Test/Swinging blend＋右腕IK＋13鎖・身体8形状・529球・1574 anchorsを使いました。節半径0.038、脚mask240、骨長・角度・位置の許容条件を保持し、頂点補正は使いません。非表示window、固定1/60秒で3000frame・50秒を完走しました。41骨・10鎖を集計すると、前の公開529球構成から今回へ、segment最大方向変化59.187→51.385度、45度超2→1回、90度超0回、p99 16.372→15.811度、root相対最大点移動0.069943→0.067748 model unitとなりました。前回の物理結果が次の入力に戻り、更新前記録にもその姿勢が含まれるため、同一入力poseでの独立A/B比較ではありません。最大変化はframe757→758のSkirt_1.002に残ります。frame758の1280×720画像も確認しました。
+
+同じ計算方式のDebug/Release、開始0秒・2.1秒から各120frame、計480frameの実GPU変形はすべてvalidで、位置45233の誤差0、法線55747の最大誤差1.78813934e-7でした。両構成の全mesh記録と保存画像が一致します。Skirt確認点の身体proxy侵入は両区間0です。折り返し区間のJacketは平均1.916667点・最大0.014362224、Shirtは平均11.858333点・最大0.017666648で、前の平均1.675/11.633点・最大0.011648/0.014894より悪化しました。開始区間のShirtも平均7.116667点・最大0.013006372が残ります。身体capsuleへの近似距離であり、身体meshや衣服の三角形面全体の非貫通を保証しません。
+
+480frameと3000frameの後、成否を明示enumへ変更しました。最終Runtimeで759frameを再生し、3000frame記録の同じ区間と骨名・時刻・更新前後位置が完全一致しました。最終Debug/Releaseの折り返し2frameずつ、計4frameでもGPU検査を再実行し、両構成の全mesh記録と画像が一致、前の120frameの同区間とも記録が一致しました。480frameを最終enumバイナリで再実行したとは扱いません。
+
+最終CPU検証はMSVC19.51/SDK10.0.28000.0でDebug/Release各67/67成功、全体実行時間32.76/10.08秒です。コマンドは`ctest --test-dir build/dev-windows -C Debug --output-on-failure`とRelease指定です。実GPUの再実行は`build/native-validation/contact-velocity-enum-captures.ps1 -Configuration Debug -MotionSet skinning -SkinningPreset -WeightedConfig samples/config/yumeka-skinning-contact-points.txt -StartSeconds 2.1 -Frames 2 -DetailFrame 1`とRelease指定です。すべてのGPU試験を逐次実行し、windowは非表示にしました。
+
+通常Releaseの単独実時間600frame/warmup0、1280×720、VSyncなし・標準効果・debug表示OFFは完走し、19.550FPS、p95 55.261ms、Draw0.592/Present6.605/IK0.730/secondary43.144msでした。前の26.175FPSより遅く、速度改善ではありません。300FPSは未達です。この計測はenum化前の同じ計算方式であり、最終enumバイナリの再計測ではありません。51度の急変と上着の食い込みも残るため、揺れもの全体の完成とは扱いません。次は身体・鎖・重み付き接触を同じ時間分割で解き、frame末尾の大きな補正を減らす方式を検討します。
+
+ゲーム構築用checkoutへ388許可ファイルを反映し、全ファイルの一致とReleaseの5 example buildを確認しました。install SDK61ファイルの許可リスト、consumerへ配置した22 runtimeファイルのbyte一致を確認し、最終SDKを使ったInit・Scene/UI・Present・Shutdownは実GPUでexit0でした。tests・匿名fixture・調査器・私有asset・開発記録はゲーム構築用treeへ含めません。BOM/CRLF、formatter、noSTL、相対includeを確認し、別agentが成否の伝播、未収束時の速度保持、履歴guardの寿命を読み取り専用で確認しました。
+
+記録はbuild/native-validation/contact-nearby、contact-nearby-geometry、contact-velocity-gpu-*、contact-velocity-enum-gpu-*、contact-failure-nearby-velocity-*へ保存しています。使い終わった調査用buildの削除は前回の自動承認レビューに拒否されており、別手段での削除は行っていません。以前のcleanup planは再利用したprobeを含むためそのまま実行できず、整理は未完了です。

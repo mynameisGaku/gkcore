@@ -3788,6 +3788,7 @@ static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
     const int registered = gk::SetModelSecondaryMotionContactPoints(firstInstance, points, 1, anchors, 2, 19);
     passed = Checkpoint("valid weighted point registers", registered == 0) && passed;
     auto* firstState = ReadState(firstInstance);
+    passed = Checkpoint("new contact configuration starts with invalid velocity history", firstState && !firstState->velocityHistoryValid) && passed;
     const bool copied = firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2 && firstState->contactPoints.At(0).firstAnchor == 0 && firstState->contactPoints.At(0).anchorCount == 2 && firstState->contactPoints.At(0).radius == 0.025f && firstState->contactAnchors.At(0).bone == 5 && firstState->contactAnchors.At(0).offset.x == 0.01f && firstState->contactAnchors.At(0).weight == anchors[0].weight && firstState->contactAnchors.At(1).bone == 6 && firstState->contactAnchors.At(1).weight == anchors[1].weight && firstState->linkIterations == 19;
     anchors[0].weight = 0.75f;
     anchors[1].bone = 6;
@@ -3813,6 +3814,7 @@ static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
     const int compatibleCombinedUpdate = distantColliderResult == 0 ? gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0) : -1;
     firstState = ReadState(firstInstance);
     const bool rootsAfterUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootAfter) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootAfter) == 0;
+    passed = Checkpoint("successful update primes velocity history", compatibleCombinedUpdate == 0 && firstState && firstState->velocityHistoryValid && firstState->previousBaseMatrices.Count() == 7u * 16u) && passed;
     const bool combinedUpdatePreservesRoots = initialTargetsAreValid && compatibleContactStillSet && rootsBeforeUpdate && compatibleCombinedUpdate == 0 && rootsAfterUpdate && NearVector(firstRootBefore, firstRootAfter) && NearVector(secondRootBefore, secondRootAfter);
     if (!combinedUpdatePreservesRoots)
     {
@@ -3820,13 +3822,74 @@ static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
     }
     passed = Checkpoint("weighted points coexist with the same-bone contact link during update", combinedUpdatePreservesRoots) && passed;
     const int resetCombinedUpdate = gk::ResetModelSecondaryMotion(firstInstance);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("reset primes velocity history", resetCombinedUpdate == 0 && firstState && firstState->velocityHistoryValid && firstState->previousBaseMatrices.Count() == 7u * 16u) && passed;
+    auto* resetState = firstState;
+    const auto* resetTransform = gk::detail::FindModelTransform(firstInstance);
+    auto* resetPlayback = resetTransform ? resetTransform->playback : nullptr;
+    auto* resetPoseCache = resetPlayback ? resetPlayback->basePoseCache : nullptr;
+    auto* resetChain = firstState && firstState->chains.Count() > 0u ? firstState->chains.At(0) : nullptr;
+    auto* resetPointData = resetChain ? resetChain->simulation.points.Data() : nullptr;
+    auto* resetMatrixData = firstState ? firstState->previousBaseMatrices.Data() : nullptr;
+    const uint32_t resetPointCount = resetChain ? resetChain->simulation.points.Count() : 0u;
+    const uint32_t resetBaseMatrixCount = firstState ? firstState->previousBaseMatrices.Count() : 0u;
+    std::vector<gk::Vec3> resetPointPositions;
+    bool resetPointSnapshotReady = resetCombinedUpdate == 0 && firstState && firstState->velocityHistoryValid && resetPlayback && resetChain && resetPointCount > 0u;
+    if (resetPointSnapshotReady)
+    {
+        for (uint32_t chainIndex = 0; chainIndex < firstState->chains.Count(); ++chainIndex)
+        {
+            const auto& pointsBeforeFailure = firstState->chains.At(chainIndex)->simulation.points;
+            for (uint32_t pointIndex = 0; pointIndex < pointsBeforeFailure.Count(); ++pointIndex)
+            {
+                resetPointPositions.push_back(pointsBeforeFailure.At(pointIndex).position);
+            }
+        }
+    }
+    uint32_t snapshotPointIndex = 0u;
+    bool failedUpdatePositionsRetained = resetPointSnapshotReady && resetPointPositions.size() >= resetPointCount;
+    gk::SetAllocationFailureAfterForTesting(0);
+    const int failedUpdateResult = gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0);
+    gk::ResetAllocationFailureForTesting();
+    firstState = ReadState(firstInstance);
+    const auto* failedTransform = gk::detail::FindModelTransform(firstInstance);
+    auto* failedPlayback = failedTransform ? failedTransform->playback : nullptr;
+    const bool failedUpdatePointersStable = failedUpdateResult == -1 && firstState == resetState && failedPlayback == resetPlayback && failedPlayback && failedPlayback->basePoseCache == resetPoseCache && firstState->chains.Count() > 0u && firstState->chains.At(0) == resetChain && resetChain->simulation.points.Data() == resetPointData && firstState->previousBaseMatrices.Data() == resetMatrixData;
+    failedUpdatePositionsRetained = failedUpdatePositionsRetained && failedUpdatePointersStable && resetChain->simulation.points.Count() == resetPointCount && firstState->previousBaseMatrices.Count() == resetBaseMatrixCount;
+    for (uint32_t chainIndex = 0; failedUpdatePositionsRetained && chainIndex < firstState->chains.Count(); ++chainIndex)
+    {
+        const auto& pointsAfterFailure = firstState->chains.At(chainIndex)->simulation.points;
+        for (uint32_t pointIndex = 0; pointIndex < pointsAfterFailure.Count(); ++pointIndex)
+        {
+            if (snapshotPointIndex >= resetPointPositions.size())
+            {
+                failedUpdatePositionsRetained = false;
+                break;
+            }
+            const gk::Vec3& before = resetPointPositions[snapshotPointIndex++];
+            const gk::Vec3& after = pointsAfterFailure.At(pointIndex).position;
+            failedUpdatePositionsRetained = before.x == after.x && before.y == after.y && before.z == after.z;
+        }
+    }
+    failedUpdatePositionsRetained = failedUpdatePositionsRetained && snapshotPointIndex == resetPointPositions.size();
+    if (!failedUpdatePositionsRetained || !firstState || firstState->velocityHistoryValid)
+    {
+        fprintf(stderr, "allocation-failure reset-history diagnostic: update=%d snapshot=%d pointers=%d positions=%d valid=%d matrixCount=%u/%u\n", failedUpdateResult, resetPointSnapshotReady ? 1 : 0, failedUpdatePointersStable ? 1 : 0, failedUpdatePositionsRetained ? 1 : 0, firstState && firstState->velocityHistoryValid ? 1 : 0, firstState ? firstState->previousBaseMatrices.Count() : 0u, resetBaseMatrixCount);
+    }
+    passed = Checkpoint("failed update preserves pose and point storage but invalidates velocity history", failedUpdatePositionsRetained && firstState && !firstState->velocityHistoryValid) && passed;
+    const int recoveryUpdate = failedUpdateResult == -1 ? gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0) : -1;
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("successful update after failure primes fresh velocity history", recoveryUpdate == 0 && firstState && firstState->velocityHistoryValid && firstState->previousBaseMatrices.Count() == resetBaseMatrixCount) && passed;
     const int clearSetupContactLink = gk::SetModelSecondaryMotionContactLinks(firstInstance, nullptr, 0, 19);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("public contact configuration change invalidates velocity history", clearSetupContactLink == 0 && firstState && !firstState->velocityHistoryValid) && passed;
     passed = Checkpoint("reset and compatible contact-link clear prepare the isolated update", resetCombinedUpdate == 0 && clearSetupContactLink == 0) && passed;
     firstState = ReadState(firstInstance);
     const bool isolatedTargetsAreValid = firstState && firstState->chains.Count() == 2 && firstState->chains.At(0)->simulation.points.Count() == firstState->chains.At(0)->simulation.previousTargets.Count() && firstState->chains.At(1)->simulation.points.Count() == firstState->chains.At(1)->simulation.previousTargets.Count();
     const bool isolatedRootsBeforeUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootBefore) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootBefore) == 0;
     const int firstWeightedUpdate = distantColliderResult == 0 && clearSetupContactLink == 0 ? gk::UpdateModelSecondaryMotion(firstInstance, 1.0 / 60.0) : -1;
     firstState = ReadState(firstInstance);
+    passed = Checkpoint("update after contact configuration change primes velocity history", firstWeightedUpdate == 0 && firstState && firstState->velocityHistoryValid && firstState->previousBaseMatrices.Count() == 7u * 16u) && passed;
     const bool isolatedRootsAfterUpdate = gk::GetModelBonePosition(firstInstance, 1, firstRootAfter) == 0 && gk::GetModelBonePosition(firstInstance, 3, secondRootAfter) == 0;
     const bool weightedOnlyUpdatePreservesRoots = isolatedTargetsAreValid && isolatedRootsBeforeUpdate && firstWeightedUpdate == 0 && isolatedRootsAfterUpdate && NearVector(firstRootBefore, firstRootAfter) && NearVector(secondRootBefore, secondRootAfter);
     passed = Checkpoint("weighted-only update preserves valid initial targets and root pose", weightedOnlyUpdatePreservesRoots) && passed;
@@ -3952,7 +4015,10 @@ static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
     const int bodyReplaceResult = gk::SetModelSecondaryMotionColliders(firstInstance, nullptr, 0, 0.0f);
     firstState = ReadState(firstInstance);
     passed = Checkpoint("body replacement preserves weighted settings", bodyReplaceResult == 0 && firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2) && passed;
-    passed = Checkpoint("reset preserves weighted settings", gk::ResetModelSecondaryMotion(firstInstance) == 0) && passed;
+    passed = Checkpoint("body replacement invalidates velocity history", bodyReplaceResult == 0 && firstState && !firstState->velocityHistoryValid) && passed;
+    const int finalReset = gk::ResetModelSecondaryMotion(firstInstance);
+    firstState = ReadState(firstInstance);
+    passed = Checkpoint("reset preserves weighted settings and primes history", finalReset == 0 && firstState && firstState->contactPoints.Count() == 1 && firstState->contactAnchors.Count() == 2 && firstState->velocityHistoryValid) && passed;
     firstState = ReadState(firstInstance);
     passed = Checkpoint("chain re-registration preserves valid weighted settings", gk::SetModelSecondaryMotionChain(firstInstance, firstChain, 3, settings) == 0) && passed;
     firstState = ReadState(firstInstance);
@@ -4333,6 +4399,212 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
     const bool topologyRejected = !gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error) && !error.Empty() && candidate.chains.At(0)->simulation.points.At(1).position.x == beforePrimary[1].position.x && candidate.chains.At(0)->simulation.points.At(1).position.y == beforePrimary[1].position.y && candidate.chains.At(0)->simulation.points.At(1).position.z == beforePrimary[1].position.z;
     previous.chains.At(0)->bones.At(1) = savedPreviousBone;
     return staticVelocityClear && predictorPreserved && largeDeltaSkipped && teleportSkipped && topologyRejected;
+}
+
+/**
+ * weighted接触補正後の保存速度が、接触中の球へ入り込まないことを確かめる。
+ */
+static bool TestWeightedContactVelocityClearsActiveSpheres()
+{
+    using namespace gk::model::animation;
+    // 3骨の親子関係と、静止した基準姿勢を用意する。
+    FModelSkeleton skeleton;
+    const int32_t parents[3] = { -1, 0, 1 };
+    FModelBoneTransform rest[3]{};
+    rest[1].position[0] = 1.0f;
+    rest[2].position[0] = 1.0f;
+    gk::String error;
+    if (!skeleton.parents.AppendRange(parents, 3u) || !skeleton.restLocalTransforms.AppendRange(rest, 3u))
+    {
+        return false;
+    }
+
+    // 描画と同じFKで、骨の基準位置を準備する。
+    FModelPose pose;
+    gk::Array<float> baseMatrices;
+    if (!InitializeModelPose(skeleton, pose, error) || !EvaluateModelPose(skeleton, pose, baseMatrices, error))
+    {
+        fprintf(stderr, "weighted velocity fixture pose failed: %s\n", error.CStr());
+        return false;
+    }
+
+    // 現在と前回の3点鎖を同じ固定root、骨長、速度で初期化する。
+    const gk::Vec3 targets[3] = { { 0.0f, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, { 2.0f, 0.0f, 0.0f } };
+    const uint32_t bones[2] = { 1u, 2u };
+    // 指定速度で3点鎖を作り、rootだけは固定する。
+    const auto AppendFixtureChain = [&](gk::model::FModelSecondaryMotionState& state, const gk::Vec3& velocity)
+    {
+        // 2骨分のsolver chainとその初期simulation state。
+        auto* chain = new gk::model::FModelSecondaryMotionChain;
+        chain->settings.frequencyHz = 0.01f;
+        chain->settings.dampingRatio = 0.0f;
+        chain->settings.gravity = {};
+        chain->settings.windAcceleration = {};
+        chain->settings.maxAngleDegrees = 180.0f;
+        chain->settings.teleportDistance = 10.0f;
+        chain->settings.endOffset = { 0.0f, 0.05f, 0.0f };
+        chain->colliderMask = 0u;
+        // bone原点2個と末端の3点を、既知の位置・速度で保存する。
+        FModelSecondaryMotionPoint points[3]{};
+        for (uint32_t point = 0; point < 3u; ++point)
+        {
+            points[point].position = targets[point];
+            points[point].velocity = point == 0u ? gk::Vec3{} : velocity;
+        }
+        if (!chain->bones.AppendRange(bones, 2u) || !chain->simulation.points.AppendRange(points, 3u) || !chain->simulation.previousTargets.AppendRange(targets, 3u) || !state.chains.Append(chain))
+        {
+            delete chain;
+            return false;
+        }
+        return true;
+    };
+    // 解くstateと、時間履歴として参照する前回state。
+    gk::model::FModelSecondaryMotionState candidate;
+    gk::model::FModelSecondaryMotionState previous;
+    if (!AppendFixtureChain(candidate, { 1.0f, 0.0f, 0.0f }) || !AppendFixtureChain(previous, { 1.0f, 0.0f, 0.0f }))
+    {
+        return false;
+    }
+
+    // 2個の固定球で挟むweighted pointを登録する。
+    // 2本の骨への等重みanchorで、鎖上に1点の接触を定義する。
+    const gk::FModelSecondaryMotionContactPoint contact{ 0u, 2u, 0.0f };
+    const gk::FModelSecondaryMotionContactAnchor anchors[2] = { { 1u, {}, 0.5f }, { 2u, {}, 0.5f } };
+    const FModelSecondaryMotionCollisionShape shapes[2] = { { { 0.15f, 0.15f, 0.0f }, { 0.15f, 0.15f, 0.0f }, 0.4f }, { { 0.65f, 0.15f, 0.0f }, { 0.65f, 0.15f, 0.0f }, 0.4f } };
+    candidate.linkIterations = 32u;
+    // 前回の基準姿勢と2球を持つ有効履歴としてsolverへ渡す。
+    previous.velocityHistoryValid = true;
+    if (!previous.previousBaseMatrices.AppendRange(baseMatrices.Data(), baseMatrices.Count()) || !previous.previousCollisionShapes.AppendRange(shapes, 2u) || !candidate.contactPoints.Append(contact) || !candidate.contactAnchors.AppendRange(anchors, 2u) || !gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, shapes, 2u, 1.0 / 60.0, error))
+    {
+        fprintf(stderr, "weighted velocity fixture constrain failed: %s\n", error.CStr());
+        return false;
+    }
+
+    // 固定root、両骨長、鎖上の点とweighted pointの球面余裕を独立に調べる。
+    // 更新後の点列からroot、骨長、速度を検査する。
+    const auto& points = candidate.chains.At(0u)->simulation.points;
+    const bool fixedRoot = points.At(0u).position.x == 0.0f && points.At(0u).position.y == 0.0f && points.At(0u).position.z == 0.0f;
+    bool lengthsPreserved = points.Count() == 3u;
+    bool radialRatesClear = points.Count() == 3u;
+    double maximumRadialRate = 0.0;
+    double maximumRadialTolerance = 0.0;
+    for (uint32_t segment = 0; segment < 2u; ++segment)
+    {
+        const auto& first = points.At(segment).position;
+        const auto& second = points.At(segment + 1u).position;
+        const double x = static_cast<double>(second.x) - first.x;
+        const double y = static_cast<double>(second.y) - first.y;
+        const double z = static_cast<double>(second.z) - first.z;
+        const double length = sqrt(x * x + y * y + z * z);
+        lengthsPreserved = fabs(length - 1.0) <= 0.001;
+        const auto& firstVelocity = points.At(segment).velocity;
+        const auto& secondVelocity = points.At(segment + 1u).velocity;
+        const double vx = static_cast<double>(secondVelocity.x) - firstVelocity.x;
+        const double vy = static_cast<double>(secondVelocity.y) - firstVelocity.y;
+        const double vz = static_cast<double>(secondVelocity.z) - firstVelocity.z;
+        const double radialRate = fabs((x * vx + y * vy + z * vz) / fmax(length, 1.0e-12));
+        const double relativeSpeed = sqrt(vx * vx + vy * vy + vz * vz);
+        const double radialTolerance = fmax(1.0e-7, fmin(1.0e-6, 4.0 * std::numeric_limits<float>::epsilon() * relativeSpeed));
+        maximumRadialRate = fmax(maximumRadialRate, radialRate);
+        maximumRadialTolerance = fmax(maximumRadialTolerance, radialTolerance);
+        radialRatesClear = radialRatesClear && radialRate <= radialTolerance;
+    }
+    // 接触anchorを等重みで合成した位置と速度。
+    const gk::FVector3d weightedPosition{ { 0.5 * (points.At(0u).position.x + points.At(1u).position.x), 0.5 * (points.At(0u).position.y + points.At(1u).position.y), 0.5 * (points.At(0u).position.z + points.At(1u).position.z) } };
+    const gk::FVector3d weightedVelocity{ { 0.5 * (points.At(0u).velocity.x + points.At(1u).velocity.x), 0.5 * (points.At(0u).velocity.y + points.At(1u).velocity.y), 0.5 * (points.At(0u).velocity.z + points.At(1u).velocity.z) } };
+    // 位置接触、接触法線速度、最悪shapeを順に集計する。
+    bool positionsClear = true;
+    bool activeVelocitiesClear = true;
+    double minimumActiveNormalVelocity = 1.0e300;
+    uint32_t minimumVelocityShape = UINT32_MAX;
+    // 自由点も2球の許容誤差より内側へ入らないことを確かめる。
+    for (uint32_t pointIndex = 1u; pointIndex < points.Count(); ++pointIndex)
+    {
+        const auto& position = points.At(pointIndex).position;
+        // weighted pointの球面速度は、接触許容幅内のshapeだけで判定する。
+        for (uint32_t shapeIndex = 0u; shapeIndex < 2u; ++shapeIndex)
+        {
+            const auto& shape = shapes[shapeIndex];
+            const double dx = static_cast<double>(position.x) - shape.start.x;
+            const double dy = static_cast<double>(position.y) - shape.start.y;
+            const double dz = static_cast<double>(position.z) - shape.start.z;
+            const double distance = sqrt(dx * dx + dy * dy + dz * dz);
+            const double allowedPenetration = static_cast<double>(shape.radius) * 0.001 + 2.0e-6;
+            positionsClear = positionsClear && distance >= static_cast<double>(shape.radius) - allowedPenetration;
+        }
+    }
+    for (uint32_t shapeIndex = 0; shapeIndex < 2u; ++shapeIndex)
+    {
+        const auto& shape = shapes[shapeIndex];
+        const double dx = weightedPosition.value[0] - shape.start.x;
+        const double dy = weightedPosition.value[1] - shape.start.y;
+        const double dz = weightedPosition.value[2] - shape.start.z;
+        const double distance = sqrt(dx * dx + dy * dy + dz * dz);
+        const double allowedPenetration = static_cast<double>(shape.radius) * 0.0005 + 2.0e-6;
+        positionsClear = positionsClear && distance >= static_cast<double>(shape.radius) - allowedPenetration;
+        const double activeMargin = allowedPenetration;
+        if (distance <= static_cast<double>(shape.radius) + activeMargin)
+        {
+            const double normalVelocity = (dx * weightedVelocity.value[0] + dy * weightedVelocity.value[1] + dz * weightedVelocity.value[2]) / distance;
+            if (normalVelocity < minimumActiveNormalVelocity)
+            {
+                minimumActiveNormalVelocity = normalVelocity;
+                minimumVelocityShape = shapeIndex;
+            }
+            activeVelocitiesClear = activeVelocitiesClear && normalVelocity >= -1.0e-7;
+        }
+    }
+    // 補正の正味変位と速度の内積も回帰値として記録する。
+    const double correctionVelocityDot = (weightedPosition.value[0] - 0.5) * weightedVelocity.value[0] + weightedPosition.value[1] * weightedVelocity.value[1] + weightedPosition.value[2] * weightedVelocity.value[2];
+    if (!fixedRoot || !lengthsPreserved || !positionsClear || fabs(correctionVelocityDot) > 1.0e-6)
+    {
+        fprintf(stderr, "weighted velocity fixture position invalid: root=%d lengths=%d contacts=%d correctionDot=%.9g\n", fixedRoot ? 1 : 0, lengthsPreserved ? 1 : 0, positionsClear ? 1 : 0, correctionVelocityDot);
+        return false;
+    }
+    if (!radialRatesClear)
+    {
+        fprintf(stderr, "RED: free bone radial velocity remains %.9g (float-scaled tolerance %.9g)\n", maximumRadialRate, maximumRadialTolerance);
+    }
+    if (!activeVelocitiesClear)
+    {
+        fprintf(stderr, "RED: active sphere %u receives inward weighted-point velocity %.9g; correctionDot=%.9g\n", minimumVelocityShape, minimumActiveNormalVelocity, correctionVelocityDot);
+    }
+
+    // 静止球面に沿う速度を残し、単に全速度をゼロにする解決を防ぐ。
+    gk::model::FModelSecondaryMotionState tangentCandidate;
+    gk::model::FModelSecondaryMotionState tangentPrevious;
+    const gk::FModelSecondaryMotionContactPoint tangentContact{ 0u, 2u, 0.0f };
+    const gk::FModelSecondaryMotionContactAnchor tangentAnchors[2] = { { 1u, {}, 0.5f }, { 2u, {}, 0.5f } };
+    const FModelSecondaryMotionCollisionShape tangentShape{ { 0.5f, -0.4f, 0.0f }, { 0.5f, -0.4f, 0.0f }, 0.4f };
+    bool tangentPreserved = AppendFixtureChain(tangentCandidate, { 0.0f, 0.0f, 0.25f }) && AppendFixtureChain(tangentPrevious, { 0.0f, 0.0f, 0.25f });
+    tangentPrevious.velocityHistoryValid = true;
+    tangentPreserved = tangentPreserved && tangentPrevious.previousBaseMatrices.AppendRange(baseMatrices.Data(), baseMatrices.Count()) && tangentPrevious.previousCollisionShapes.Append(tangentShape);
+    tangentPreserved = tangentPreserved && tangentCandidate.contactPoints.Append(tangentContact) && tangentCandidate.contactAnchors.AppendRange(tangentAnchors, 2u);
+    tangentCandidate.linkIterations = 32u;
+    error.Clear();
+    tangentPreserved = tangentPreserved && gk::model::ConstrainSecondaryMotionContactPoints(tangentCandidate, tangentPrevious, skeleton, baseMatrices, &tangentShape, 1u, 1.0 / 60000.0, error);
+    if (tangentPreserved)
+    {
+        const auto& tangentPoints = tangentCandidate.chains.At(0u)->simulation.points;
+        const gk::FVector3d position{ { 0.5 * (tangentPoints.At(0u).position.x + tangentPoints.At(1u).position.x), 0.5 * (tangentPoints.At(0u).position.y + tangentPoints.At(1u).position.y), 0.5 * (tangentPoints.At(0u).position.z + tangentPoints.At(1u).position.z) } };
+        const gk::FVector3d velocity{ { 0.5 * (tangentPoints.At(0u).velocity.x + tangentPoints.At(1u).velocity.x), 0.5 * (tangentPoints.At(0u).velocity.y + tangentPoints.At(1u).velocity.y), 0.5 * (tangentPoints.At(0u).velocity.z + tangentPoints.At(1u).velocity.z) } };
+        const double nx = position.value[0] - tangentShape.start.x;
+        const double ny = position.value[1] - tangentShape.start.y;
+        const double nz = position.value[2] - tangentShape.start.z;
+        const double normalLength = sqrt(nx * nx + ny * ny + nz * nz);
+        const double normalRate = (nx * velocity.value[0] + ny * velocity.value[1] + nz * velocity.value[2]) / normalLength;
+        const double expectedTangentZ = velocity.value[2] - nz / normalLength * normalRate;
+        tangentPreserved = normalRate >= -1.0e-7 && fabs(expectedTangentZ - 0.125) <= 2.0e-5 && fabs(velocity.value[0]) <= 2.0e-5 && fabs(velocity.value[1]) <= 2.0e-5;
+        if (!tangentPreserved)
+        {
+            fprintf(stderr, "RED: stationary one-sphere tangent was lost: normalRate=%.9g tangentZ=%.9g raw=(%.9g,%.9g,%.9g) error=%s\n", normalRate, expectedTangentZ, velocity.value[0], velocity.value[1], velocity.value[2], error.CStr());
+        }
+    }
+    else
+    {
+        fprintf(stderr, "weighted stationary tangent fixture failed to run: %s\n", error.CStr());
+    }
+    return radialRatesClear && activeVelocitiesClear && tangentPreserved;
 }
 
 /**
@@ -4818,5 +5090,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactPrefersPhysicalPrediction() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactVelocityClearsActiveSpheres() && TestWeightedContactPrefersPhysicalPrediction() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

@@ -167,6 +167,8 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
     state->distanceStepSeconds = candidate.distanceStepSeconds;
     state->linkIterations = candidate.linkIterations;
     state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
+    state->previousBaseMatrices.MoveFrom(candidate.previousBaseMatrices);
+    state->velocityHistoryValid = candidate.velocityHistoryValid;
     state->colliderMargin = candidate.colliderMargin;
     state->skinPointContactsEnabled = candidate.skinPointContactsEnabled;
     state->skinContactPositionIds.MoveFrom(candidate.skinContactPositionIds);
@@ -280,7 +282,27 @@ bool CacheTransforms(model::FModelSecondaryMotionChain& chain, const model::anim
 }
 
 /**
- * 全鎖を候補側で更新し、1本でも失敗したら前回の状態を保つ。
+ * 更新失敗で時刻の対応が途切れた速度履歴を無効にする。
+ */
+struct FVelocityHistoryGuard
+{
+    // 更新中だけ借用する前回状態。成功後は解放されるため借用を解除する。
+    model::FModelSecondaryMotionState* previous = nullptr;
+
+    /**
+     * 失敗時は姿勢を保ち、次回の速度補正だけ古い履歴を使わせない。
+     */
+    ~FVelocityHistoryGuard()
+    {
+        if (previous)
+        {
+            previous->velocityHistoryValid = false;
+        }
+    }
+};
+
+/**
+ * 全鎖を候補側で更新する。失敗時は前回の姿勢を保ち、速度履歴だけを無効にする。
  */
 int Update(ModelHandle handle, double delta, bool reset)
 {
@@ -294,12 +316,14 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         return detail::SetError("secondary motion delta must be finite and nonnegative");
     }
-    const auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
+    auto* previous = transform->playback ? transform->playback->secondaryMotion : nullptr;
     if (!previous)
     {
         detail::ClearError();
         return 0;
     }
+    // 途中の確保や接触検査が失敗しても、古い履歴を短い次回deltaへ対応させない。
+    FVelocityHistoryGuard historyGuard{ previous };
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
     // 検証用DLLだけで、揺れ更新の各処理に使う時間を測る。
     LARGE_INTEGER profileTimes[7]{}, profileFrequency{};
@@ -572,6 +596,9 @@ int Update(ModelHandle handle, double delta, bool reset)
     }
 #endif
     candidate.previousCollisionShapes.MoveFrom(currentShapes);
+    // 成功した姿勢だけを次回の速度基準にする。設定変更の候補には履歴をコピーしない。
+    candidate.previousBaseMatrices.MoveFrom(matrices);
+    candidate.velocityHistoryValid = true;
     // cacheも先に候補を完成させ、鎖の確定後には失敗する処理を残さない。
     auto* poseCache = model::CreateModelPoseCache(*resource, *transform->playback, base, error);
     if (!poseCache)
@@ -583,6 +610,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         delete poseCache;
         return Failure(error);
     }
+    historyGuard.previous = nullptr;
     delete transform->playback->basePoseCache;
     transform->playback->basePoseCache = poseCache;
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)

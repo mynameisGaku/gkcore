@@ -17,6 +17,8 @@ gk::DrawModel(character);
 
 `SetModelAnimationTime`で秒単位の時刻を指定できます。速度は`SetModelAnimationSpeed`で変更し、0で一時停止、負値で逆再生します。loop中はclip長で折り返し、loopなしでは両端へ制限します。`StopModelAnimation`は再生枠を解除して初期姿勢を基準にします。IKと揺れものの設定・状態は保持します。揺れも現在の姿勢へ戻したい場合は`ResetModelSecondaryMotion`を続けて呼びます。
 
+再生時刻やIK姿勢を瞬間的に切り替える場合も、変更後に`ResetModelSecondaryMotion`を呼んでください。揺れもののteleport判定は鎖rootの移動を使うため、rootを動かさず姿勢だけを切り替えたときは自動リセットされません。
+
 `CreateModelInstance`は形状・材質を共有し、新しい位置設定と独立した再生状態を持つモデルを作ります。読み込み直後はclipを再生せず、初期姿勢と既定morph係数を表示します。
 
 `DrawModel`は呼び出した時点の変形結果を保持します。同じframe中で時刻、ブレンド、IKを変えても先に予約した描画は変わりません。モデルや外部アニメーションのhandleを削除しても、予約済みの描画と適用済みのclipは必要なデータを保持します。

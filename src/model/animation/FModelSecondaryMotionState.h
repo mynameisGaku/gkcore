@@ -44,6 +44,10 @@ struct FModelSecondaryMotionState
     uint32_t linkIterations = 32;
     // 前回更新した身体のmodel空間形状。
     Array<animation::FModelSecondaryMotionCollisionShape> previousCollisionShapes;
+    // 最後に成功した更新で使った、揺れを加える前の骨行列。
+    Array<float> previousBaseMatrices;
+    // 骨行列・身体形状・鎖の目標が同じ更新の履歴として使えるか。
+    bool velocityHistoryValid = false;
     // 節の接触に足すmodel空間の余白。
     float colliderMargin = 0.005f;
     // 対応するFBXの変形後頂点へ、描画時点の身体接触を加える。
