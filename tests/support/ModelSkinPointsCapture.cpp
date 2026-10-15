@@ -565,6 +565,81 @@ void EmitSkinSurfaceError(uint32_t frame, const char* message)
     fprintf(stderr, "}\n");
 }
 
+/**
+ * 指定frameの確定した鎖位置と基準目標を、到達範囲の独立診断へ保存する。
+ * 全鎖を先に検査し、不正な場合は途中までのrig行を出さない。
+ */
+void EmitSkinSurfaceRig(uint32_t frame, const gk::model::AModelAnimationSource& source, const gk::model::FModelSecondaryMotionState* secondary)
+{
+    if (!secondary || secondary->chains.Count() == 0u || !isfinite(secondary->colliderMargin) || secondary->colliderMargin < 0.0f || secondary->previousCollisionShapes.Count() > 64u || secondary->previousCollisionShapes.Count() != secondary->colliders.Count())
+    {
+        EmitSkinSurfaceError(frame, "surface rig state or collision shape history is invalid");
+        return;
+    }
+    const auto& parents = source.Skeleton().parents;
+    for (uint32_t chainIndex = 0u; chainIndex < secondary->chains.Count(); ++chainIndex)
+    {
+        const auto* chain = secondary->chains.At(chainIndex);
+        if (!chain || chain->bones.Count() == 0u || chain->bones.Count() == UINT32_MAX || chain->simulation.points.Count() <= 1u || chain->simulation.points.Count() != chain->bones.Count() + 1u || chain->simulation.previousTargets.Count() != chain->simulation.points.Count() || !isfinite(chain->collisionRadius) || chain->collisionRadius < 0.0f)
+        {
+            EmitSkinSurfaceError(frame, "surface rig chain or point and target counts are invalid");
+            return;
+        }
+        for (uint32_t item = 0u; item < chain->bones.Count(); ++item)
+        {
+            const uint32_t bone = chain->bones.At(item);
+            if (bone >= parents.Count() || (item > 0u && parents.At(bone) != static_cast<int32_t>(chain->bones.At(item - 1u))))
+            {
+                EmitSkinSurfaceError(frame, "surface rig bone range or parent chain is invalid");
+                return;
+            }
+        }
+        const char* rootName = source.BoneName(chain->bones.At(0u));
+        if (!rootName || !rootName[0])
+        {
+            EmitSkinSurfaceError(frame, "surface rig root bone name is unavailable");
+            return;
+        }
+        for (uint32_t pointIndex = 0u; pointIndex < chain->simulation.points.Count(); ++pointIndex)
+        {
+            const auto& position = chain->simulation.points.At(pointIndex).position;
+            const auto& target = chain->simulation.previousTargets.At(pointIndex);
+            if (!isfinite(position.x) || !isfinite(position.y) || !isfinite(position.z) || !isfinite(target.x) || !isfinite(target.y) || !isfinite(target.z))
+            {
+                EmitSkinSurfaceError(frame, "surface rig position or current completed target is not finite");
+                return;
+            }
+        }
+    }
+    // float値を倍精度表記へ広げ、保存された値をそのまま再現できる桁数で出す。
+    fprintf(stderr, "{\"type\":\"gkcore_model_skin_surface_rig\",\"frame\":%u,\"chainCount\":%u,\"colliderMargin\":%.17g,\"shapeCount\":%u,\"positionSource\":\"committed secondary simulation; model space before instance SRT; float positions\",\"targetSource\":\"previousTargets from the current completed update; model space before instance SRT; includes virtual tip\"}\n", frame, secondary->chains.Count(), static_cast<double>(secondary->colliderMargin), secondary->previousCollisionShapes.Count());
+    for (uint32_t chainIndex = 0u; chainIndex < secondary->chains.Count(); ++chainIndex)
+    {
+        const auto& chain = *secondary->chains.At(chainIndex);
+        const auto& root = chain.simulation.points.At(0u).position;
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_surface_chain\",\"frame\":%u,\"chainIndex\":%u,\"rootBone\":%u,\"rootBoneName\":", frame, chainIndex, chain.bones.At(0u));
+        EmitJsonString(source.BoneName(chain.bones.At(0u)));
+        fprintf(stderr, ",\"pointCount\":%u,\"targetCount\":%u,\"collisionRadius\":%.17g,\"colliderMask\":%llu,\"root\":[%.17g,%.17g,%.17g],\"boneIds\":[", chain.simulation.points.Count(), chain.simulation.previousTargets.Count(), static_cast<double>(chain.collisionRadius), static_cast<unsigned long long>(chain.colliderMask), static_cast<double>(root.x), static_cast<double>(root.y), static_cast<double>(root.z));
+        for (uint32_t item = 0u; item < chain.bones.Count(); ++item)
+        {
+            fprintf(stderr, "%s%u", item ? "," : "", chain.bones.At(item));
+        }
+        fprintf(stderr, "],\"currentPoints\":[");
+        for (uint32_t pointIndex = 0u; pointIndex < chain.simulation.points.Count(); ++pointIndex)
+        {
+            const auto& position = chain.simulation.points.At(pointIndex).position;
+            fprintf(stderr, "%s[%.17g,%.17g,%.17g]", pointIndex ? "," : "", static_cast<double>(position.x), static_cast<double>(position.y), static_cast<double>(position.z));
+        }
+        fprintf(stderr, "],\"previousTargets\":[");
+        for (uint32_t pointIndex = 0u; pointIndex < chain.simulation.previousTargets.Count(); ++pointIndex)
+        {
+            const auto& target = chain.simulation.previousTargets.At(pointIndex);
+            fprintf(stderr, "%s[%.17g,%.17g,%.17g]", pointIndex ? "," : "", static_cast<double>(target.x), static_cast<double>(target.y), static_cast<double>(target.z));
+        }
+        fprintf(stderr, "]}\n");
+    }
+}
+
 void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& resource, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::Array<gk::model::animation::FModelSkinPointCorrection>& corrections, const gk::model::FModelSecondaryMotionState* secondary)
 {
     // どちらも未指定なら、面の診断用処理は行わない。
@@ -643,6 +718,12 @@ void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& re
     if (output.Empty() || output.CStr()[output.Length() - 1u] != '\n')
     {
         fputc('\n', stderr);
+    }
+    // 指定された場合だけ、同じsnapshot frameの実際の鎖状態を追加する。
+    const char* rigFlag = getenv("GKCORE_SKIN_SURFACE_RIG");
+    if (rigFlag && strcmp(rigFlag, "1") == 0)
+    {
+        EmitSkinSurfaceRig(frame, source, secondary);
     }
     // 面の所属部位を調べる場合だけ、元body位置の全bone寄与も既存形式で保存する。
     const char* bindingsFlag = getenv("GKCORE_SKIN_SURFACE_BINDINGS");

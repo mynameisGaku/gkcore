@@ -1928,3 +1928,14 @@ Jacket107球を足す636候補は短期120frameでJacketの侵入を0にしま�
 559の開始0/2.1秒・Debug/Release各120frame、計480frameは全てexit0でした。通常の検証6type・surface snapshot全payload・IK/時刻各120行・animation map・保存PPM全byte/pixelが両構成で一致し、surface errorは全0です。Release開始0だけのbodybinding13197行は分けて比較しました。Shirtのproxy平均は557比で開始0が6.975→6.808333、2.1秒が8.991667→8.958333。残存16/15IDを除外せず保存しています。Jacket/Skirtと追加2IDは全caseの全120frameでproxy侵入0ですが、実身体面の問題解消とは扱いません。最終集計はfinal-559-fourcase-gpu-parity-and-557-proxy-summary.jsonです。
 
 通常SDKの製品DLLによる可視600frame/warmup0もcompleted=true・exit0でした。17.046FPS、p95 66.921ms、secondary52.586ms、Draw0.451/Present5.014/IK0.548msです。CPU解析/build・他GPU試験を止めて実行し、配置DLLとSDKのSHA256 2df678343d5392a52a108920e66651798090de7f614847674a2ab346ec56b32eの一致を確認しました。Runtimeのソース変更はありません。今回のCMakeを公開用生成関数へ通すと既存mainのCMakeと同一になり、392個の公開許可ファイルに新診断と私有設定は含まれません。記録はproduct-559-realtime600.logとproduct-curation-summary.jsonです。検証後に設定を559球へ更新し、元557の全data行保持・全改行/BOM/formatterを確認してdevへ保存します。
+
+
+## 身体面と同時刻の鎖状態による接触診断
+
+2026-10-16、従来のtraceとsurface snapshotではframe 0の時刻が異なり、同じframe番号だけからrootの到達範囲を照合できないことを確認しました。capture専用のGKCORE_SKIN_SURFACE_RIG=1を追加し、同じsnapshotで全13鎖の現在位置、保存済みpreviousTargets、bone ID、半径、64bit maskと身体形状数・余白を出します。全鎖の件数・親接続・finite値を先に検査し、途中までのrigを出しません。Runtime原本と通常DLL、SDKのAPIは変更していません。
+
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0でcapture DLL/実モデルcaptureをRelease/Debugともbuildしました。現559球・8形状のRelease開始0秒55frameと2.1秒21frameを実行し、それぞれframe54/20のrigを取得しました。後述3caps候補のRelease各120frameも含む4ログで、surface1件・rig1件・chain13件、仮想末端数、root一致、finite値、UInt64Maxの正確な保存、指定frame以外の出力なし、surface error0を確認しました。sourceの別agentレビューも必須指摘なしです。CPUはctest --test-dir build/dev-windows -C Debug/Release --output-on-failure --parallel 4で各70/70成功しました。CPU toolchainはMSVC19.51・SDK10.0.28000.0です。
+
+実身体の左右腿2boneへの寄与99%以上の各266頂点・466三角形を、開始0/frame54と2.1/frame20で覆う2本/3本のcapsule候補を作りました。各三角形の3頂点を同じcapsule内に収め、既存50mm capsuleの全被覆も保持します。元float入力に対する独立計算で全対象を被覆し、端点と丸めの保守的誤差を引いた最小余裕は1.254µmでした。混合weightの128三角形/sideと、未測定時刻の実身体全体は保証しません。骨球.038・559球・元assetを維持し、脚の新しいindexを含むmask1008/4080を使います。
+
+3本案はRelease開始0/2.1秒の各120frameを完走しましたが、固定1/60秒3,000frameでは749frame完了後の次の更新でweighted contactが成立せず停止しました。2本案も746frame完了後に停止しました。短い区間の成功を長時間の安定性とは扱わず、公式設定へは採用しません。2姿勢の最初の自由点には全選択形状の外側へ置ける具体例がありますが、全鎖・全weightの同時可解性や失敗frameの可解性は未確定です。記録はbuild/native-validation/tapered-thigh以下のfit/coverage、rig-output-contract-review、独立監査、fit2/fit3-fixed3000です。次は停止した更新の入力と最良候補を保存し、幾何的な不可能条件と探索不足を切り分けます。
