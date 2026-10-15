@@ -4053,7 +4053,7 @@ static bool TestSecondaryMotionWeightedContactPointApiLifecycle()
 }
 
 /**
- * 接触候補が停滞したとき、前回の鎖方向を現在のrootと骨長へ移して再試行する。
+ * 履歴の有無にかかわらず、現在のroot、全骨長、角度、重み付き接触を保つ。
  */
 static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
 {
@@ -4100,7 +4100,7 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
             currentPoints[pointIndex].position = currentTargets[chainIndex][pointIndex];
             previousPoints[pointIndex].position = pointIndex == 0u ? previousTargets[chainIndex][pointIndex] : gk::Vec3{ 0.0f, 0.0f, pointIndex == 1u ? 0.8f : 1.3f };
         }
-        chainsReady = currentChain->bones.AppendRange(chainBones[chainIndex], 2) && currentChain->simulation.previousTargets.AppendRange(currentTargets[chainIndex], 3) && currentChain->simulation.points.AppendRange(currentPoints, 3) && previousChain->bones.AppendRange(chainBones[chainIndex], 2) && previousChain->simulation.previousTargets.AppendRange(previousTargets[chainIndex], 3) && previousChain->simulation.points.AppendRange(previousPoints, 3) && candidate.chains.Append(currentChain) && previous.chains.Append(previousChain) && chainsReady;
+        chainsReady = currentChain->bones.AppendRange(chainBones[chainIndex], 2) && currentChain->transforms.AppendRange(rest + chainBones[chainIndex][0], 2u) && currentChain->simulation.previousTargets.AppendRange(currentTargets[chainIndex], 3) && currentChain->simulation.points.AppendRange(currentPoints, 3) && previousChain->bones.AppendRange(chainBones[chainIndex], 2) && previousChain->transforms.AppendRange(rest + chainBones[chainIndex][0], 2u) && previousChain->simulation.previousTargets.AppendRange(previousTargets[chainIndex], 3) && previousChain->simulation.points.AppendRange(previousPoints, 3) && candidate.chains.Append(currentChain) && previous.chains.Append(previousChain) && chainsReady;
         if (!chainsReady)
         {
             if (candidate.chains.Count() <= chainIndex)
@@ -4123,6 +4123,99 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
         return false;
     }
 
+    // 所有配列と履歴も含めて、二つの試行へ渡す初期candidateを保存する。
+    gk::model::FModelSecondaryMotionState initialCandidate;
+    if (!initialCandidate.CloneFrom(candidate, error))
+    {
+        fprintf(stderr, "weighted warm-start initial candidate clone failed: %s\n", error.CStr());
+        return false;
+    }
+    // 主探索の成功を無条件に許さず、履歴付き試行と同じ全制約を検査する。
+    const auto ValidateSolved = [&](const gk::model::FModelSecondaryMotionState& solvedState)
+    {
+        if (solvedState.chains.Count() != 2u)
+        {
+            return false;
+        }
+        for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+        {
+            const auto& solved = solvedState.chains.At(chainIndex)->simulation.points;
+            if (solved.Count() != 3u || fabs(solved.At(0).position.x - currentTargets[chainIndex][0].x) > 1.0e-6f || fabs(solved.At(0).position.y - currentTargets[chainIndex][0].y) > 1.0e-6f || fabs(solved.At(0).position.z - currentTargets[chainIndex][0].z) > 1.0e-6f)
+            {
+                return false;
+            }
+            for (uint32_t segment = 0; segment < 2u; ++segment)
+            {
+                const auto& parent = solved.At(segment).position;
+                const auto& child = solved.At(segment + 1u).position;
+                const double dx = static_cast<double>(child.x) - parent.x;
+                const double dy = static_cast<double>(child.y) - parent.y;
+                const double dz = static_cast<double>(child.z) - parent.z;
+                const double length = sqrt(dx * dx + dy * dy + dz * dz);
+                const double referenceX = currentTargets[chainIndex][segment + 1u].x - currentTargets[chainIndex][segment].x;
+                const double referenceLength = fabs(referenceX);
+                const double directionDot = dx * (referenceX / referenceLength) / length;
+                if (!isfinite(length) || !isfinite(directionDot) || fabs(length - referenceLength) > 0.001 || directionDot < -0.001)
+                {
+                    fprintf(stderr, "weighted warm-start chain %u segment %u invalid: length=%.9g dot=%.9g\n", chainIndex, segment, length, directionDot);
+                    return false;
+                }
+            }
+        }
+        for (uint32_t pointIndex = 0; pointIndex < solvedState.contactPoints.Count(); ++pointIndex)
+        {
+            const auto& contact = solvedState.contactPoints.At(pointIndex);
+            if (contact.anchorCount == 0u || static_cast<uint64_t>(contact.firstAnchor) + contact.anchorCount > solvedState.contactAnchors.Count())
+            {
+                return false;
+            }
+            // このfixtureのoffsetは0なので、全anchorを対応する保存済み骨原点から混ぜる。
+            gk::FVector3d weightedPosition{};
+            double weightSum = 0.0;
+            for (uint32_t anchorIndex = 0; anchorIndex < contact.anchorCount; ++anchorIndex)
+            {
+                const auto& anchor = solvedState.contactAnchors.At(contact.firstAnchor + anchorIndex);
+                if (anchor.offset.x != 0.0f || anchor.offset.y != 0.0f || anchor.offset.z != 0.0f || !isfinite(anchor.weight) || !(anchor.weight > 0.0f))
+                {
+                    return false;
+                }
+                bool found = false;
+                for (uint32_t chainIndex = 0; chainIndex < solvedState.chains.Count(); ++chainIndex)
+                {
+                    const auto& chain = *solvedState.chains.At(chainIndex);
+                    for (uint32_t boneIndex = 0; boneIndex < chain.bones.Count(); ++boneIndex)
+                    {
+                        if (chain.bones.At(boneIndex) != anchor.bone)
+                        {
+                            continue;
+                        }
+                        if (found)
+                        {
+                            return false;
+                        }
+                        const auto& position = chain.simulation.points.At(boneIndex).position;
+                        weightedPosition.value[0] += static_cast<double>(position.x) * anchor.weight;
+                        weightedPosition.value[1] += static_cast<double>(position.y) * anchor.weight;
+                        weightedPosition.value[2] += static_cast<double>(position.z) * anchor.weight;
+                        found = true;
+                    }
+                }
+                if (!found)
+                {
+                    return false;
+                }
+                weightSum += anchor.weight;
+            }
+            gk::Array<gk::model::animation::FPreparedSecondaryMotionCollisionShape> prepared;
+            if (fabs(weightSum - 1.0) > 1.0e-6 || !gk::model::animation::PrepareSecondaryMotionFreeSegmentShapes(&body, 1u, contact.radius, prepared, error) || !gk::model::animation::CheckPreparedSecondaryMotionFreeSegmentContacts(prepared.Data(), prepared.Count(), weightedPosition, weightedPosition, error, 0.5))
+            {
+                fprintf(stderr, "weighted warm-start contact %u invalid: %s\n", pointIndex, error.CStr());
+                return false;
+            }
+        }
+        return solvedState.contactPoints.Count() == initialCandidate.contactPoints.Count();
+    };
+    // 後続の速度・構成変更の試行でも、同じ初期位置を再利用する。
     gk::model::animation::FModelSecondaryMotionPoint beforePrimary[6]{};
     uint32_t snapshotOffset = 0;
     for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
@@ -4132,18 +4225,35 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
         snapshotOffset += points.Count();
     }
     gk::model::FModelSecondaryMotionState uninitializedPrevious;
+    // ownerを別々に探すsolverは、以前停滞していたこの配置も主探索で解ける。
     const bool primaryAccepted = gk::model::ConstrainSecondaryMotionContactPoints(candidate, uninitializedPrevious, skeleton, baseMatrices, &body, 1, 0.0, error);
-    bool primaryAtomic = !primaryAccepted && strcmp(error.CStr(), "secondary weighted contacts could not preserve body contact and chain constraints together") == 0;
-    snapshotOffset = 0;
-    for (uint32_t chainIndex = 0; chainIndex < candidate.chains.Count(); ++chainIndex)
+    if (primaryAccepted)
     {
-        const auto& points = candidate.chains.At(chainIndex)->simulation.points;
-        primaryAtomic = primaryAtomic && memcmp(points.Data(), beforePrimary + snapshotOffset, sizeof(gk::model::animation::FModelSecondaryMotionPoint) * points.Count()) == 0;
-        snapshotOffset += points.Count();
+        if (!error.Empty() || !ValidateSolved(candidate))
+        {
+            fprintf(stderr, "weighted warm-start primary success violated constraints: %s\n", error.CStr());
+            return false;
+        }
     }
-    if (!primaryAtomic)
+    else
     {
-        fprintf(stderr, "weighted warm-start fixture did not produce an atomic primary no-candidate result: accepted=%d error=%s\n", primaryAccepted ? 1 : 0, error.CStr());
+        bool primaryAtomic = strcmp(error.CStr(), "secondary weighted contacts could not preserve body contact and chain constraints together") == 0 && candidate.chains.Count() == initialCandidate.chains.Count();
+        for (uint32_t chainIndex = 0; primaryAtomic && chainIndex < candidate.chains.Count(); ++chainIndex)
+        {
+            const auto& actual = candidate.chains.At(chainIndex)->simulation;
+            const auto& initial = initialCandidate.chains.At(chainIndex)->simulation;
+            primaryAtomic = actual.points.Count() == initial.points.Count() && actual.previousTargets.Count() == initial.previousTargets.Count() && memcmp(actual.points.Data(), initial.points.Data(), sizeof(gk::model::animation::FModelSecondaryMotionPoint) * initial.points.Count()) == 0 && memcmp(actual.previousTargets.Data(), initial.previousTargets.Data(), sizeof(gk::Vec3) * initial.previousTargets.Count()) == 0;
+        }
+        if (!primaryAtomic)
+        {
+            fprintf(stderr, "weighted warm-start primary failure was not an atomic no-candidate: %s\n", error.CStr());
+            return false;
+        }
+    }
+    // 主探索の成立結果を持ち込まず、履歴付き試行も完全に同じ初期入力から始める。
+    if (!candidate.CloneFrom(initialCandidate, error))
+    {
+        fprintf(stderr, "weighted warm-start initial candidate restore failed: %s\n", error.CStr());
         return false;
     }
     if (!gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error))
@@ -4151,36 +4261,9 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
         fprintf(stderr, "weighted warm-start retry failed: %s\n", error.CStr());
         return false;
     }
-    for (uint32_t chainIndex = 0; chainIndex < 2u; ++chainIndex)
+    if (!ValidateSolved(candidate))
     {
-        const auto& solved = candidate.chains.At(chainIndex)->simulation.points;
-        if (solved.Count() != 3u || fabs(solved.At(0).position.x - 0.2f) > 1.0e-6f || fabs(solved.At(0).position.y) > 1.0e-6f || fabs(solved.At(0).position.z) > 1.0e-6f)
-        {
-            return false;
-        }
-        for (uint32_t segment = 0; segment < 2u; ++segment)
-        {
-            const auto& parent = solved.At(segment).position;
-            const auto& child = solved.At(segment + 1u).position;
-            const double length = sqrt((child.x - parent.x) * (child.x - parent.x) + (child.y - parent.y) * (child.y - parent.y) + (child.z - parent.z) * (child.z - parent.z));
-            const double referenceX = currentTargets[chainIndex][segment + 1u].x - currentTargets[chainIndex][segment].x;
-            const double referenceLength = fabs(referenceX);
-            const double directionDot = (child.x - parent.x) * (referenceX / referenceLength) / length;
-            if (fabs(length - referenceLength) > 0.001 || directionDot < -0.001)
-            {
-                fprintf(stderr, "weighted warm-start chain %u segment %u invalid: length=%.9g dot=%.9g\n", chainIndex, segment, length, directionDot);
-                return false;
-            }
-        }
-    }
-    const auto& firstAnchorPoint = candidate.chains.At(0)->simulation.points.At(1).position;
-    const auto& secondAnchorPoint = candidate.chains.At(1)->simulation.points.At(1).position;
-    const double blendedX = (static_cast<double>(firstAnchorPoint.x) + secondAnchorPoint.x) * 0.5;
-    const double blendedY = (static_cast<double>(firstAnchorPoint.y) + secondAnchorPoint.y) * 0.5;
-    const double blendedZ = (static_cast<double>(firstAnchorPoint.z) + secondAnchorPoint.z) * 0.5;
-    const double weightedDistance = sqrt((blendedX - body.start.x) * (blendedX - body.start.x) + (blendedY - body.start.y) * (blendedY - body.start.y) + (blendedZ - body.start.z) * (blendedZ - body.start.z));
-    if (weightedDistance < body.radius * 0.5)
-    {
+        fprintf(stderr, "weighted warm-start retry violated constraints: %s\n", error.CStr());
         return false;
     }
 

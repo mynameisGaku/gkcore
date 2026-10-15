@@ -640,6 +640,60 @@ void EmitSkinSurfaceRig(uint32_t frame, const gk::model::AModelAnimationSource& 
     }
 }
 
+/**
+ * 同じ更新で確定した身体形状の局所定義と基準行列を記録する。
+ * 全形状を先に検査し、不正値があれば行列の行を一つも出力しない。
+ */
+void EmitSkinSurfaceColliderMatrices(uint32_t frame, const gk::model::AModelAnimationSource& source, const gk::model::FModelSecondaryMotionState* secondary)
+{
+    // 行列数の乗算前に範囲を制限し、成功更新の履歴だけを参照する。
+    const uint32_t boneCount = source.Skeleton().parents.Count();
+    if (!secondary || !secondary->velocityHistoryValid || boneCount == 0u || boneCount > UINT32_MAX / 16u || secondary->previousBaseMatrices.Count() != boneCount * 16u || secondary->colliders.Count() > 64u || secondary->previousCollisionShapes.Count() != secondary->colliders.Count() || !isfinite(secondary->colliderMargin) || secondary->colliderMargin < 0.0f)
+    {
+        EmitSkinSurfaceError(frame, "surface collider matrices have no valid completed update history");
+        return;
+    }
+    // 途中までの形状行を残さないよう、全参照範囲と全数値を出力前に検査する。
+    for (uint32_t shapeIndex = 0u; shapeIndex < secondary->colliders.Count(); ++shapeIndex)
+    {
+        const auto& collider = secondary->colliders.At(shapeIndex);
+        if (collider.bone >= boneCount || !isfinite(collider.start.x) || !isfinite(collider.start.y) || !isfinite(collider.start.z) || !isfinite(collider.end.x) || !isfinite(collider.end.y) || !isfinite(collider.end.z) || !isfinite(collider.radius) || !(collider.radius > 0.0f))
+        {
+            EmitSkinSurfaceError(frame, "surface collider local definition or bone range is invalid");
+            return;
+        }
+        const char* boneName = source.BoneName(collider.bone);
+        if (!boneName || !boneName[0])
+        {
+            EmitSkinSurfaceError(frame, "surface collider bone name is unavailable");
+            return;
+        }
+        const uint32_t first = collider.bone * 16u;
+        for (uint32_t element = 0u; element < 16u; ++element)
+        {
+            if (!isfinite(secondary->previousBaseMatrices.At(first + element)))
+            {
+                EmitSkinSurfaceError(frame, "surface collider completed base matrix is not finite");
+                return;
+            }
+        }
+    }
+    // 配列を複製せず、検査済みfloatを17桁のdouble表記でそのまま出力する。
+    for (uint32_t shapeIndex = 0u; shapeIndex < secondary->colliders.Count(); ++shapeIndex)
+    {
+        const auto& collider = secondary->colliders.At(shapeIndex);
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_surface_collider_matrix\",\"frame\":%u,\"shapeIndex\":%u,\"shapeCount\":%u,\"bone\":%u,\"boneCount\":%u,\"boneName\":", frame, shapeIndex, secondary->colliders.Count(), collider.bone, boneCount);
+        EmitJsonString(source.BoneName(collider.bone));
+        fprintf(stderr, ",\"localStart\":[%.17g,%.17g,%.17g],\"localEnd\":[%.17g,%.17g,%.17g],\"localRadius\":%.17g,\"colliderMargin\":%.17g,\"matrixLayout\":\"column-major\",\"matrixSource\":\"previousBaseMatrices from the current completed update; pre-secondary base; model space before instance SRT\",\"previousBaseMatrix\":[", static_cast<double>(collider.start.x), static_cast<double>(collider.start.y), static_cast<double>(collider.start.z), static_cast<double>(collider.end.x), static_cast<double>(collider.end.y), static_cast<double>(collider.end.z), static_cast<double>(collider.radius), static_cast<double>(secondary->colliderMargin));
+        const uint32_t first = collider.bone * 16u;
+        for (uint32_t element = 0u; element < 16u; ++element)
+        {
+            fprintf(stderr, "%s%.17g", element ? "," : "", static_cast<double>(secondary->previousBaseMatrices.At(first + element)));
+        }
+        fprintf(stderr, "]}\n");
+    }
+}
+
 void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& resource, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::Array<gk::model::animation::FModelSkinPointCorrection>& corrections, const gk::model::FModelSecondaryMotionState* secondary)
 {
     // どちらも未指定なら、面の診断用処理は行わない。
@@ -724,6 +778,12 @@ void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& re
     if (rigFlag && strcmp(rigFlag, "1") == 0)
     {
         EmitSkinSurfaceRig(frame, source, secondary);
+    }
+    // affine推定と実際の身体変換を照合する場合だけ、同frameの基準行列を追加する。
+    const char* matricesFlag = getenv("GKCORE_SKIN_SURFACE_MATRICES");
+    if (matricesFlag && strcmp(matricesFlag, "1") == 0)
+    {
+        EmitSkinSurfaceColliderMatrices(frame, source, secondary);
     }
     // 面の所属部位を調べる場合だけ、元body位置の全bone寄与も既存形式で保存する。
     const char* bindingsFlag = getenv("GKCORE_SKIN_SURFACE_BINDINGS");

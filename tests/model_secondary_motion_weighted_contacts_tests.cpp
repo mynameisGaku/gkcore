@@ -1843,6 +1843,84 @@ bool TestCurrentInputContactContinuationAndStoredWitness()
 }
 
 /**
+ * 全ownerを同時に回すと相殺する接触も、片方だけを回した成立姿勢へ解決する。
+ */
+bool TestOpposedOffsetsEscapeSymmetricOwnerSeeds()
+{
+    // 対称な二球は原点での接触勾配も相殺する。
+    const FModelSecondaryMotionCollisionShape bodies[2] = { { { 0.25f, 0.0f, 0.0f }, { 0.25f, 0.0f, 0.0f }, 0.5f }, { { -0.25f, 0.0f, 0.0f }, { -0.25f, 0.0f, 0.0f }, 0.5f } };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(bodies, 2u, prepared, error))
+    {
+        return Fail("対称owner接触の身体球を準備できません");
+    }
+    // 同じ参照方向を持つ鎖へ、正反対のoffsetを半分ずつ割り当てる。
+    FSecondaryMotionContactChain chains[2]{};
+    FSecondaryMotionReferenceSegment references[2]{};
+    FSecondaryMotionWeightedContactAnchor anchors[2]{};
+    for (uint32_t owner = 0; owner < 2u; ++owner)
+    {
+        chains[owner].firstPoint = owner * 2u;
+        chains[owner].firstSegment = owner;
+        chains[owner].segmentCount = 1u;
+        chains[owner].cosineLimit = -1.0;
+        references[owner].direction = { { 0.0, 1.0, 0.0 } };
+        references[owner].length = 1.0;
+        anchors[owner].chainIndex = owner;
+        anchors[owner].segmentIndex = 0u;
+        anchors[owner].definition.direction = references[owner].direction;
+        anchors[owner].definition.offset = { { owner == 0u ? 1.0 : -1.0, 0.0, 0.0 } };
+        anchors[owner].definition.cosineLimit = -1.0;
+        anchors[owner].weight = 0.5;
+    }
+    FSecondaryMotionWeightedContactPoint contact{};
+    contact.firstAnchor = 0u;
+    contact.anchorCount = 2u;
+    contact.shapes = prepared.Data();
+    contact.shapeCount = prepared.Count();
+    // 一方を90度回すと混合点は(-.5,-.5,0)となり、二球の外へ出る。
+    const gk::FVector3d input[4] = { { { 0.0, 0.0, 0.0 } }, { { 0.0, 1.0, 0.0 } }, { { 0.0, 0.0, 0.0 } }, { { 0.0, 1.0, 0.0 } } };
+    const gk::FVector3d witnessValues[4] = { { { 0.0, 0.0, 0.0 } }, { { 1.0, 0.0, 0.0 } }, { { 0.0, 0.0, 0.0 } }, { { 0.0, 1.0, 0.0 } } };
+    gk::Array<gk::FVector3d> positions;
+    gk::Array<gk::FVector3d> witness;
+    if (!positions.Reserve(4u) || !witness.Reserve(4u))
+    {
+        return Fail("対称owner接触の位置を確保できません");
+    }
+    for (uint32_t index = 0; index < 4u; ++index)
+    {
+        if (!positions.Append(input[index]) || !witness.Append(witnessValues[index]))
+        {
+            return Fail("対称owner接触の位置を保存できません");
+        }
+    }
+    // solverを呼ぶ前に、独立した式と共通validatorで成立姿勢を確認する。
+    const gk::FVector3d witnessFirst = EvaluateCapturedFixtureAnchorPoint(anchors[0], chains, witness);
+    const gk::FVector3d witnessSecond = EvaluateCapturedFixtureAnchorPoint(anchors[1], chains, witness);
+    const gk::FVector3d witnessPoint = WeightedPosition(witnessFirst, witnessSecond, 0.5, 0.5);
+    const gk::FVector3d expectedPoint = { { -0.5, -0.5, 0.0 } };
+    if (Distance(witnessPoint, expectedPoint) > 1.0e-12 || !HasCapturedFixtureConstraints(chains, 2u, references, anchors, &contact, 1u, input, witness, error))
+    {
+        return Fail("片ownerを回した独立witnessが保存後制約を満たしません");
+    }
+    // 同じ回転では二offsetの和が常に0なので、ownerごとの探索が必要になる。
+    if (!ResolvePreparedSecondaryMotionWeightedContacts(chains, 2u, references, 2u, anchors, 2u, &contact, 1u, positions, error, 32u))
+    {
+        if (positions.Count() != 4u || memcmp(input, positions.Data(), sizeof(input)) != 0)
+        {
+            return Fail("対称owner接触の失敗が入力位置を書き換えました");
+        }
+        return Fail(error.Empty() ? "対称な2owner接触に成立姿勢があるのにsolverが解決できません" : error.CStr());
+    }
+    if (!HasCapturedFixtureConstraints(chains, 2u, references, anchors, &contact, 1u, input, positions, error))
+    {
+        return Fail("対称owner接触のsolver姿勢が保存後制約を満たしません");
+    }
+    return true;
+}
+
+/**
  * 最初のclear姿勢が、独立に確認した近い成立姿勢から離れ過ぎる場合を検出する。
  */
 bool TestWeightedFirstClearIsNotNearestClearCandidate()
@@ -1899,10 +1977,9 @@ bool TestWeightedFirstClearIsNotNearestClearCandidate()
         return Fail("最初のclear seedが近い成立姿勢を見落としました");
     return true;
 }
-
 }
 
 int main()
 {
-    return TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
+    return TestOpposedOffsetsEscapeSymmetricOwnerSeeds() && TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
 }

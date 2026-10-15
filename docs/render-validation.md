@@ -235,6 +235,8 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 
 `GKCORE_SKIN_SURFACE_RIG=1`では、同じ指定frameに`gkcore_model_skin_surface_rig`と鎖ごとの`gkcore_model_skin_surface_chain`を追加します。身体形状数と余白、bone ID、現在位置、現在の更新で保存した`previousTargets`、骨球半径、64bitの接触maskを保存します。仮想末端を含むfloat値をmodel空間のまま記録し、rootから最初の自由点までの到達範囲を身体形状と比較できます。`previousTargets`は保存後の基準目標で、純animationの別記録ではありません。全鎖の件数・親子関係・値を検査した後にまとめて出力し、不正な場合はrig行を出さず診断エラーを記録します。
 
+`GKCORE_SKIN_SURFACE_MATRICES=1`では、同じframeに身体形状ごとの`gkcore_model_skin_surface_collider_matrix`を追加します。形状番号・取付bone・局所端点と半径、余白、成功更新で保存したcolumn-majorの基準行列16値を記録します。これは揺れ補正前のbase姿勢で、instanceのSRTを含みません。任意方向の局所端点を実際の行列で変換し、snapshotの身体形状と照合できます。全形状を先に検査し、不正時は行列行を出さず診断エラーを記録します。既存rigの内容や通常のskin判定は変えません。
+
 身体面の解析では、三角形までの最短距離と近傍面の向き、辺の共有数と開口位置を併記します。面に開口がある場合や、変形で複数の面が重なる場合は、近傍面の法線や一方向のrayだけで内外を断定できません。身体の球・カプセルへの侵入数が0でも、実際の身体面との非貫通を示すものではありません。
 
 点位置は補正前のsparse skin、sphere位置は現在の描画FK、身体は直近Updateのshape snapshotです。頂点補正はOFFの状態で調べます。今回のloop frame81では30点が侵入し、最深は`Yumeka_Cos_Skirt`のposition31877/local28、UpperLeg_L capsuleへ深さ.03001297でした。Skirt_3_L.002/Skirt_4_L.002へ約68%/32%で、腰などのweightはありません。対応sphereからはそれぞれ.03696/.09170離れています。これは小球が実skin面を覆いきれないcaseで、骨の接触成立だけから布の非侵入を導けません。記録は`build/native-validation/secondary-skin-detail-frame81.json`です。

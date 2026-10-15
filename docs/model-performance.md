@@ -261,3 +261,9 @@ Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh�
 559球の通常製品DLL・可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じYUMEKAと2motion blend＋右腕IK・13鎖・8形状の600frame/warmup0も完走しました。17.046FPS、p95 66.921ms、secondary52.586ms、Draw0.451/Present5.014/IK0.548msです。CPU解析/buildと他GPU試験を止めた単独実行で、配置DLLはSDKのgkcore.dllとbyte一致（SHA256 2df678343d5392a52a108920e66651798090de7f614847674a2ab346ec56b32e）です。557球の17.690FPSからの速度改善とは扱わず、300FPSは未達です。記録はbuild/native-validation/garment-surface/product-559-realtime600.logです。
 
 固定3000frameの557→559比較では方向変化最大63.075→44.408度・45度超1→0件ですが、p99は12.649→12.856度、root相対変位最大52.915→74.151mmへ増えています。接触追加による全体品質向上とは断定しません。通常Updateの時間精度や、連続時間での非貫通も保証しません。新しい身体面の診断により、proxy侵入の減少と実身体面の改善を別々に確認できます。
+
+## 対称な接触を骨ごとに再探索する
+
+2026-10-16、通常探索が全て失敗した場合だけ、最大2鎖の必要な祖先を個別に傾ける探索を追加しました。最大3回・36追加候補で打ち切り、各候補の反復上限32と保存後の全接触検査を保ちます。公式559球・8身体形状・骨球0.038の構成は変えていません。固定1/60秒3000frameの全軌跡と、開始0/2.1秒・Debug/Release計480GPU frameの記録・画像は変更前と一致しました。実身体を覆う複数capsule候補の停止を解消した結果ではありません。
+
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、通常Release製品DLL・可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、YUMEKA＋Skinning Test/Swinging blend＋右腕IK・13鎖の単独600frame/warmup0は完走しました。17.714FPS、p95 67.624ms、secondary50.190ms、Draw0.568/Present5.090/IK0.538msです。CPU解析/buildや他GPU検査を同時実行せず、配置DLLとSDKのSHA256 b303f4ac1cf2e73263acc61b742ab715b373b1a3b11d171e68f44ab86b5da460の一致、capture DLLを参照しないことを確認しました。実時間の更新履歴が異なるため前回17.046FPSからの速度改善とは扱いません。300FPSは未達です。記録はbuild/native-validation/tapered-thigh/product-final-owner-realtime600.logです。
