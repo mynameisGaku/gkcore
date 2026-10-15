@@ -1196,6 +1196,259 @@ double PositionDisplacementSquared(const gk::Array<gk::FVector3d>& initialPositi
 }
 
 /**
+ * 一つのowner鎖の祖先segmentだけを30度傾け、他の方向は保存bitを保つ。入力不正・数値不正・確保失敗はerrorへ返す。
+ */
+bool MakeOwnerPrefixSeed(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& currentDirections, uint32_t ownerChain, uint32_t lastSegment, const gk::FVector3d& worldTangent, gk::Array<gk::FVector3d>& output, gk::String& error)
+{
+    if (ownerChain >= chainCount || lastSegment >= chains[ownerChain].segmentCount)
+    {
+        error.Assign("Secondary motion weighted owner seed range is invalid");
+        return false;
+    }
+    // 対向する接触勾配の相殺を抜けるため、合成勾配と独立な固定角を使う。
+    const double angle = 3.1415926535897932384626433832795 / 6.0;
+    output.Clear();
+    for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
+    {
+        const auto& chain = chains[chainIndex];
+        for (uint32_t segment = 0; segment < chain.segmentCount; ++segment)
+        {
+            const uint32_t index = chain.firstSegment + segment;
+            gk::FVector3d candidate = currentDirections.At(index);
+            if (chainIndex == ownerChain && segment <= lastSegment)
+            {
+                if (!Normalize(candidate))
+                {
+                    error.Assign("Secondary motion weighted owner seed direction is invalid");
+                    return false;
+                }
+                gk::FVector3d tangent = Subtract(worldTangent, Multiply(candidate, Dot(worldTangent, candidate)));
+                if (!Normalize(tangent) && !BuildPerpendicular(candidate, tangent))
+                {
+                    error.Assign("Secondary motion weighted owner seed tangent is invalid");
+                    return false;
+                }
+                candidate = Add(Multiply(candidate, cos(angle)), Multiply(tangent, sin(angle)));
+                if (!NormalizeAndLimitSecondaryMotionDirection(references[index].direction, chain.cosineLimit, candidate))
+                {
+                    error.Assign("Secondary motion weighted owner seed direction is invalid");
+                    return false;
+                }
+            }
+            if (!output.Append(candidate))
+            {
+                error.Assign("Secondary motion weighted owner seed allocation failed");
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+/**
+ * 最大weighted侵入点から合算weight上位2鎖と必要な祖先範囲を選ぶ。同率は鎖番号順とし、動的寄与がなければ0件を返す。
+ */
+bool SelectWorstContactOwners(const FSecondaryMotionWeightedContactAnchor* anchors, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<FWeightedAnchorEvaluation>& evaluations, uint32_t chainCount, uint32_t ownerIndices[2], uint32_t ownerLastSegments[2], uint32_t& ownerCount, gk::String& error)
+{
+    ownerCount = 0u;
+    uint32_t selectedContact = UINT32_MAX;
+    double maximumPenetration = 0.0;
+    for (uint32_t contactIndex = 0; contactIndex < contactCount; ++contactIndex)
+    {
+        const auto& contact = contacts[contactIndex];
+        gk::FVector3d center{};
+        for (uint32_t local = 0; local < contact.anchorCount; ++local)
+        {
+            const uint32_t index = contact.firstAnchor + local;
+            center = Add(center, Multiply(evaluations.At(index).position, anchors[index].weight));
+        }
+        for (uint32_t shapeIndex = 0; shapeIndex < contact.shapeCount; ++shapeIndex)
+        {
+            double penetration = 0.0;
+            double span = 0.0;
+            gk::FVector3d normal{};
+            if (!QueryPreparedSecondaryMotionFreeSegmentContact(contact.shapes[shapeIndex], center, center, penetration, span, normal, error, kWeightedContactToleranceFraction))
+            {
+                return false;
+            }
+            if (penetration > maximumPenetration)
+            {
+                maximumPenetration = penetration;
+                selectedContact = contactIndex;
+            }
+        }
+    }
+    if (selectedContact == UINT32_MAX)
+    {
+        return true;
+    }
+    // 既存の鎖数上限に収まる局所集計。接触点が使う動的寄与だけを加える。
+    double ownerWeights[1024] = {};
+    uint32_t lastSegments[1024] = {};
+    const auto& contact = contacts[selectedContact];
+    for (uint32_t local = 0; local < contact.anchorCount; ++local)
+    {
+        const auto& anchor = anchors[contact.firstAnchor + local];
+        if (anchor.chainIndex == UINT32_MAX)
+        {
+            continue;
+        }
+        ownerWeights[anchor.chainIndex] += anchor.weight;
+        if (!isfinite(ownerWeights[anchor.chainIndex]))
+        {
+            error.Assign("Secondary motion weighted owner weight is outside the numeric range");
+            return false;
+        }
+        if (anchor.segmentIndex > lastSegments[anchor.chainIndex])
+        {
+            lastSegments[anchor.chainIndex] = anchor.segmentIndex;
+        }
+    }
+    for (uint32_t rank = 0; rank < 2u; ++rank)
+    {
+        uint32_t selectedOwner = UINT32_MAX;
+        double selectedWeight = 0.0;
+        for (uint32_t chainIndex = 0; chainIndex < chainCount; ++chainIndex)
+        {
+            if ((ownerCount == 0u || chainIndex != ownerIndices[0]) && ownerWeights[chainIndex] > selectedWeight)
+            {
+                selectedOwner = chainIndex;
+                selectedWeight = ownerWeights[chainIndex];
+            }
+        }
+        if (selectedOwner == UINT32_MAX)
+        {
+            break;
+        }
+        ownerIndices[ownerCount] = selectedOwner;
+        ownerLastSegments[ownerCount] = lastSegments[selectedOwner];
+        ++ownerCount;
+    }
+    return true;
+}
+
+/**
+ * 通常探索の失敗後に、owner個別の祖先方向を最大3回・36候補だけ試す。全保存条件を満たす位置だけを候補へ保存する。
+ */
+bool RefineOwnerPrefixFallback(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, uint32_t referenceCount, const gk::Array<gk::FVector3d>& roots, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, uint32_t maximumIterations, const gk::Array<gk::FVector3d>& initialDirections, const gk::Array<gk::FVector3d>& closestAttemptDirections, const gk::Array<gk::FVector3d>& closestCoupledDirections, const gk::Array<gk::FVector3d>& initialPositions, gk::Array<gk::FVector3d>& bestPositions, double& bestDisplacementSquared, bool& foundClear, gk::String& error)
+{
+    // 余白の有無が異なるmeritは比較せず、利用できる候補の優先順位だけを使う。
+    const gk::Array<gk::FVector3d>* baseSource = &initialDirections;
+    if (referenceCount > 0u && closestCoupledDirections.Count() == referenceCount)
+    {
+        baseSource = &closestCoupledDirections;
+    }
+    else if (referenceCount > 0u && closestAttemptDirections.Count() == referenceCount)
+    {
+        baseSource = &closestAttemptDirections;
+    }
+    gk::Array<gk::FVector3d> baseDirections;
+    if (!baseDirections.AppendRange(baseSource->Data(), baseSource->Count()))
+    {
+        error.Assign("Secondary motion weighted owner base allocation failed");
+        return false;
+    }
+    // 各ownerを別々に動かし、同じ回転で相殺し続けるweighted offsetを分離する。
+    const gk::FVector3d worldTangents[6] = { { { 1.0, 0.0, 0.0 } }, { { -1.0, 0.0, 0.0 } }, { { 0.0, 1.0, 0.0 } }, { { 0.0, -1.0, 0.0 } }, { { 0.0, 0.0, 1.0 } }, { { 0.0, 0.0, -1.0 } } };
+    for (uint32_t round = 0; round < 3u; ++round)
+    {
+        gk::Array<gk::FVector3d> basePositions;
+        gk::Array<gk::FVector3d> baseGradients;
+        gk::Array<FWeightedAnchorEvaluation> baseAnchors;
+        double baseMerit = 0.0;
+        if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, baseDirections, basePositions, baseMerit, baseGradients, baseAnchors, error, nullptr, true))
+        {
+            return false;
+        }
+        if (baseMerit == DBL_MAX)
+        {
+            break;
+        }
+        uint32_t ownerIndices[2] = {};
+        uint32_t ownerLastSegments[2] = {};
+        uint32_t ownerCount = 0u;
+        if (!SelectWorstContactOwners(anchors, contacts, contactCount, baseAnchors, chainCount, ownerIndices, ownerLastSegments, ownerCount, error))
+        {
+            return false;
+        }
+        gk::Array<gk::FVector3d> roundBestDirections;
+        double roundBestMerit = baseMerit;
+        for (uint32_t owner = 0; owner < ownerCount; ++owner)
+        {
+            for (uint32_t axis = 0; axis < 6u; ++axis)
+            {
+                gk::Array<gk::FVector3d> trialDirections;
+                gk::Array<gk::FVector3d> trialPositions;
+                gk::Array<gk::FVector3d> trialGradients;
+                gk::Array<FWeightedAnchorEvaluation> trialAnchors;
+                if (!MakeOwnerPrefixSeed(chains, chainCount, references, baseDirections, ownerIndices[owner], ownerLastSegments[owner], worldTangents[axis], trialDirections, error))
+                {
+                    return false;
+                }
+                double trialMerit = 0.0;
+                if (!EvaluateDirections(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialMerit, trialGradients, trialAnchors, error))
+                {
+                    return false;
+                }
+                bool clear = false;
+                bool progressed = false;
+                if (!RefineCoupledSeed(chains, chainCount, references, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, trialDirections, trialPositions, trialGradients, trialMerit, clear, trialAnchors, progressed, error))
+                {
+                    return false;
+                }
+                bool preservedClearance = false;
+                if (clear && !ContractClearCandidate(chains, chainCount, references, roots, initialDirections, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialGradients, trialAnchors, preservedClearance, error))
+                {
+                    return false;
+                }
+                bool storedClear = false;
+                if (!IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, trialPositions, storedClear, error))
+                {
+                    return false;
+                }
+                // 同じ余白込み評価の厳密な改善だけを次のroundへ引き継ぐ。
+                if (isfinite(trialMerit) && trialMerit >= 0.0 && trialMerit < roundBestMerit)
+                {
+                    roundBestDirections.Clear();
+                    if (!roundBestDirections.AppendRange(trialDirections.Data(), trialDirections.Count()))
+                    {
+                        error.Assign("Secondary motion weighted owner handoff allocation failed");
+                        return false;
+                    }
+                    roundBestMerit = trialMerit;
+                }
+                if (clear && preservedClearance && storedClear)
+                {
+                    const double displacement = PositionDisplacementSquared(initialPositions, trialPositions);
+                    if (!isfinite(displacement))
+                    {
+                        error.Assign("Secondary motion weighted candidate displacement is invalid");
+                        return false;
+                    }
+                    if (displacement < bestDisplacementSquared)
+                    {
+                        bestPositions.Clear();
+                        if (!bestPositions.AppendRange(trialPositions.Data(), trialPositions.Count()))
+                        {
+                            error.Assign("Secondary motion weighted result allocation failed");
+                            return false;
+                        }
+                        bestDisplacementSquared = displacement;
+                    }
+                    foundClear = true;
+                }
+            }
+        }
+        if (foundClear || roundBestDirections.Count() != referenceCount || ownerCount == 0u)
+        {
+            break;
+        }
+        baseDirections.MoveFrom(roundBestDirections);
+    }
+    return true;
+}
+
+/**
  * 初期侵入に関わる鎖だけを追加seedの対象として記録する。
  */
 bool BuildTargetContactChains(const FSecondaryMotionWeightedContactAnchor* anchors, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<FWeightedAnchorEvaluation>& anchorEvaluations, uint32_t chainCount, bool* targetChains, gk::String& error)
@@ -1758,6 +2011,10 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
         {
             break;
         }
+    }
+    if (!foundClear && !RefineOwnerPrefixFallback(chains, chainCount, references, referenceCount, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, directions, closestAttemptDirections, closestCoupledDirections, positions, bestPositions, bestDisplacementSquared, foundClear, error))
+    {
+        return false;
     }
     if (!foundClear)
     {
