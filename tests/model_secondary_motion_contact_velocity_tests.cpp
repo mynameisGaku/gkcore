@@ -450,9 +450,95 @@ bool TestLongChainTipContactAndEveryLengthConstraint()
     }
     return true;
 }
+
+/**
+ * 斜め骨の接線速度で、double解の成立とfloat保存だけで生じる残差を独立式で分けて検査する。
+ */
+bool TestDiagonalTangentAcceptsOnlyMeasuredCastError()
+{
+    Array<FSecondaryMotionContactChain> chains;
+    Array<FSecondaryMotionReferenceSegment> current;
+    Array<FSecondaryMotionReferenceSegment> previous;
+    Array<uint64_t> masks;
+    Array<FVector3d> positions;
+    Array<Vec3> velocities;
+    String error;
+    // 3:4の骨へ十分に大きい速度を与え、float丸めの残差を固定許容幅より大きくする。
+    const FVector3d direction{ { 0.6, 0.8, 0.0 } };
+    const Vec3 input{ 123.456f, -95.123f, 17.1f };
+    if (!AppendSingleSegment(chains, current, previous, masks, direction, 1.0, direction, 1.0, -1.0) || !positions.Append({ { 0.0, 0.0, 0.0 } }) || !positions.Append(direction) || !velocities.Append({}) || !velocities.Append(input))
+    {
+        return Fail("diagonal tangent fixture setup failed");
+    }
+    // 骨長速度0の直交射影をsolverとは独立に求め、double解とfloat変換の誤差上界を計算する。
+    const double radial = direction.value[0] * input.x + direction.value[1] * input.y;
+    const double expected[3] = { input.x - direction.value[0] * radial, input.y - direction.value[1] * radial, input.z };
+    const float rounded[3] = { static_cast<float>(expected[0]), static_cast<float>(expected[1]), static_cast<float>(expected[2]) };
+    const double doubleResidual = direction.value[0] * expected[0] + direction.value[1] * expected[1];
+    const double storedResidual = direction.value[0] * rounded[0] + direction.value[1] * rounded[1];
+    const double castBound = fabs(direction.value[0]) * fabs(rounded[0] - expected[0]) + fabs(direction.value[1]) * fabs(rounded[1] - expected[1]);
+    if (fabs(doubleResidual) > 1.0e-7 || fabs(storedResidual) <= 1.0e-7 || fabs(storedResidual) > 1.0e-7 + castBound)
+    {
+        return Fail("diagonal tangent fixture does not isolate a float-only constraint residual");
+    }
+    const ESecondaryMotionContactVelocityResult result = ProjectSecondaryMotionContactVelocities(chains, current, previous, masks, {}, {}, {}, {}, {}, nullptr, 0u, 0.1, positions, velocities, error);
+    if (result != ESecondaryMotionContactVelocityResult::Applied || !error.Empty() || velocities.At(0).x != 0.0f || velocities.At(0).y != 0.0f || velocities.At(0).z != 0.0f || velocities.At(1).x != rounded[0] || velocities.At(1).y != rounded[1] || velocities.At(1).z != rounded[2])
+    {
+        fprintf(stderr, "diagonal tangent result=%u doubleResidual=%.17g storedResidual=%.17g castBound=%.17g error=%s\n", static_cast<unsigned>(result), doubleResidual, storedResidual, castBound, error.CStr());
+        return Fail("a valid diagonal tangent velocity was rejected solely by its measured float cast error");
+    }
+    fprintf(stdout, "diagonal tangent doubleResidual=%.17g storedResidual=%.17g castBound=%.17g\n", doubleResidual, storedResidual, castBound);
+    return true;
+}
+
+/**
+ * 自由点に相反する面速度を要求し、double段階の不成立を保存丸めの許容で隠さないことを確かめる。
+ */
+bool TestIncompatibleMovingSurfacesRejectDoubleResidualAtomically(bool diagonal)
+{
+    Array<FSecondaryMotionContactChain> chains;
+    Array<FSecondaryMotionReferenceSegment> current;
+    Array<FSecondaryMotionReferenceSegment> previous;
+    Array<uint64_t> masks;
+    Array<FVector3d> positions;
+    Array<Vec3> velocities;
+    Array<FModelSecondaryMotionCollisionShape> oldShapes;
+    Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    String error;
+    const FVector3d direction{ { 1.0, 0.0, 0.0 } };
+    // 斜めの面では大きい接線速度も与え、cast許容量より小さい真のdouble残差を許さない。
+    const float y = diagonal ? 0.6f : 1.0f;
+    const float z = diagonal ? 0.8f : 0.0f;
+    const float oldY = diagonal ? nextafterf(y, INFINITY) : 1.1f;
+    const float oldZ = diagonal ? nextafterf(z, INFINITY) : 0.0f;
+    const FModelSecondaryMotionCollisionShape shapes[2] = { { { 1.0f, y, z }, { 1.0f, y, z }, 1.0f }, { { 1.0f, -y, -z }, { 1.0f, -y, -z }, 1.0f } };
+    const FModelSecondaryMotionCollisionShape old[2] = { { { 1.0f, oldY, oldZ }, { 1.0f, oldY, oldZ }, 1.0f }, { { 1.0f, -oldY, -oldZ }, { 1.0f, -oldY, -oldZ }, 1.0f } };
+    const Vec3 input = diagonal ? Vec3{ 0.0f, 12345678.0f, 4567890.0f } : Vec3{ 0.0f, 0.0f, 12345.678f };
+    // 両不等式の和は負で固定され、どのdouble速度でも少なくともこの幅を違反する。
+    const double normalLength = sqrt(static_cast<double>(y) * y + static_cast<double>(z) * z);
+    const double minimumViolation = (y * (static_cast<double>(oldY) - y) + z * (static_cast<double>(oldZ) - z)) / (normalLength * 0.1);
+    if (!(minimumViolation > 1.0e-7))
+    {
+        return Fail("incompatible moving-surface fixture does not exceed the double constraint tolerance");
+    }
+    if (!AppendSingleSegment(chains, current, previous, masks, direction, 1.0, direction, 1.0, -1.0) || !positions.Append({}) || !positions.Append(direction) || !velocities.Append({}) || !velocities.Append(input) || !oldShapes.AppendRange(old, 2u) || !PrepareSecondaryMotionFreeSegmentShapes(shapes, 2u, 0.0f, prepared, error))
+    {
+        return Fail("incompatible moving-surface fixture setup failed");
+    }
+    chains.At(0u).shapes = prepared.Data();
+    chains.At(0u).shapeCount = 2u;
+    masks.At(0u) = 3u;
+    const ESecondaryMotionContactVelocityResult result = ProjectSecondaryMotionContactVelocities(chains, current, previous, masks, {}, {}, {}, {}, oldShapes, shapes, 2u, 0.1, positions, velocities, error);
+    if (result != ESecondaryMotionContactVelocityResult::Unresolved || !error.Empty() || velocities.Count() != 2u || velocities.At(0u).x != 0.0f || velocities.At(0u).y != 0.0f || velocities.At(0u).z != 0.0f || velocities.At(1u).x != input.x || velocities.At(1u).y != input.y || velocities.At(1u).z != input.z)
+    {
+        fprintf(stderr, "incompatible moving surfaces diagonal=%u result=%u minimumDoubleViolation=%.17g\n", diagonal ? 1u : 0u, static_cast<unsigned>(result), minimumViolation);
+        return Fail("a genuinely incompatible double velocity constraint was accepted or changed stored velocities");
+    }
+    return true;
+}
 }
 
 int main()
 {
-    return TestMovingSphereAndLengthKeepTangentVelocity() && TestStraightChainTracksAllReferenceVelocityAxes() && TestActiveBendBoundaryTracksMovingReference() && TestWeightedAnchorMotionIsAppliedOncePerWeight() && TestSameBoneAttachmentMotionMovesContactBoundary() && TestLongChainTipContactAndEveryLengthConstraint() && TestFixedOnlyImpossibleContactFailsQuietlyAndAtomically() && TestNumericAndAllocationFailuresAreAtomic() ? 0 : 1;
+    return TestMovingSphereAndLengthKeepTangentVelocity() && TestStraightChainTracksAllReferenceVelocityAxes() && TestActiveBendBoundaryTracksMovingReference() && TestWeightedAnchorMotionIsAppliedOncePerWeight() && TestSameBoneAttachmentMotionMovesContactBoundary() && TestLongChainTipContactAndEveryLengthConstraint() && TestFixedOnlyImpossibleContactFailsQuietlyAndAtomically() && TestNumericAndAllocationFailuresAreAtomic() && TestIncompatibleMovingSurfacesRejectDoubleResidualAtomically(false) && TestIncompatibleMovingSurfacesRejectDoubleResidualAtomically(true) && TestDiagonalTangentAcceptsOnlyMeasuredCastError() ? 0 : 1;
 }

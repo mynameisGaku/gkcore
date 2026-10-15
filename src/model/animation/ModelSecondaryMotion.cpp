@@ -17,6 +17,7 @@
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionLinks.h"
 #include "model/animation/ModelSecondaryMotionContactPoints.h"
+#include "model/animation/ModelSecondaryMotionStep.h"
 #include <string.h>
 
 #if defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE)
@@ -156,23 +157,7 @@ bool Commit(detail::ModelTransform& transform, model::FModelSecondaryMotionState
         error.Assign("secondary motion owner allocation failed");
         return false;
     }
-    state->chains.MoveFrom(candidate.chains);
-    state->colliders.MoveFrom(candidate.colliders);
-    state->links.MoveFrom(candidate.links);
-    state->distanceConstraints.MoveFrom(candidate.distanceConstraints);
-    state->contactLinks.MoveFrom(candidate.contactLinks);
-    state->contactPoints.MoveFrom(candidate.contactPoints);
-    state->contactAnchors.MoveFrom(candidate.contactAnchors);
-    state->distanceLambdas.MoveFrom(candidate.distanceLambdas);
-    state->distanceStepSeconds = candidate.distanceStepSeconds;
-    state->linkIterations = candidate.linkIterations;
-    state->previousCollisionShapes.MoveFrom(candidate.previousCollisionShapes);
-    state->previousBaseMatrices.MoveFrom(candidate.previousBaseMatrices);
-    state->velocityHistoryValid = candidate.velocityHistoryValid;
-    state->colliderMargin = candidate.colliderMargin;
-    state->skinPointContactsEnabled = candidate.skinPointContactsEnabled;
-    state->skinContactPositionIds.MoveFrom(candidate.skinContactPositionIds);
-    state->skinContactGeometry = candidate.skinContactGeometry;
+    state->MoveFrom(candidate);
     delete playback->secondaryMotion;
     playback->secondaryMotion = state;
     transform.playback = playback;
@@ -353,7 +338,27 @@ int Update(ModelHandle handle, double delta, bool reset)
     model::FModelSecondaryMotionState candidate;
     // 全鎖で同じ身体姿勢を使い、途中の揺れを身体の位置へ戻さない。
     Array<model::animation::FModelSecondaryMotionCollisionShape> currentShapes;
-    if (!CopyCollisionSettings(previous, candidate, error) || !model::EvaluateSecondaryMotionColliders(resource->animation->source->Skeleton(), base, matrices, previous->colliders.Data(), previous->colliders.Count(), previous->colliderMargin, currentShapes, error) || previous->previousCollisionShapes.Count() != currentShapes.Count())
+    if (!model::EvaluateSecondaryMotionColliders(resource->animation->source->Skeleton(), base, matrices, previous->colliders.Data(), previous->colliders.Count(), previous->colliderMargin, currentShapes, error) || previous->previousCollisionShapes.Count() != currentShapes.Count())
+    {
+        return Failure(error);
+    }
+    // 衣服接触も鎖と同じ時刻で解く。resetと大きな移動の判定は分割前に行う。
+    uint32_t sharedStepCount = 1u;
+    if (!reset && previous->contactPoints.Count() > 0u && currentShapes.Count() > 0u && !model::GetSecondaryMotionWeightedStepCount(*previous, matrices, delta, sharedStepCount, error))
+    {
+        return Failure(error);
+    }
+    const bool sharedWeightedSteps = sharedStepCount > 1u;
+    // 1区間だけの場合も同じ予測方式を使い、呼び出し回数で速度計算を変えない。
+    const bool weightedSingleStep = !reset && !sharedWeightedSteps && previous->contactPoints.Count() > 0u && currentShapes.Count() > 0u && previous->velocityHistoryValid && delta > 0.0 && delta <= (1.0 / 120.0) * (1.0 + 1.0e-12);
+    if (sharedWeightedSteps)
+    {
+        if (!model::AdvanceSecondaryMotionWeightedSteps(*previous, resource->animation->source->Skeleton(), base, matrices, currentShapes, delta, sharedStepCount, candidate, error))
+        {
+            return Failure(error);
+        }
+    }
+    else if (!CopyCollisionSettings(previous, candidate, error))
     {
         return Failure(error);
     }
@@ -386,7 +391,7 @@ int Update(ModelHandle handle, double delta, bool reset)
         profile = false;
     }
 #endif
-    for (uint32_t index = 0; index < previous->chains.Count(); ++index)
+    for (uint32_t index = 0; !sharedWeightedSteps && index < previous->chains.Count(); ++index)
     {
         if (!AppendChain(candidate, CloneChain(previous->chains.At(index), error), error))
         {
@@ -413,7 +418,7 @@ int Update(ModelHandle handle, double delta, bool reset)
             if (candidate.contactPoints.Count() > 0u && currentShapes.Count() > 0u)
             {
                 // 重み付き接触は全鎖solverが一括所有し、個別の押し出しを予測へ混ぜない。
-                advanced = model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
+                advanced = weightedSingleStep ? model::animation::StepSecondaryMotionChainSingleStep(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error) : model::animation::StepSecondaryMotionChain(targets.Data(), targets.Count(), chain.settings, delta, chain.simulation, error);
             }
             else if (currentShapes.Count() > 0 && chain.colliderMask != UINT64_MAX)
             {
@@ -462,7 +467,7 @@ int Update(ModelHandle handle, double delta, bool reset)
     if (!reset && (((candidate.links.Count() > 0 || candidate.contactLinks.Count() > 0 || candidate.contactPoints.Count() > 0) && currentShapes.Count() > 0) || candidate.distanceConstraints.Count() > 0))
     {
         // 全鎖の候補を解いてから接続を押し出し、描画へ使う点列を更新する。
-        const bool contactsConstrained = candidate.contactPoints.Count() > 0 ? model::ConstrainSecondaryMotionContactPoints(candidate, *previous, resource->animation->source->Skeleton(), matrices, currentShapes.Data(), currentShapes.Count(), delta, error) : model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error, &matrices);
+        const bool contactsConstrained = sharedWeightedSteps || (candidate.contactPoints.Count() > 0 ? model::ConstrainSecondaryMotionContactPoints(candidate, *previous, resource->animation->source->Skeleton(), matrices, currentShapes.Data(), currentShapes.Count(), delta, error, weightedSingleStep) : model::ConstrainSecondaryMotionLinks(candidate, *previous, currentShapes.Data(), currentShapes.Count(), delta, error, &matrices));
         if (!contactsConstrained)
         {
             return Failure(error);
@@ -605,6 +610,9 @@ int Update(ModelHandle handle, double delta, bool reset)
     {
         return Failure(error);
     }
+    // IKまで適用した局所姿勢を所有し、次回は行列の成分を直接補間しない。
+    candidate.previousBasePose.localTransforms.MoveFrom(base.localTransforms);
+    candidate.previousBasePose.morphWeights.MoveFrom(base.morphWeights);
     if (!Commit(*transform, candidate, error))
     {
         delete poseCache;

@@ -43,6 +43,11 @@
  */
 bool RunSecondaryMotionPreviewContracts();
 
+/**
+ * 合成骨格でweighted接触の共通時間分割を確認する。
+ */
+bool RunSecondaryMotionSubstepContracts();
+
 namespace
 {
 
@@ -4386,7 +4391,7 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
         }
         return independent;
     };
-    const bool largeDeltaSkipped = MatchesColdSolve(0.25, "delta threshold", false);
+    // 長時間更新の方向再試行と速度のresetは、独立した狭い可行領域の契約で検査する。
     candidate.chains.At(0)->settings.teleportDistance = 0.1f;
     candidate.chains.At(1)->settings.teleportDistance = 0.1f;
     const bool teleportSkipped = MatchesColdSolve(0.0, "teleport threshold", true);
@@ -4398,7 +4403,7 @@ static bool TestWeightedContactWarmStartUsesCurrentRootAndLengths()
     error.Clear();
     const bool topologyRejected = !gk::model::ConstrainSecondaryMotionContactPoints(candidate, previous, skeleton, baseMatrices, &body, 1, 0.0, error) && !error.Empty() && candidate.chains.At(0)->simulation.points.At(1).position.x == beforePrimary[1].position.x && candidate.chains.At(0)->simulation.points.At(1).position.y == beforePrimary[1].position.y && candidate.chains.At(0)->simulation.points.At(1).position.z == beforePrimary[1].position.z;
     previous.chains.At(0)->bones.At(1) = savedPreviousBone;
-    return staticVelocityClear && predictorPreserved && largeDeltaSkipped && teleportSkipped && topologyRejected;
+    return staticVelocityClear && predictorPreserved && teleportSkipped && topologyRejected;
 }
 
 /**
@@ -5090,5 +5095,5 @@ static bool TestSecondaryMotionLinkFkRoundTripToleranceBoundary()
 
 int main()
 {
-    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactVelocityClearsActiveSpheres() && TestWeightedContactPrefersPhysicalPrediction() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
+    return TestBlendThenIkSnapshot() && RunSecondaryMotionPreviewContracts() && RunSecondaryMotionSubstepContracts() && TestSecondaryMotionLinkPreparationBudget() && TestSecondaryMotionLinkConstraintOnlyChangedChains() && TestSecondaryMotionContactLinkOutgoingBoneFk() && TestSingleOffsetAncestorFallback() && TestSecondaryMotionContactLinkApiLifecycle() && TestSecondaryMotionWeightedContactPointApiLifecycle() && TestWeightedContactVelocityClearsActiveSpheres() && TestWeightedContactPrefersPhysicalPrediction() && TestWeightedContactWarmStartUsesCurrentRootAndLengths() && TestSecondaryMotionLinkLocalStallFeasiblePose() && TestSecondaryMotionLinkFkRoundTripToleranceBoundary() ? 0 : 1;
 }

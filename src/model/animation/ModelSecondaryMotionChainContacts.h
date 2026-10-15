@@ -29,6 +29,7 @@ bool ResolvePreparedSecondaryMotionChainContacts(const FPreparedSecondaryMotionC
 
 /**
  * 既存の鎖身体接触・bone-local接触のmeritと方向勾配を、全身solver向けの配列範囲で評価する。linearSystem指定時はfirstSegmentから接触行も集める。
+ * directionGradients=nullptrとgradientCount=0を指定すると位置とmeritだけを評価する。この場合linearSystemは指定できない。
  */
 bool EvaluatePreparedSecondaryMotionChainContactsMerit(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* directionGradients, uint32_t gradientCount, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem = nullptr, uint32_t firstSegment = 0, bool useClearanceMargin = false);
 }

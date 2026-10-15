@@ -211,9 +211,9 @@ bool AttachmentMotionVelocity(const FModelSecondaryMotionChain& previousChain, u
 {
     defined = false;
     animation::FSecondaryMotionAttachmentDefinition previousDefinition{};
-    animation::FSecondaryMotionAttachmentEvaluation currentEvaluation{};
-    animation::FSecondaryMotionAttachmentEvaluation previousEvaluation{};
-    if (!BuildAttachmentDefinition(previousChain, segment, bone, offset, previousMatrices, previousDefinition, error) || !animation::EvaluateSecondaryMotionAttachment(currentDefinition, parent, child, currentEvaluation, error))
+    FVector3d currentPosition{};
+    FVector3d previousPosition{};
+    if (!BuildAttachmentDefinition(previousChain, segment, bone, offset, previousMatrices, previousDefinition, error) || !animation::EvaluateSecondaryMotionAttachmentPosition(currentDefinition, parent, child, currentPosition, error))
     {
         return false;
     }
@@ -226,11 +226,11 @@ bool AttachmentMotionVelocity(const FModelSecondaryMotionChain& previousChain, u
         error.Clear();
         return true;
     }
-    if (!animation::EvaluateSecondaryMotionAttachment(previousDefinition, parent, child, previousEvaluation, error))
+    if (!animation::EvaluateSecondaryMotionAttachmentPosition(previousDefinition, parent, child, previousPosition, error))
     {
         return false;
     }
-    const FVector3d motion = Multiply(Subtract(currentEvaluation.position, previousEvaluation.position), 1.0 / delta);
+    const FVector3d motion = Multiply(Subtract(currentPosition, previousPosition), 1.0 / delta);
     if (!IsFinite(motion))
     {
         error.Assign("secondary weighted contact attachment motion is invalid");
@@ -514,13 +514,7 @@ bool EvaluateAnchor(const animation::FSecondaryMotionWeightedContactAnchor& anch
     }
     const FVector3d& parent = positions[chain.firstPoint + anchor.segmentIndex];
     const FVector3d& child = positions[chain.firstPoint + anchor.segmentIndex + 1u];
-    animation::FSecondaryMotionAttachmentEvaluation evaluation{};
-    if (!animation::EvaluateSecondaryMotionAttachment(anchor.definition, parent, child, evaluation, error))
-    {
-        return false;
-    }
-    output = evaluation.position;
-    return true;
+    return animation::EvaluateSecondaryMotionAttachmentPosition(anchor.definition, parent, child, output, error);
 }
 
 /**
@@ -689,7 +683,7 @@ bool ValidateSecondaryMotionContactPoints(const FModelSecondaryMotionState& stat
     return ValidateChains(state, skeleton, error);
 }
 
-bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSkeleton& skeleton, const Array<float>& baseMatrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error)
+bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSkeleton& skeleton, const Array<float>& baseMatrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error, bool usePredictedPositions)
 {
     error.Clear();
     if (!ValidateSecondaryMotionContactPoints(candidate, skeleton, error))
@@ -1069,7 +1063,7 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     Array<FVector3d> warmStart;
     bool eligible = false;
     bool solved = false;
-    if (delta > 0.0 && !BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, delta, warmStart, eligible, error))
+    if (!usePredictedPositions && delta > 0.0 && !BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, delta, warmStart, eligible, error))
     {
         return false;
     }
@@ -1089,9 +1083,10 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
     {
         solved = animation::ResolvePreparedSecondaryMotionWeightedContacts(chains.Data(), chains.Count(), references.Data(), references.Count(), anchors.Data(), anchors.Count(), contacts.Data(), contacts.Count(), positions, error, candidate.linkIterations);
     }
-    if (!solved && error.Empty() && delta == 0.0)
+    if (!solved && error.Empty() && (delta == 0.0 || delta >= 0.25))
     {
-        if (!BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, delta, warmStart, eligible, error))
+        // 長時間resetの再試行も現在rootと骨長へ前回の方向だけを写し、旧速度は予測に使わない。
+        if (!BuildPreviousDirectionSeed(candidate, previous, beforePositions, chains, references, 0.0, warmStart, eligible, error))
         {
             return false;
         }
@@ -1198,9 +1193,9 @@ bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate
         }
         const auto& chainDescriptor = chains.At(ownerChain);
         const uint32_t parentIndex = chainDescriptor.firstPoint + attachment.segmentIndex;
-        animation::FSecondaryMotionAttachmentEvaluation firstEvaluation{};
-        animation::FSecondaryMotionAttachmentEvaluation secondEvaluation{};
-        if (!animation::EvaluateSecondaryMotionAttachment(attachment.firstDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), firstEvaluation, error) || !animation::EvaluateSecondaryMotionAttachment(attachment.secondDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), secondEvaluation, error) || !animation::CheckPreparedSecondaryMotionFreeSegmentContacts(attachment.shapes, attachment.shapeCount, firstEvaluation.position, secondEvaluation.position, error, 0.5))
+        FVector3d firstPosition{};
+        FVector3d secondPosition{};
+        if (!animation::EvaluateSecondaryMotionAttachmentPosition(attachment.firstDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), firstPosition, error) || !animation::EvaluateSecondaryMotionAttachmentPosition(attachment.secondDefinition, storedDoublePositions.At(parentIndex), storedDoublePositions.At(parentIndex + 1u), secondPosition, error) || !animation::CheckPreparedSecondaryMotionFreeSegmentContacts(attachment.shapes, attachment.shapeCount, firstPosition, secondPosition, error, 0.5))
         {
             return false;
         }

@@ -1822,8 +1822,57 @@ Windows11Pro build26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK
 
 最終CPU検証はMSVC19.51/SDK10.0.28000.0でDebug/Release各67/67成功、全体実行時間32.76/10.08秒です。コマンドは`ctest --test-dir build/dev-windows -C Debug --output-on-failure`とRelease指定です。実GPUの再実行は`build/native-validation/contact-velocity-enum-captures.ps1 -Configuration Debug -MotionSet skinning -SkinningPreset -WeightedConfig samples/config/yumeka-skinning-contact-points.txt -StartSeconds 2.1 -Frames 2 -DetailFrame 1`とRelease指定です。すべてのGPU試験を逐次実行し、windowは非表示にしました。
 
-通常Releaseの単独実時間600frame/warmup0、1280×720、VSyncなし・標準効果・debug表示OFFは完走し、19.550FPS、p95 55.261ms、Draw0.592/Present6.605/IK0.730/secondary43.144msでした。前の26.175FPSより遅く、速度改善ではありません。300FPSは未達です。この計測はenum化前の同じ計算方式であり、最終enumバイナリの再計測ではありません。51度の急変と上着の食い込みも残るため、揺れもの全体の完成とは扱いません。次は身体・鎖・重み付き接触を同じ時間分割で解き、frame末尾の大きな補正を減らす方式を検討します。
+capture用Releaseの単独実時間600frame/warmup0、1280×720、VSyncなし・標準効果・debug表示OFFは完走し、19.550FPS、p95 55.261ms、Draw0.592/Present6.605/IK0.730/secondary43.144msでした。前の26.175FPSより遅く、速度改善ではありません。300FPSは未達です。この計測はenum化前の同じ計算方式であり、最終enumバイナリの再計測ではありません。ログ冒頭の非表示windowはcapture DLLのものなので、通常windowを使う製品DLLの実測値とは区別します。51度の急変と上着の食い込みも残るため、揺れもの全体の完成とは扱いません。次は身体・鎖・重み付き接触を同じ時間分割で解き、frame末尾の大きな補正を減らす方式を検討します。
 
 ゲーム構築用checkoutへ388許可ファイルを反映し、全ファイルの一致とReleaseの5 example buildを確認しました。install SDK61ファイルの許可リスト、consumerへ配置した22 runtimeファイルのbyte一致を確認し、最終SDKを使ったInit・Scene/UI・Present・Shutdownは実GPUでexit0でした。tests・匿名fixture・調査器・私有asset・開発記録はゲーム構築用treeへ含めません。BOM/CRLF、formatter、noSTL、相対includeを確認し、別agentが成否の伝播、未収束時の速度保持、履歴guardの寿命を読み取り専用で確認しました。
 
 記録はbuild/native-validation/contact-nearby、contact-nearby-geometry、contact-velocity-gpu-*、contact-velocity-enum-gpu-*、contact-failure-nearby-velocity-*へ保存しています。使い終わった調査用buildの削除は前回の自動承認レビューに拒否されており、別手段での削除は行っていません。以前のcleanup planは再利用したprobeを含むためそのまま実行できず、整理は未完了です。
+
+
+## 衣服接触と鎖予測を共通の時刻で進める
+
+2026-10-15、ユーザーの変更指示に合わせ、子agentをgpt-6.1-sol/highへ切り替えました。共有更新の設計、独立した契約テスト、実モデルの幾何解析を分担し、rootが統合・実GPU検証を担当しました。
+
+従来は各鎖を内部で1/120秒以下に分割してから、衣服の重み付き接触をframe末尾で一度だけ解いていました。独立した5骨・2鎖のsourceを作り、直線移動する身体と2本の鎖へ同じ接触球を設定しました。1回の1/60秒更新と2回の1/120秒更新を比べると、旧6c316a8のobjectと隔離した同commitのheaderで、接触あり最大差0.0464822911、遠方の身体でも4.53144312e-5を検出してREDになりました。新処理は位置・速度・目標・身体形状・骨行列を2e-5以内で一致させています。
+
+IK適用後・揺れ適用前の局所TRSとmorphをinstanceが所有し、同じ始点と終点から各区間の姿勢を補間します。各時刻で骨行列・身体形状・全鎖予測・衣服接触・速度をまとめて更新し、直前区間の接触済み状態を次へ渡します。最後は元の今回姿勢を使い、描画FKと全接触の検査後に一度だけ公開状態をCommitします。前後2つの候補状態を再利用し、公開状態や描画cacheへ途中結果を出しません。0.25秒以上、rootのteleport、設定変更や失敗後の履歴切れは分割前に判定します。通常更新は最大30区間です。既存の接続線分・距離制約は変更していません。
+
+局所回転の補間には既存BlendModelPosesを使い、中間のIKを再計算しません。1/60秒でrootが120度回転する独立sourceで、半更新の子位置が60度の円弧上にあること、full/halvesの一致、固定root、実描画FKの骨長を検査しました。行列成分やworld座標の直線補間ではこの契約を満たせません。区間を丸めで二重分割しないSingleStep入口も追加し、nextafter(1/120,+∞)で参照計算数が増えないこと、長すぎる区間の拒否を確認しました。0.25秒の直前と等号、teleport距離の等号とfloat直上も別々に検査しています。
+
+確保を許す最小回数を有界探索し、その1回手前で失敗させる契約を追加しました。共有更新後半まで計算が進んでも、公開state、点列・目標・回転cache・局所pose履歴のpointerと内容、既存pose cache、公開bone位置を保持し、速度履歴flagだけを無効にします。描画cacheやCloneした状態と局所TRS/morphを共有していないことも検査します。注入対象はfoundationのAllocate/Reallocateであり、plain newによるowner確保の失敗まで注入したとは扱いません。
+
+最初の共有更新は固定1/60秒3000frameを完走し、線分方向変化のp99は15.811102→13.357011度、root相対移動p99は22.942065→19.563850mmへ下がりましたが、最大変化は51.385105→58.197806度へ悪化しました。45度超は双方1回、90度超は0回です。新最大はframe1575→1576のSkirt_2_R.002→Skirt_2_R.003で、長さ約35.98855mmは保たれています。典型値だけで完成とは判定せず、この構成をそのままmainへ昇格しませんでした。更新前traceは前回の揺れを含み得る供給姿勢であり、純animationとは解釈しません。
+
+SDKへ入れない計測用DLLで、真の基準姿勢、各区間の予測・接触後の位置と速度、速度補正の結果を分けて1600frameを記録しました。元の共有更新3000frameと同区間の描画bone traceが完全一致し、計測の追加で軌跡を変えていないことを確認しています。新最大の基準方向は1frameで約0.771555度だけ動き、二つの半区間の予測で約29.78/33.54度、接触補正で約2.47/3.00度動いていました。直前13区間で速度補正のUnresolvedが続いており、接触押し出し一発の58度とは区別できます。
+
+3198区間の理由計測では、Unresolved1784回はすべて保存後の残差検査で、そのうち1641回はdoubleの全条件を満たしてfloat保存だけで拒否、143回はdoubleでも未収束でした。ピーク直前にも両者があります。ばね5Hz・減衰0.8・重力(0,-1,0)を独立再計算すると、問題線分の相対速度はばね積分だけの0.511/0.959/1.345m/sに対し、骨長復元後に1.443/2.219/2.492m/sでした。位置の骨長復元を差分速度へ戻す処理と、丸めだけで有効な速度補正を捨てる処理を、別々の原因として修正します。
+
+SingleStepの最小契約は、静止する長さ1の骨の子へ接線速度(0,10,0)を与え、減衰後の予測速度を現在の骨方向の接線へ射影した独立解と比べます。旧処理は位置の差分から半径方向速度0.179877844を作ってRED、新処理は位置・固定root・骨長と予測接線速度を保ってGREENになりました。共有更新の予測だけを変更し、既存の一般StepSecondaryMotionChainの振る舞いは保持しています。1区間だけの重み付き更新も同じ予測方式へ揃えています。
+
+float保存の最小契約は、方向(0.6,0.8,0)の骨と速度(123.456f,-95.123f,17.1f)です。独立した直交射影のdouble残差は0、float保存残差は3.0517578011313162e-6、実変換誤差の行ごとの上界は3.0517578153421709e-6で、旧処理は丸めだけでUnresolvedとなりREDでした。修正後は元のdouble解を全行1e-7で先に検査し、成立した候補のfloat保存だけ、各係数の絶対値と実際の変換差から許容する幅を計算します。同時に成立しない二つの動く面を使い、double残差8.34465028276554e-7が残る候補を拒否する契約も追加しました。double検査を外すと誤ってAppliedになってREDとなることを確認し、検査を復元してGREENです。
+
+最終CPU構成はMSVC19.51/SDK10.0.28000.0で、Debug/Release各67/67成功、全体12.72/7.87秒でした。コマンドは`cmake --build build/dev-windows --config Debug --parallel 4`と`ctest --test-dir build/dev-windows -C Debug --output-on-failure`、Release指定です。別agentがSingleStepの固定root・骨長変化・角度0、一般Stepの互換性、doubleとfloat検査の分離、履歴とcache確定時の所有権を読み取り専用で再確認しました。
+
+二つの原因を修正した構成は、固定1/60秒3000frameを完走しました。旧6c316a8からsegment最大方向変化51.385105→34.330172度、全segmentのp99 15.811102→12.628354度、frame最大のp99 28.579914→23.992509度、45度超1→0回、90度超0回です。root相対移動の最大67.747882→59.621299mm、p99 22.942065→17.978148mmとなりました。新最大はframe2194→2195のSkirt_1.002→Skirt_1.003で、骨長約36.3506mmは保たれています。いずれも41骨・10鎖・0..2999の連続記録を確認し、更新前姿勢に前回物理結果が含まれる比較として扱います。記録はshared-step-baseline/shared-final-3000.jsonlとshared-step-diagnostics/final-frame-comparison.jsonです。
+
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0で、最終構成の開始0/2.1秒からDebug/Release各120frame、計480frameを逐次実行しました。GPU位置誤差0・法線最大誤差1.78813934e-7、公開pose・skin点・mesh記録のinvalidは0、両構成の全記録と保存画像は一致しました。Skirt確認440点の侵入は両区間0です。折り返し区間のJacketは平均0.975点・最大0.0126901134、Shirtは平均10.75点・最大0.0154593591で、上着の侵入は残ります。身体capsuleへの近似距離であり、身体mesh・衣服面全体の非貫通ではありません。640×480の保存画像も確認しました。各起動にはreload-server.txtがない既存のReloadServer診断2行があり、描画検証の成功とは分離して記録しています。集計はshared-step-diagnostics/final-gpu-summary.jsonです。
+
+一方、capture用Releaseの実時間600frameは112frameで接触探索が停止しました。completed=false、4.301FPS、p95 762.927ms、secondary215.432msであり、完走や性能改善とは扱いません。delta記録付きの再実行も49回目の更新で停止し、49個のdeltaをそのまま再生して48frame完了・frame48失敗を再現しました。失敗時deltaは0.4312807秒、直前は0.247807→0.7449875秒で、0.25秒以上の基準姿勢resetと単回の位置solveを通っています。全49delta中19回が0.25秒以上でした。記録はfinal-realtime-failure-trace.log、final-realtime-failure-deltas.txt、final-realtime-failure-replay.logです。この時点の構成はmainへ昇格せず、不要な候補評価の削減と長時間更新の位置探索を続けます。
+
+line searchの候補では接触位置と侵入量だけを評価し、採用後に必要な勾配・Jacobianを求めるよう変更しました。位置専用APIがfull評価を使って微分を1回計算する状態をRED、通常経路で0回をGREENとしました。位置・chain merit・weighted meritは従来計算とbit一致し、独立した球面侵入式とも一致します。同じsolver入力の従来full trialと最終positionsはbyte一致、微分計算回数56→32です。時刻、反復、許容幅、探索順を変えていません。極小線分や微分だけのoverflowでは従来の数値拒否を保持し、反対向き、出力保持、確保失敗も検査しました。別agentが採用後の再評価、null勾配のpointer演算、失敗時の原子性を確認し、対象5sourceの前後hashが一致しました。
+
+長時間resetでは基準姿勢からの位置solveを先に保ち、未解決の場合だけ前回方向を新root・現在骨長へ写して再試行します。旧速度は予測に使いません。単一二節鎖と3球、既知の可行方向を持つ独立fixtureで、旧処理の長時間失敗をRED、再試行をGREENとしました。0.25、0.3、0.7449875、0.4312807秒の結果が時間0の方向再構成と一致し、全速度0、前回状態不変です。rest候補が成功する場合のbyte不変、teleport等号とfloat直上、骨構成変更拒否と失敗原子性も確認しました。従来の長時間更新が前回方向を完全に無視するテストだけをこの新契約へ置き換え、teleportと構成変更の契約は維持しました。
+
+実モデルの49deltaを最終native Releaseで再生すると49frame完走しました。変更前に成功した最初48frameの骨名・時刻・更新前後位置は全てbyte一致で、従来停止したframe48も成立しました。記録はhitch-merit-replay49.log/.jsonlとhitch-replay-parity.jsonです。全CPUテストはDebug/Release各68/68成功、全体11.08/7.38秒でした。非表示の固定delta再生は動作確認に使い、同時CPU buildがある区間のwall時間を性能比較には使いません。
+
+保存後のweighted点、旧same-bone接触線分の端点、現在・前回の定義移動速度も位置専用APIへ揃えました。反平行時に速度補正だけを見送るdefined判定と、位置差をdeltaで割る順序は保持しています。合成modelと旧contact linkを組み合わせ、不要な微分が時間0で12回となるREDを捕捉し、必要な位置solver分だけの8回へ減らしました。正時間は速度solverを含む12回を保持し、状態・速度・履歴のbyte一致を検査しました。独立agentが5評価箇所の用途、数値拒否と出力保持を読み取り専用で確認しています。最終CPU構成はDebug/Release各68/68成功、全体10.68/7.10秒です。
+
+merit-only後のnative固定3000frameは、変更前のshared-final-3000.jsonlと全traceがbyte一致しました。位置検算の追加置換後もnative Debug/Release、ゲーム構築用390ファイルと5 exampleをbuildし、install SDK61ファイルの許可リストとconsumerへ配置した22 runtimeファイルのbyte一致を確認しました。
+
+最終capture用Releaseのdelta記録付き実時間600frameは完走しました。deltaの平均0.2500728705秒、p95 0.7653069秒、最大5.1014975秒、0.25秒以上200回で、停止の修正後も処理の重さは残ります。trace modeはAPI別所要時間とFPSを出さないため、deltaの集計を通常製品DLLのFPSとは扱いません。記録はtime-realtime600.log、time-realtime600-deltas.txt、time-realtime-delta-summary.jsonです。現時点ではmainへの反映を保留し、同じbenchmark objectをSDKのgkcore.libへリンクし直した通常製品DLLの可視再生も確認します。import tableがgkcore.dllを参照し、capture DLLを参照しないことを確認しました。
+
+通常製品DLLの可視600frameは174frameで同じweighted接触の未解決により停止しました。completed=false、3.813FPS、p95 1161.664ms、secondary249.961ms、Draw0.477/Present11.169/IK0.585msです。SDKのgkcore.dllはconsumerへ配置したbyte一致のものです。capture600frameの成功だけでは実時間の停止全体を修正したと判定できません。記録はtime-product-realtime600.logです。
+
+細かい物理予測のたびに高価な接触探索を行うと、遅いframeで次の分割数が増え、さらに遅れる連鎖になります。次の候補は、局所TRSとFKを各予測刻みで評価する1/120秒以下の予測を維持し、位置接触を公開Update内で最大2回に制限する方式です。これは接触時刻を保つ最適化ではなく、1/60秒を超える区間で接触の時間精度が変わる設計変更として検証します。0.25秒以上・teleport・履歴切れの分割前判定は維持します。
+
+速度をmacro平均root速度へ一律にずらす案は、曲線運動で絶対速度を次の予測へ持ち越す偏りがあるため不採用です。位置接触は区間末尾でまとめて解き、速度補正には最後のmicro予測直前の局所姿勢・骨行列・身体形状・骨方向とmicro幅を渡す方式を採ります。途中履歴は独立所有し、1予測刻みだけの区間は従来と同じ経路を保ちます。最終1/60秒の全trajectory一致、記録した49delta、600frame実時間、GPU描画で採否を判断します。

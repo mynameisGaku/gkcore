@@ -230,8 +230,16 @@ Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29、SDK10.0.22621.0
 
 重み付き接触の位置が成立した後、骨長を保つ曲げ速度だけを動かし、複数の接触面へ戻る速度をまとめて補正します。身体形状・半径の変化と、アニメーションで変わる接触定義の速度も含めます。固定rootを保ち、32回で全速度条件を満たせない場合は候補を捨てて既存速度を使います。位置の接触条件は保持しています。
 
-Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、非表示window・1280×720・VSyncなし・標準効果、YUMEKA＋Skinning Test/Swinging blend＋右腕IK＋13鎖・身体8形状・529球・1574 anchors、頂点補正/debug表示OFFの単独Release実時間600frame/warmup0は19.550FPS、p95 55.261ms、secondary43.144ms、Draw0.592/Present6.605/IK0.730msで完走しました。前の26.175FPSより遅く、300FPSは未達です。実時間の進み方が異なるため、FPS差を固定負荷の増加率とは扱いません。成否を明示enumに変更する前の同じ計算方式の計測であり、最終enumバイナリを再計測した値ではありません。
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、非表示window・1280×720・VSyncなし・標準効果、YUMEKA＋Skinning Test/Swinging blend＋右腕IK＋13鎖・身体8形状・529球・1574 anchors、頂点補正/debug表示OFFのcapture用Release実時間600frame/warmup0は19.550FPS、p95 55.261ms、secondary43.144ms、Draw0.592/Present6.605/IK0.730msで完走しました。前の26.175FPSより遅く、300FPSは未達です。実時間の進み方が異なるため、FPS差を固定負荷の増加率とは扱いません。成否を明示enumに変更する前の同じ計算方式の計測であり、最終enumバイナリを再計測した値ではありません。この非表示計測はcapture DLLを使っており、通常windowを使う製品DLLの性能とは区別します。
 
 固定1/60秒3000frameの最大segment方向変化は59.187→51.385度、45度超2→1回、90度超0回、p99 16.372→15.811度となりました。root相対最大点移動は0.069943→0.067748 model unitです。過去の物理結果が次の入力へ戻るため、同一入力pose比較ではありません。最終enumバイナリで759frameを再生し、3000frameの同区間と完全一致しました。最大変化frame757→758の51度は残り、動作の完成とは判定しません。
 
 Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh記録と画像が一致し、最終enumバイナリでも折り返し2frameずつを再確認しました。Skirt確認点の身体capsuleへの侵入は両区間0ですが、折り返し区間のJacketは平均1.916667点・最大0.014362224、Shirtは平均11.858333点・最大0.017666648へ悪化しました。布面全体の非貫通は未確認です。次は身体・鎖・重み付き接触を共通の時間分割で処理し、frame末尾で発生する大きな位置補正を減らす方式を検討します。記録はcontact-nearby、contact-nearby-geometry、contact-velocity-gpu-*、contact-velocity-enum-gpu-*、contact-failure-nearby-velocity-*です。
+
+## 共通の時刻で予測と衣服接触を進める
+
+身体・全鎖・重み付き接触を同じ1/120秒以下の区間で進め、予測の骨長復元を人工速度へ変えないよう修正しました。doubleで成立した速度をfloatの丸めだけで捨てる条件も修正しています。Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、YUMEKA＋Skinning Test/Swinging blend＋右腕IK、13鎖・身体8形状・529球・1574 anchors、頂点補正OFFです。
+
+固定1/60秒3000frameは完走し、旧6c316a8からsegment最大方向変化51.385105→34.330172度、p99 15.811102→12.628354度、45度超1→0回、root相対点移動p99 22.942065→17.978148mmとなりました。前回の物理結果が次の入力へ戻る時系列比較です。Debug/Release計480frameのGPU変形も有効で、保存画像と全mesh記録が一致しました。Skirt確認点の侵入0に対し、折り返しのJacket平均0.975点・最大0.0126901134、Shirt平均10.75点・最大0.0154593591の侵入は残ります。
+
+この時点のcapture用Release実時間600frameは112frameで接触探索が停止しました。completed=false、4.301FPS、p95 762.927ms、secondary215.432msであり、成功した600frame計測ではありません。非表示window・1280×720・VSyncなし・標準効果・debug表示OFFで、通常製品DLLの表示性能とは区別します。記録付きの再試行も0.4312807秒の更新で停止し、49deltaの再生で同じframe48失敗を再現しました。遅い更新が0.25秒以上のresetを招く連鎖があるため、この構成はmainへ昇格せず、候補評価の重複とreset後の位置探索を調べています。300FPSと揺れもの全体の完成は未達です。記録はshared-step-baselineとshared-step-diagnosticsです。

@@ -17,6 +17,10 @@ const uint32_t kAttachmentProjectionPassCount = 64;
 const double kAttachmentProjectionGuardFraction = 1.0e-3;
 // 外向き余白の絶対下限。
 const double kAttachmentProjectionGuardMinimum = 1.0e-7;
+#if defined(GKCORE_TESTING)
+// 現在の検査threadで、位置だけの評価と骨に固定した接触点の微分評価を区別する回数。
+thread_local uint64_t attachmentJacobianCountForTesting = 0u;
+#endif
 /**
  * 倍精度座標の有限性を調べる。
  */
@@ -114,7 +118,27 @@ bool EvaluateRotatedOffset(const gk::FVector3d& unitBase, const gk::FVector3d& u
     if (!IsFinite(rotatedOffset))
         return false;
 
+    if (!jacobian)
+    {
+        // 単位四元数の微分と積和の項数から、中間式が桁あふれしない範囲だけ微分を省く。
+        const double offsetMagnitude = fmax(fabs(offset.value[0]), fmax(fabs(offset.value[1]), fabs(offset.value[2])));
+        const double inverseLength = 1.0 / segmentLength;
+        const double derivativeScale = offsetMagnitude * inverseLength;
+        const double quaternionDerivativeBound = 1.0 / denominator + 2.0 / (denominator * denominator * denominator);
+        const double safeDerivativeScale = DBL_MAX / (256.0 * fmax(1.0, quaternionDerivativeBound));
+        if (isfinite(inverseLength) && inverseLength <= DBL_MAX * 0.5 && isfinite(derivativeScale) && derivativeScale <= safeDerivativeScale)
+        {
+            return true;
+        }
+        // 極小線分では元の数値検査を行い、位置だけ成立する候補で既存の失敗を隠さない。
+        double checkedJacobian[9]{};
+        return EvaluateRotatedOffset(unitBase, unitCurrent, segmentLength, offset, rotatedOffset, checkedJacobian);
+    }
+
     // 方向軸ごとの四元数微分を出力軸と子軸の計算から分離する。
+#if defined(GKCORE_TESTING)
+    ++attachmentJacobianCountForTesting;
+#endif
     gk::FVector3d derivativeOffsets[3]{};
     for (uint32_t directionAxis = 0; directionAxis < 3; ++directionAxis)
     {
@@ -703,7 +727,10 @@ bool TryAttachmentConeGridEscape(const FPreparedSecondaryMotionCollisionShape* s
 
 }
 
-bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, FSecondaryMotionAttachmentEvaluation& evaluation, gk::String& error)
+/**
+ * 共通の入力検査と回転計算を使い、必要な場合だけ位置微分も計算する。
+ */
+static bool EvaluateAttachment(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, FSecondaryMotionAttachmentEvaluation& evaluation, gk::String& error, bool calculateJacobian)
 {
     error.Clear();
     if (!IsFloatPosition(parent) || !IsFloatPosition(child) || !IsFinite(definition.direction) || !IsFinite(definition.offset) || !isfinite(definition.cosineLimit) || definition.cosineLimit < -1.0 || definition.cosineLimit > 1.0)
@@ -724,7 +751,7 @@ bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinitio
     // 回転済み局所offsetと行優先微分行列。
     gk::FVector3d rotatedOffset{};
     FSecondaryMotionAttachmentEvaluation candidate{};
-    if (!EvaluateRotatedOffset(baseDirection, currentDirection, segmentLength, definition.offset, rotatedOffset, candidate.childJacobian))
+    if (!EvaluateRotatedOffset(baseDirection, currentDirection, segmentLength, definition.offset, rotatedOffset, calculateJacobian ? candidate.childJacobian : nullptr))
     {
         error.Assign("Secondary motion attachment rotation is singular");
         return false;
@@ -739,6 +766,34 @@ bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinitio
     error.Clear();
     return true;
 }
+
+bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, FSecondaryMotionAttachmentEvaluation& evaluation, gk::String& error)
+{
+    return EvaluateAttachment(definition, parent, child, evaluation, error, true);
+}
+
+bool EvaluateSecondaryMotionAttachmentPosition(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, gk::FVector3d& position, gk::String& error)
+{
+    FSecondaryMotionAttachmentEvaluation evaluation{};
+    if (!EvaluateAttachment(definition, parent, child, evaluation, error, false))
+    {
+        return false;
+    }
+    position = evaluation.position;
+    return true;
+}
+
+#if defined(GKCORE_TESTING)
+void ResetSecondaryMotionAttachmentJacobianCountForTesting()
+{
+    attachmentJacobianCountForTesting = 0u;
+}
+
+uint64_t GetSecondaryMotionAttachmentJacobianCountForTesting()
+{
+    return attachmentJacobianCountForTesting;
+}
+#endif
 
 bool ProjectSecondaryMotionAttachmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionAttachmentDefinition& firstDefinition, const FSecondaryMotionAttachmentDefinition& secondDefinition, gk::FVector3d* const points[4], gk::String& error)
 {

@@ -11,6 +11,8 @@
 #include <gkcore/FModelSecondaryMotionContactPoint.h>
 #include "model/animation/FModelSecondaryMotionCollisionShape.h"
 #include "model/animation/FModelGpuSkinningGeometry.h"
+#include "model/animation/FModelPose.h"
+#include "foundation/String.h"
 
 /**
  * モデルinstanceの揺れもの所有状態。
@@ -46,6 +48,8 @@ struct FModelSecondaryMotionState
     Array<animation::FModelSecondaryMotionCollisionShape> previousCollisionShapes;
     // 最後に成功した更新で使った、揺れを加える前の骨行列。
     Array<float> previousBaseMatrices;
+    // 最後に成功した更新の、IK適用後で揺れを加える前の局所姿勢。
+    animation::FModelPose previousBasePose;
     // 骨行列・身体形状・鎖の目標が同じ更新の履歴として使えるか。
     bool velocityHistoryValid = false;
     // 節の接触に足すmodel空間の余白。
@@ -60,6 +64,14 @@ struct FModelSecondaryMotionState
      * 各鎖と内部配列を解放する。
      */
     ~FModelSecondaryMotionState();
+    /**
+     * 所有する鎖を解放し、sourceの配列と設定を移す。同じ状態への移動は何もしない。
+     */
+    void MoveFrom(FModelSecondaryMotionState& source);
+    /**
+     * 全設定・鎖・履歴を複製する。確保失敗や空の鎖があれば自身を保つ。
+     */
+    bool CloneFrom(const FModelSecondaryMotionState& source, String& error);
 };
 }
 

@@ -1,4 +1,4 @@
-# Repository working rules
+﻿# Repository working rules
 
 ## Branches and commits
 
@@ -21,7 +21,7 @@
 - Do not use the C++ standard library or STL in authored Runtime code under `include/`, `src/`, or user-facing `examples/`. Tests and development tools may use it.
 - Keep Runtime responsibilities separated into focused, paired headers and implementation files: public API/lifecycle and events, drawing/backend, resources, and effects/shaders. Keep tests and build tools outside Runtime code. Shared Runtime handles, strings, vectors, and containers belong to the foundation owner; do not add local one-off container implementations in feature modules.
 - Do not claim a feature or platform test passed unless it was run on the required platform. Record hardware, toolchain, command, and result for native GPU tests.
-- The root agent reviews integration and owns final status updates. Parallel workers use the available `gpt-6-luna` model at low reasoning effort when delegation is requested; do not claim `luna6.1` is available.
+- The root agent reviews integration and owns final status updates. Parallel workers use `gpt-6.1-sol` at high reasoning effort, as requested by the user.
 - Agents should edit only their assigned files and report cross-area issues to the root agent.
 - Keep the README user-facing and concise. Do not use milestone/phase labels in product docs; describe supported capabilities and measurable final acceptance criteria instead.
 

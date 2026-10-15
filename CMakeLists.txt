@@ -65,6 +65,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionWeightedContacts.cpp
     src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionContactVelocity.cpp
+    src/model/animation/ModelSecondaryMotionStep.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp
@@ -194,6 +195,14 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_secondary_motion_weighted_contacts_tests)
     add_test(NAME gkcore.model_secondary_motion_weighted_contacts COMMAND gkcore_model_secondary_motion_weighted_contacts_tests)
+    add_executable(gkcore_model_secondary_motion_merit_only_tests tests/model_secondary_motion_merit_only_tests.cpp
+        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_secondary_motion_merit_only_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_secondary_motion_merit_only_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_secondary_motion_merit_only_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_secondary_motion_merit_only_tests)
+    add_test(NAME gkcore.model_secondary_motion_merit_only COMMAND gkcore_model_secondary_motion_merit_only_tests)
     add_executable(gkcore_model_skin_points_tests tests/model_skin_points_tests.cpp
         src/model/animation/ModelSkinPoints.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
@@ -424,7 +433,7 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_animation_api_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_animation_api_tests)
     add_test(NAME gkcore.model_animation_api COMMAND gkcore_model_animation_api_tests "${CMAKE_CURRENT_BINARY_DIR}/model-animation-api-fixtures")
-    add_executable(gkcore_model_animation_rig_api_tests tests/model_animation_rig_api_tests.cpp tests/model_secondary_motion_preview_tests.cpp examples/support/ModelSecondaryMotionPreview.cpp examples/support/ModelSecondaryMotionDebugView.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelPingPongMotion.cpp ${GKCORE_CORE_SOURCES})
+    add_executable(gkcore_model_animation_rig_api_tests tests/model_animation_rig_api_tests.cpp tests/model_secondary_motion_substep_tests.cpp tests/model_secondary_motion_preview_tests.cpp examples/support/ModelSecondaryMotionPreview.cpp examples/support/ModelSecondaryMotionDebugView.cpp examples/support/FModelArmIkPreview.cpp examples/support/FModelMotionView.cpp examples/support/ModelPingPongMotion.cpp ${GKCORE_CORE_SOURCES})
     target_compile_features(gkcore_model_animation_rig_api_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_animation_rig_api_tests PRIVATE include src)
     target_compile_definitions(gkcore_model_animation_rig_api_tests PRIVATE GKCORE_TESTING=1)

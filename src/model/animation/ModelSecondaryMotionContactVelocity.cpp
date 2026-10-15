@@ -19,7 +19,7 @@ const uint32_t kMaximumVelocityRows = 4096u;
 const uint32_t kMaximumVelocityEntries = 65536u;
 // PGSで許す最大掃引数。
 const uint32_t kMaximumVelocityPasses = 32u;
-// float保存後に許す速度制約残差。
+// double解で許す速度制約残差。保存候補には実際のfloat変換誤差だけを別途加える。
 const double kVelocityTolerance = 1.0e-7;
 // 接触境界でfloat座標丸めを吸収する倍率。
 const double kActiveMarginScale = 8.0 * FLT_EPSILON;
@@ -382,6 +382,27 @@ double EvaluateStoredRow(const FVelocityRow& row, const Array<FVelocityEntry>& e
         value += entry.coefficient.value[0] * velocity.x + entry.coefficient.value[1] * velocity.y + entry.coefficient.value[2] * velocity.z;
     }
     return value;
+}
+
+/**
+ * double解をfloatへ保存した差だけから、同じ制約行の残差変化の絶対値上界を求める。
+ */
+double EvaluateStoredRowCastError(const FVelocityRow& row, const Array<FVelocityEntry>& entries, const Array<FVector3d>& reconstructed, const Array<Vec3>& stored)
+{
+    // 各成分の誤差へ係数の絶対値を掛け、打消しを仮定せずに加算する。
+    double bound = 0.0;
+    for (uint32_t localEntry = 0; localEntry < row.entryCount; ++localEntry)
+    {
+        const FVelocityEntry& entry = entries.At(row.firstEntry + localEntry);
+        const FVector3d& original = reconstructed.At(entry.pointIndex);
+        const Vec3& saved = stored.At(entry.pointIndex);
+        const double differences[3] = { static_cast<double>(saved.x) - original.value[0], static_cast<double>(saved.y) - original.value[1], static_cast<double>(saved.z) - original.value[2] };
+        for (uint32_t axis = 0; axis < 3u; ++axis)
+        {
+            bound += fabs(entry.coefficient.value[axis]) * fabs(differences[axis]);
+        }
+    }
+    return bound;
 }
 
 }
@@ -1032,13 +1053,28 @@ ESecondaryMotionContactVelocityResult ProjectSecondaryMotionContactVelocities(co
     for (uint32_t rowIndex = 0; rowIndex < originalRows.Count(); ++rowIndex)
     {
         const FVelocityRow& row = originalRows.At(rowIndex);
+        // 変換前の解は元の許容幅で検査し、未収束を保存丸めの許容へ混ぜない。
+        const double originalResidual = EvaluateRow(row, originalEntries, reconstructedVelocities);
+        if (!isfinite(originalResidual))
+        {
+            error.Assign("secondary contact velocity reconstructed validation is outside the numeric range");
+            return ESecondaryMotionContactVelocityResult::Failed;
+        }
+        if ((row.equality && fabs(originalResidual) > kVelocityTolerance) || (!row.equality && originalResidual < -kVelocityTolerance))
+        {
+            error.Clear();
+            return ESecondaryMotionContactVelocityResult::Unresolved;
+        }
+        // float保存後だけ、その候補で実測した成分ごとの変換誤差上界を加える。
+        const double castErrorBound = EvaluateStoredRowCastError(row, originalEntries, reconstructedVelocities, candidateVelocities);
+        const double storedTolerance = kVelocityTolerance + castErrorBound;
         const double residual = EvaluateStoredRow(row, originalEntries, candidateVelocities);
-        if (!isfinite(residual))
+        if (!isfinite(residual) || !isfinite(castErrorBound) || !isfinite(storedTolerance))
         {
             error.Assign("secondary contact velocity stored validation is outside the numeric range");
             return ESecondaryMotionContactVelocityResult::Failed;
         }
-        if ((row.equality && fabs(residual) > kVelocityTolerance) || (!row.equality && residual < -kVelocityTolerance))
+        if ((row.equality && fabs(residual) > storedTolerance) || (!row.equality && residual < -storedTolerance))
         {
             error.Clear();
             return ESecondaryMotionContactVelocityResult::Unresolved;

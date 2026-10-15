@@ -21,6 +21,22 @@ namespace gk::model::animation
 bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, FSecondaryMotionAttachmentEvaluation& evaluation, gk::String& error);
 
 /**
+ * 接触点の位置だけを求め、探索候補で不要な子位置微分を省く。計算不能な場合はpositionを保つ。
+ */
+bool EvaluateSecondaryMotionAttachmentPosition(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, gk::FVector3d& position, gk::String& error);
+
+#if defined(GKCORE_TESTING)
+/**
+ * 検査用の、骨に固定した接触点の微分計算回数を0へ戻す。
+ */
+void ResetSecondaryMotionAttachmentJacobianCountForTesting();
+/**
+ * 検査開始後に骨に固定した接触点の微分を計算した回数を返す。
+ */
+uint64_t GetSecondaryMotionAttachmentJacobianCountForTesting();
+#endif
+
+/**
  * 二つの骨に固定した接触点を準備済み身体形状から押し戻す。失敗時は4点の位置を保つ。
  */
 bool ProjectSecondaryMotionAttachmentContacts(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionAttachmentDefinition& firstDefinition, const FSecondaryMotionAttachmentDefinition& secondDefinition, gk::FVector3d* const points[4], gk::String& error);
