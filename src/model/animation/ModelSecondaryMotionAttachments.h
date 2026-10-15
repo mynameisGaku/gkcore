@@ -16,6 +16,11 @@ namespace gk::model::animation
 {
 
 /**
+ * 最小回転の実部が小さすぎて反対方向と区別できない境界。回転計算と到達診断で共有する。
+ */
+constexpr double kSecondaryMotionAttachmentAntiparallelThreshold = 1.0e-12;
+
+/**
  * 親子骨位置から接触点と子位置に対する微分を求める。反対向きなど計算不能な場合はevaluationを保つ。
  */
 bool EvaluateSecondaryMotionAttachment(const FSecondaryMotionAttachmentDefinition& definition, const gk::FVector3d& parent, const gk::FVector3d& child, FSecondaryMotionAttachmentEvaluation& evaluation, gk::String& error);
