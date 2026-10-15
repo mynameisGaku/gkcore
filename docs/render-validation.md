@@ -227,6 +227,8 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 
 検証用captureへ`GKCORE_VERIFY_SKIN_POINTS=Skirt`と`GKCORE_SKIN_POINT_DETAIL_FRAME=81`を指定すると、そのframeで最大32件の侵入点を深さ順に出します。`gkcore_model_skin_point_detail`が件数と参照元、`gkcore_model_skin_point`がmesh所属、身体shape、weight内訳と対応する骨球を記録します。`bodyShapeAncestor`はshape取付boneとその骨格祖先へのweightで、身体meshに対応するweight分類ではありません。元の参照一致検査は全frameで続き、詳細診断の失敗は別のJSONへ出します。通常DLL/SDKにはこのtoolやtest exportを含めません。
 
+`GKCORE_SKIN_POINT_DETAIL_PENETRATIONS=1`では、選択したskin点のうち身体形状へ侵入した点だけを全frameで記録します。`gkcore_model_skin_penetration_frame`は位置ID、mesh名、最も深い身体形状番号、描画と同じ位置、侵入深さを含み、`positionSource`は`rendered skin`です。既存のframe指定詳細が使う`pre-contact sparse skin`とは区別してください。この出力は`GKCORE_SKIN_POINT_MESH_SUMMARY`なしでも有効で、点選択・描画・接触判定を変更しません。対象外の頂点やtriangle内部の交差は調べません。
+
 点位置は補正前のsparse skin、sphere位置は現在の描画FK、身体は直近Updateのshape snapshotです。頂点補正はOFFの状態で調べます。今回のloop frame81では30点が侵入し、最深は`Yumeka_Cos_Skirt`のposition31877/local28、UpperLeg_L capsuleへ深さ.03001297でした。Skirt_3_L.002/Skirt_4_L.002へ約68%/32%で、腰などのweightはありません。対応sphereからはそれぞれ.03696/.09170離れています。これは小球が実skin面を覆いきれないcaseで、骨の接触成立だけから布の非侵入を導けません。記録は`build/native-validation/secondary-skin-detail-frame81.json`です。
 
 ## 複数鎖を結ぶ接触線分

@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "model/animation/ModelSecondaryMotionWeightedContacts.h"
+#include "model/animation/ModelSecondaryMotionContactReach.h"
 #include "model/animation/ModelSecondaryMotionAttachments.h"
 #include "model/animation/ModelSecondaryMotionChainContacts.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
@@ -7,6 +8,7 @@
 
 #include <float.h>
 #include <math.h>
+#include <stdio.h>
 
 namespace gk::model::animation
 {
@@ -127,7 +129,7 @@ bool IsSingularAttachmentCandidate(const FSecondaryMotionAttachmentDefinition& d
 {
     gk::FVector3d reference = definition.direction;
     gk::FVector3d direction = Subtract(child, parent);
-    return Normalize(reference) && Normalize(direction) && 1.0 + Dot(reference, direction) <= 1.0e-12;
+    return Normalize(reference) && Normalize(direction) && 1.0 + Dot(reference, direction) <= kSecondaryMotionAttachmentAntiparallelThreshold;
 }
 
 /**
@@ -1474,6 +1476,17 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
     if (initialMerit == 0.0 && storedInputClear)
     {
         return true;
+    }
+    // 既存の入力・数値・初期確保の検査後、探索前にだけ到達不能を区別する。
+    uint32_t unreachablePoint = 0u;
+    uint32_t unreachableShape = 0u;
+    if (initialMerit != DBL_MAX && FindUnreachableSecondaryMotionWeightedContact(chains, references, anchors, contacts, contactCount, positions, unreachablePoint, unreachableShape))
+    {
+        // shapeはこの接触点に適用する身体形状配列の0始まり番号。
+        char message[128]{};
+        snprintf(message, sizeof(message), "Secondary motion weighted contact is unreachable: point %u, shape %u", unreachablePoint, unreachableShape);
+        error.Assign(message);
+        return false;
     }
     if (initialMerit != DBL_MAX && !BuildTargetContactChains(anchors, contacts, contactCount, anchorEvaluations, chainCount, targetChains, error))
     {

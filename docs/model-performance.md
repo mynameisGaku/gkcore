@@ -253,3 +253,7 @@ Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh�
 最終b9fe51cの通常製品DLL、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じYUMEKA・2motion blend・右腕IK・13鎖・8身体形状・529球・1574 anchorsの単独実時間600frame/warmup0は完走しました。17.929FPS、p95 63.230ms、secondary49.415ms、Draw0.480/Present5.272/IK0.543msです。SDKのgkcore.libへ既存benchmark objectをリンクし、import tableがgkcore.dllだけを参照することと、配置DLLのSDKとのbyte一致を確認しました。以前のcapture用DLLの19.550FPSとは表示条件・コード・再生履歴が異なるため、速度差を直接比較しません。300FPSは未達です。記録はshared-step-baseline/bounded-product-realtime600.logです。
 
 固定1/60秒3000frameの全traceは、共通時刻の初期最終構成、merit-only、位置検算の置換後、最大2接触構成の4バイナリでbyte一致しました。segment最大34.330172度、p99 12.628354度、45/90度超0回という固定刻みの結果を保っています。停止した49deltaも最終構成で完走しましたが、旧max30との比較ではroot相対移動速度p99 1.2674→1.3527m/s、方向変化p99 108.667→109.297度へ増加しています。長いdeltaでの完全同等や滑らかさは主張しません。固定root差は0、同じ入力のframe48終端位置は一致しました。記録はbounded-fixed3000-parity.jsonとshared-step-diagnostics/bounded-replay49-comparison.jsonです。
+
+557球構成はJacket11球・Shirt17球を追加し、固定1/60秒3000frameと通常製品DLLの可視600frame/warmup0を完走しました。後者は同じRTX4070SUPER・1280×720・VSyncなし・標準効果・debug表示/頂点補正OFFの単独実行で17.690FPS、p95 67.007ms、secondary50.437ms、Draw0.422/Present5.047/IK0.555msです。配置DLLとSDKのbyte一致を確認し、他のGPU検証やCPU build/probeは同時実行していません。記録はbuild/native-validation/garment-contact/product-realtime600.logです。529球の17.929FPSとの差を改善とは扱わず、300FPSも未達です。
+
+開始0/2.1秒・Debug/Release計480GPU frameは全検証記録と保存画像が一致し、両区間のSkirt/Jacket確認点は身体形状侵入0です。Shirtの折り返し区間最大は15.459→12.214mm、平均侵入点数10.750→8.992。開始0は平均6.975点/最大12.997mmで変わりません。身体の近似形状への測定で、衣服面全体や実身体meshとの非貫通は未確認です。残存を速度調整で隠さず、接触範囲・身体形状と実mesh・狭い可行領域での探索を次に調べます。

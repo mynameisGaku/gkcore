@@ -1888,3 +1888,21 @@ bounded構成の全CPUテストはDebug/Release各68/68成功、全体11.17/8.03
 最終b9fe51cの開始0/2.1秒・Debug/Release各120frame、計480frameの実GPU検証も逐次実行して全てexit0でした。pose・skinning・skin点・meshのinvalidは0、Skirt確認440点の侵入は0、位置誤差0・法線最大誤差1.78813934e-7です。両構成間に加え、変更前shared-final-gpuの各同条件とも全record・IK pose・再生時刻・全画像pixelが一致しました。Jacket/Shirtの残存侵入も同じです。既存ReloadServer診断は2行×4起動あり、他のERRは0でした。記録はshared-time-gpu-*とshared-step-diagnostics/bounded-final-gpu-summary.jsonです。最終640×480画像も確認しました。再現には`build/native-validation/shared-time-captures.ps1 -Configuration Debug -MotionSet skinning -SkinningPreset -WeightedConfig samples/config/yumeka-skinning-contact-points.txt -StartSeconds 2.1 -Frames 120 -DetailFrame -1`とRelease/開始0指定を使います。
 
 最終SDKだけを使うconsumerはInit・Scene/UI描画・Present・Shutdownまで実GPUでexit0でした。390許可ファイル、SDK61ファイル、配置runtime22ファイルの一致を最終確認し、ゲーム構築用treeをmain d859c8cへ通常pushしました。tests・検証ツール・匿名fixture・私有asset・開発記録は含めません。devのcodeはb9fe51cです。削除は以前の自動承認レビューで拒否されているため別手段では実行せず、一時生成物の整理は未完了のままです。現在buildと最新検証記録、元assetを保持しています。
+
+## 重み付き接触の到達不能診断と衣服の点別記録
+
+全回転を許す到達球に緩和しても身体形状内から退避できない場合と、有限探索が止まっただけの場合を分けました。固定寄与・鎖root・祖先骨長・model空間offsetから保守的な到達球を作り、座標の相殺・float保存・近反平行の回転丸めを含む余白を加えます。通常探索より緩い全許容幅でも球全体が形状内にある場合だけ、接触点と適用形状の0始まり番号を診断します。既存の初回評価成功後に判定し、入力・数値・初期確保エラーの優先と失敗時のpositions保持を維持します。可解性不明なら従来探索へ進みます。これは姿勢探索の改善ではありません。
+
+専用stubのUnknownをREDにして、固定/可動、球/カプセル、内部boneの祖先移動、実weight非正規化、等号/直内境界、大座標相殺、scale、確保なし診断と失敗原子性をGREENにしました。独立可行姿勢のある匿名探索停滞を到達不能と誤分類しない契約も検査します。別agentが準備済み形状の契約、全回転包含、失敗優先をread-only監査し、製品5sourceの開始終了hash一致を確認しました。CPU全体はVS18/MSVC19.51・Windows SDK10.0.28000.0でDebug/Release各69/69成功、11.52/7.52秒です。
+
+v142/MSVC19.29.30159・SDK10.0.22621.0のnative Debug/Releaseをbuildし、RTX4070SUPER/driver617.42・Windows11Pro26200のReleaseで現在529球構成の固定1/60秒3,000frameを完走しました。全骨trajectoryは変更前とbyte一致、SHA-256はb821bdaff857cde3258592a7bb903d35575b334007542e4ee632133aeccd2228です。記録はbuild/native-validation/garment-contact/reach-base529-fixed3000.*です。
+
+capture専用のGKCORE_SKIN_POINT_DETAIL_PENETRATIONS=1を追加し、実描画と同じ位置で侵入した点のID・mesh・形状・深さを全frame記録します。frame限定のpre-contact sparse skin詳細とは別type/positionSourceです。開始2.1秒の529球構成120frameはGPU/pose/skinすべて成功し、1407個別行と360mesh集計が完全一致しました。固有45点は全て未登録で、全可動weightの28点(Jacket11/Shirt17)と固定寄与を含む17点に分かれます。後者の9点は過去の到達不能疑いIDと一致しますが、今回poseでの証明には使いません。現接触は身体の近似球/カプセルへの距離であり、実mesh面との交差を証明していません。
+
+Jacket107球を足す636候補は短期120frameでJacketの侵入を0にしましたが、同じ固定3,000frame試験ではframe758で停止したため採用しません。529行のbyteを保ち、上記28点の実weight・既存fit半径.002だけを追加した557候補は固定3,000frameを完走しました。公式cfgへは同じdata行を反映し、球数のコメントだけ更新しました。元529行のradius/offset/weight、身体形状、鎖mask、頂点位置は変更していません。候補・点ID・入力hash・比較はgarment-contact以下に保存しています。
+
+557球の開始0/2.1秒・Debug/Release各120frame、計480frameも逐次完走しました。両構成の全JSON検証記録・IK・再生時刻、保存640×480 PPMの全byte/pixelが一致し、invalidは0です。Skirt440点とJacket443点は両区間とも身体形状侵入0。折り返しのShirt431点は平均10.750→8.991667点、最大15.459→12.214mmで、残る15IDは固定寄与を含みます。開始0は旧構成と同じ平均6.975点/最大12.997mmです。追加28IDは両区間全frameで侵入0、開始0の別ID33727は全可動・未登録で3frame最大1.451mmの侵入を残します。比較はfinal-557-existing-cases-summary.jsonとfinal-557-debug-release-parity-summary.jsonです。既存ReloadServer診断2行/起動、Debug live-object表示等は別に記録しています。
+
+通常製品DLLの可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じ557球構成の単独実時間600frame/warmup0もexit0・completed=trueでした。17.690FPS、p95 67.007ms、secondary50.437ms、Draw0.422/Present5.047/IK0.555msです。CPU probe/buildと他GPU試験は同時実行していません。新到達診断を含むゲーム構築用392ファイルと5exampleをbuildし、SDK61ファイルの許可リスト、consumerの22 runtimeファイルとのbyte一致、consumerの実GPU Init/Present/Shutdown exit0も確認しました。SDK gkcore.dll SHA256は2df678343d5392a52a108920e66651798090de7f614847674a2ab346ec56b32eです。記録はgarment-contact/product-realtime600.logとpackage-summary.jsonです。
+
+近反平行境界の実回転を使うclear witnessを専用テストへ補強し、Debug/Release各targetが成功しました。旧755/異なる旧757入力2件は、近接したclear制約も含む独立SQPでfloat保存後の全制約validatorが成功しましたが、旧758は最大31.47µmが残り未解決です。Runtime探索には採用していません。最新636停止入力と旧758入力の同一性も未確認であり、原因全体の解決とは扱いません。probeは終了し、次の探索改善用にsolver-stall-probe-summary.jsonへ入力/validator hashを保存しています。

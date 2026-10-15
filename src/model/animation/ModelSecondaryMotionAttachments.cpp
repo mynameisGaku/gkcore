@@ -106,7 +106,7 @@ bool EvaluateRotatedOffset(const gk::FVector3d& unitBase, const gk::FVector3d& u
     // 最小回転を表す四元数のベクトル部と実部。
     const gk::FVector3d quaternionVector = Cross(unitBase, unitCurrent);
     const double scalar = 1.0 + fmax(-1.0, fmin(1.0, Dot(unitBase, unitCurrent)));
-    if (!(scalar > 1.0e-12) || !isfinite(scalar))
+    if (!(scalar > kSecondaryMotionAttachmentAntiparallelThreshold) || !isfinite(scalar))
         return false;
     // 四元数正規化に使う分母。
     const double denominator = sqrt(2.0 * scalar);

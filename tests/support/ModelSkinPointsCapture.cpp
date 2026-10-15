@@ -281,7 +281,7 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
     }
     const bool contactClear = contactTested && pointPenetrationCount == 0;
     EmitReport(frame, evaluatedPoints.Count(), eligibleCount, shapeCount, maximumError, pointPenetrationCount, pointShapeContactCount, maximumPenetrationDepth, contactTested, contactClear, matchesReference);
-    if (contactTested && getenv("GKCORE_SKIN_POINT_MESH_SUMMARY") && !EmitMeshContactReports(frame, *source, *geometry, selectedIds, evaluatedPoints, *secondary))
+    if (contactTested && (getenv("GKCORE_SKIN_POINT_MESH_SUMMARY") || getenv("GKCORE_SKIN_POINT_DETAIL_PENETRATIONS")) && !EmitMeshContactReports(frame, *source, *geometry, selectedIds, evaluatedPoints, *secondary))
     {
         fprintf(stderr, "{\"type\":\"gkcore_model_skin_mesh_frame_error\",\"frame\":%u,\"valid\":false,\"message\":\"mesh contact classification failed\"}\n", frame);
         return 0;
@@ -551,6 +551,9 @@ bool FindPointSegment(const FModelGpuSkinningGeometry& geometry, uint32_t positi
 
 bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FVector3d>& positions, const gk::model::FModelSecondaryMotionState& secondary)
 {
+    // 描画と同じ位置の侵入点だけを、frameを限定せず記録する。
+    const char* penetrationFlag = getenv("GKCORE_SKIN_POINT_DETAIL_PENETRATIONS");
+    const bool emitPenetrations = penetrationFlag && strcmp(penetrationFlag, "1") == 0;
     gk::Array<FMeshContactSummary> summaries;
     if (positions.Count() != selectedIds.Count() || !summaries.Reserve(geometry.segments.Count()))
     {
@@ -573,6 +576,7 @@ bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSour
         auto& summary = summaries.At(segmentIndex);
         ++summary.pointCount;
         double maximumDepth = 0.0;
+        uint32_t deepestShapeIndex = 0;
         for (uint32_t shapeIndex = 0; shapeIndex < secondary.previousCollisionShapes.Count(); ++shapeIndex)
         {
             double distance = 0.0;
@@ -581,12 +585,34 @@ bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSour
             {
                 return false;
             }
-            maximumDepth = fmax(maximumDepth, static_cast<double>(shape.radius) - distance);
+            const double depth = static_cast<double>(shape.radius) - distance;
+            if (depth > maximumDepth)
+            {
+                maximumDepth = depth;
+                deepestShapeIndex = shapeIndex;
+            }
         }
         if (maximumDepth > 0.0)
         {
             ++summary.pointPenCount;
             summary.maxDepth = fmax(summary.maxDepth, maximumDepth);
+            if (emitPenetrations)
+            {
+                const auto& segment = geometry.segments.At(segmentIndex);
+                if (segment.nodeIndex >= source.Skeleton().parents.Count())
+                {
+                    return false;
+                }
+                const char* meshName = source.BoneName(segment.nodeIndex);
+                if (!meshName)
+                {
+                    return false;
+                }
+                fprintf(stderr, "{\"type\":\"gkcore_model_skin_penetration_frame\",\"frame\":%u,\"positionId\":%u,\"segmentIndex\":%u,\"shapeIndex\":%u,\"positionSource\":\"rendered skin\",\"meshName\":", frame, selectedIds.At(sample), segmentIndex, deepestShapeIndex);
+                EmitJsonString(meshName);
+                const auto& position = positions.At(sample);
+                fprintf(stderr, ",\"position\":[%.17g,%.17g,%.17g],\"maxDepth\":%.17g,\"valid\":true}\n", position.value[0], position.value[1], position.value[2], maximumDepth);
+            }
         }
     }
     for (uint32_t segmentIndex = 0; segmentIndex < summaries.Count(); ++segmentIndex)
