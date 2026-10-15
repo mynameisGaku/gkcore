@@ -243,3 +243,13 @@ Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh�
 固定1/60秒3000frameは完走し、旧6c316a8からsegment最大方向変化51.385105→34.330172度、p99 15.811102→12.628354度、45度超1→0回、root相対点移動p99 22.942065→17.978148mmとなりました。前回の物理結果が次の入力へ戻る時系列比較です。Debug/Release計480frameのGPU変形も有効で、保存画像と全mesh記録が一致しました。Skirt確認点の侵入0に対し、折り返しのJacket平均0.975点・最大0.0126901134、Shirt平均10.75点・最大0.0154593591の侵入は残ります。
 
 この時点のcapture用Release実時間600frameは112frameで接触探索が停止しました。completed=false、4.301FPS、p95 762.927ms、secondary215.432msであり、成功した600frame計測ではありません。非表示window・1280×720・VSyncなし・標準効果・debug表示OFFで、通常製品DLLの表示性能とは区別します。記録付きの再試行も0.4312807秒の更新で停止し、49deltaの再生で同じframe48失敗を再現しました。遅い更新が0.25秒以上のresetを招く連鎖があるため、この構成はmainへ昇格せず、候補評価の重複とreset後の位置探索を調べています。300FPSと揺れもの全体の完成は未達です。記録はshared-step-baselineとshared-step-diagnosticsです。
+
+## 予測の刻みを保って接触の回数を制限する
+
+候補探索と保存後検算で不要なJacobian計算を省き、位置・侵入量の計算順は維持しました。長時間resetの基準姿勢から接触が解けない場合は、以前の速度を使わず、前回成立方向を現在rootと骨長へ写して再試行します。この構成のcapture用Releaseはdelta記録付き600frameを完走しましたが、平均delta0.250073秒、0.25秒以上200回/600、最大5.10150秒でした。同じSDKの通常製品DLLで可視600frameを計測すると174frameで停止、completed=false、3.813FPS、secondary249.961msとなりました。短い固定刻みの成立だけでは実時間の安定性を保証できません。
+
+接触探索の回数が遅延に伴って増え続けることを避け、位置接触を公開Update内で最大2回にしました。予測は1/120秒以下の刻みと各時刻の局所TRS・FKを維持します。速度補正には最後の予測直前の姿勢・身体形状とその刻み幅を使い、macro平均root速度への共通shiftは行いません。1/60秒を超える更新では接触間隔が長くなるため、同じ軌跡を保つ最適化ではなく時間精度の異なる設計です。公開終端の全検査は維持します。
+
+最終b9fe51cの通常製品DLL、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じYUMEKA・2motion blend・右腕IK・13鎖・8身体形状・529球・1574 anchorsの単独実時間600frame/warmup0は完走しました。17.929FPS、p95 63.230ms、secondary49.415ms、Draw0.480/Present5.272/IK0.543msです。SDKのgkcore.libへ既存benchmark objectをリンクし、import tableがgkcore.dllだけを参照することと、配置DLLのSDKとのbyte一致を確認しました。以前のcapture用DLLの19.550FPSとは表示条件・コード・再生履歴が異なるため、速度差を直接比較しません。300FPSは未達です。記録はshared-step-baseline/bounded-product-realtime600.logです。
+
+固定1/60秒3000frameの全traceは、共通時刻の初期最終構成、merit-only、位置検算の置換後、最大2接触構成の4バイナリでbyte一致しました。segment最大34.330172度、p99 12.628354度、45/90度超0回という固定刻みの結果を保っています。停止した49deltaも最終構成で完走しましたが、旧max30との比較ではroot相対移動速度p99 1.2674→1.3527m/s、方向変化p99 108.667→109.297度へ増加しています。長いdeltaでの完全同等や滑らかさは主張しません。固定root差は0、同じ入力のframe48終端位置は一致しました。記録はbounded-fixed3000-parity.jsonとshared-step-diagnostics/bounded-replay49-comparison.jsonです。

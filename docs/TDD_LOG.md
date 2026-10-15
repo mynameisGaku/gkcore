@@ -1876,3 +1876,15 @@ merit-only後のnative固定3000frameは、変更前のshared-final-3000.jsonl�
 細かい物理予測のたびに高価な接触探索を行うと、遅いframeで次の分割数が増え、さらに遅れる連鎖になります。次の候補は、局所TRSとFKを各予測刻みで評価する1/120秒以下の予測を維持し、位置接触を公開Update内で最大2回に制限する方式です。これは接触時刻を保つ最適化ではなく、1/60秒を超える区間で接触の時間精度が変わる設計変更として検証します。0.25秒以上・teleport・履歴切れの分割前判定は維持します。
 
 速度をmacro平均root速度へ一律にずらす案は、曲線運動で絶対速度を次の予測へ持ち越す偏りがあるため不採用です。位置接触は区間末尾でまとめて解き、速度補正には最後のmicro予測直前の局所姿勢・骨行列・身体形状・骨方向とmicro幅を渡す方式を採ります。途中履歴は独立所有し、1予測刻みだけの区間は従来と同じ経路を保ちます。最終1/60秒の全trajectory一致、記録した49delta、600frame実時間、GPU描画で採否を判断します。
+
+1/30秒の更新数が4となる旧契約を、接触2回のREDで捕捉して修正しました。120度回転する親から円弧を描くrootの合成modelで、1/30秒に4回の予測・2回の位置/速度接触を確認しました。独立した4回のSingleStepとの全点位置・相対速度一致、最終microのroot差分速度とmacro平均速度の区別、骨と仮想tipの長さを検査しています。0.25秒の直前のdouble値では30回の予測・2回の接触のまま全点有限です。1/60秒と1/30秒の両方で、成功に必要な最小確保回数の1回手前を失敗させ、公開状態・pose・cache・各配列を保持しました。独立agentもmicro直前履歴の時刻、借用先の寿命、終端履歴、1予測時の従来経路を確認しています。
+
+bounded構成の全CPUテストはDebug/Release各68/68成功、全体11.17/8.03秒でした。最終v142 native Debug/Releaseと、ゲーム構築用390ファイルの5 exampleもbuild成功です。従来失敗した49deltaのnative再生も49frame完走しました。SDK61ファイルの許可リスト、consumerへ配置した22 runtimeファイルのbyte一致を確認し、ここまでの変更をdev b9fe51cへ保存しました。固定長時間と製品DLLの実時間確認は続けます。
+
+最終bounded構成の固定1/60秒3000frameも完走し、shared-final、merit-only、位置検算の置換後、boundedの4つの全traceがbyte一致しました。SHA-256はb821bdaff857cde3258592a7bb903d35575b334007542e4ee632133aeccd2228です。固定刻みの最大34.330172度・p99 12.628354度・45/90度超0回を保ちます。49deltaの旧max30との比較は別記録で、最大角172.804→158.268度に対しp99 108.667→109.297度、root相対移動速度p99 1.2674→1.3527m/sと増加もあります。双方の最大角は長時間区間で発生し、固定root差0、同じframe48終端は一致しました。低頻度で同じ品質とは主張せず、区間内の通過も保証しません。
+
+最終SDKの通常製品DLLで、可視1280×720・VSyncなし・標準効果・頂点補正/debug表示OFFの単独実時間600frame/warmup0は完走しました。17.929FPS、p95 63.230ms、secondary49.415ms、Draw0.480/Present5.272/IK0.543msです。同じbenchmark objectとpublic APIをSDKのgkcore.libへリンクし直し、capture DLLを参照しないimport tableと、実行先gkcore.dllのSDKとのbyte一致を確認しています。CPU buildと他のGPU試験は同時実行していません。以前の可視174frame停止と、capture用600frame成功・delta集計を分けて記録します。300FPSと揺れもの全体の完成は未達です。
+
+最終b9fe51cの開始0/2.1秒・Debug/Release各120frame、計480frameの実GPU検証も逐次実行して全てexit0でした。pose・skinning・skin点・meshのinvalidは0、Skirt確認440点の侵入は0、位置誤差0・法線最大誤差1.78813934e-7です。両構成間に加え、変更前shared-final-gpuの各同条件とも全record・IK pose・再生時刻・全画像pixelが一致しました。Jacket/Shirtの残存侵入も同じです。既存ReloadServer診断は2行×4起動あり、他のERRは0でした。記録はshared-time-gpu-*とshared-step-diagnostics/bounded-final-gpu-summary.jsonです。最終640×480画像も確認しました。再現には`build/native-validation/shared-time-captures.ps1 -Configuration Debug -MotionSet skinning -SkinningPreset -WeightedConfig samples/config/yumeka-skinning-contact-points.txt -StartSeconds 2.1 -Frames 120 -DetailFrame -1`とRelease/開始0指定を使います。
+
+最終SDKだけを使うconsumerはInit・Scene/UI描画・Present・Shutdownまで実GPUでexit0でした。390許可ファイル、SDK61ファイル、配置runtime22ファイルの一致を最終確認し、ゲーム構築用treeをmain d859c8cへ通常pushしました。tests・検証ツール・匿名fixture・私有asset・開発記録は含めません。devのcodeはb9fe51cです。削除は以前の自動承認レビューで拒否されているため別手段では実行せず、一時生成物の整理は未完了のままです。現在buildと最新検証記録、元assetを保持しています。
