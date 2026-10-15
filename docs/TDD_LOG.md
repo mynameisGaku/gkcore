@@ -1908,3 +1908,23 @@ Jacket107球を足す636候補は短期120frameでJacketの侵入を0にしま�
 近反平行境界の実回転を使うclear witnessを専用テストへ補強し、Debug/Release各targetが成功しました。旧755/異なる旧757入力2件は、近接したclear制約も含む独立SQPでfloat保存後の全制約validatorが成功しましたが、旧758は最大31.47µmが残り未解決です。Runtime探索には採用していません。最新636停止入力と旧758入力の同一性も未確認であり、原因全体の解決とは扱いません。probeは終了し、次の探索改善用にsolver-stall-probe-summary.jsonへ入力/validator hashを保存しています。
 
 557球と近反平行補強後の最終CPU全体はDebug/Release各69/69成功、10.83/7.05秒でした。コード・設定をdev 6c2abf7へ通常pushし、ゲーム構築用treeはmain e8df6c8へ通常push済みです。公開文書も専用生成ツールで整形し直し、最終392trackedファイルと新規生成treeの全byte一致、tests/検証ツール/私有asset/開発記録の除外を確認しました。rootのbranchはdev、両checkoutの作業treeはcleanです。SDK consumerと実時間600frameで使った通常DLLはpackage-summary.jsonのhashと一致します。以前の削除拒否を別手段で迂回せず、一時生成物の整理は未完了です。
+
+## 身体表面の照合とシャツの接触漏れ
+
+557球の開始0秒で未登録だった33727を追加した558球は、固定1/60秒3,000frameと開始0/2.1秒のDebug/Release各120frameを完走しました。さらに固定寄与19.6173%を持つ33713も可動寄与80.3827%があり、既存fitの全5weightとoffsetを保つ559球候補を検証しました。元557の全data行と2mm半径を維持し、bone寄与の省略・独自正規化・元asset変更は行っていません。33713/33727両方の身体proxy侵入は、559の両開始時刻・全120frameで0です。
+
+開発capture用のModelSkinSurfaceCaptureへ、実描画indexをSparseVertexMapで元位置IDへ写すsnapshotを追加しました。通常のfacesをfanで三角形に分け直さず、同じbody nodeの全segment、別ID、三角形の並び、補正後float位置、全衣服sampleと身体形状を保持します。環境指定frameだけ独立したJSON行を出し、失敗は通常のskin一致判定へ伝播しません。身体bindingの追加出力は既存形式を再利用し、元weight合計も保存します。bone単位の元寄与は正規化weight×合計で復元できますが、同boneのcluster個別値やbit完全復元を保証しません。
+
+専用stubの未実装/複数segment不保持をREDで確認し、実indexの並び、複数同body segment、非weld、float補正、12種類の不正入力、Build/Encodeの全確保失敗境界と出力保持をGREENにしました。最終CPUはWindows11Pro26200・MSVC19.51・SDK10.0.28000.0のDebug/Release各70/70成功、11.04/7.07秒です。native captureもv142/MSVC19.29.30159・SDK10.0.22621.0で両構成build成功。別agentが実index対応、浮動小数/範囲、出力保持、JSON、通常DLL/SDK対象への非混入をread-only監査し、対象hashの一致を確認しました。後続のbodybinding小差分も独立監査済みです。
+
+実GPUはRTX4070SUPER driver617.42・Windows11Pro26200。開始0/frame54と2.1/frame20で、Body(node2)7272位置とYumeka_Body(node3)13197位置を別々に保存しました。同poseの衣服1314点・身体8形状・時刻・IKが一致し、unionは20469位置/38442triです。Bodyは頭側で対象衣服から249.6mm以上離れ、近傍面は全てYumeka_Bodyでした。Yumeka_Bodyは26372tri/20境界辺、Bodyとの継目も4.208〜5.476mm離れ、weld1µmでも閉じません。開いたmeshの内外は自動合格にしていません。
+
+開始0/frame54の559では、33713のHips/Spine近傍面に対する負側距離が9.100→0.501mmへ減りました。しかし33713は6方向rayの符号和2、33727は1のままです。最も近い面がHips/Spine、別sheetがUpperLeg_R/UpperLeg_2_Rであることを全寄与から特定しました。その他の多くのproxy侵入点は近傍面の正側にあり、近似形状の過大被覆と整合しますが、実面全体の外側とは断定しません。開始2.1/frame20では両点のray符号和0で、pose依存です。元身体位置・全三角形・身体形状は558/559で一致します。body binding13197行も全元IDと同順で一致し、surface errorは0です。
+
+現右腿shape5はmodel半径50mmですが、右腿2boneの寄与99%以上の266位置/466triには観測最大84.145mmが必要でした。膝側最大は59.752mmなので、一本の半径を増やす候補は膝側を約24.394mm過大に覆います。この候補は未採用です。次は先細りを表す複数capsuleの配置と、小球・重み付き接触との両立を検証します。集計、近傍面/ray、全bone寄与、未採用cfg根拠と二視点の診断図はbuild/native-validation/garment-surface以下に保存しています。
+
+559の固定3,000frameも完走しました。既存analyze.pyをそのまま使う557→558→559比較で、after方向変化最大63.075→55.911→44.408度、45度超1→3→0件です。一方p99は12.649→12.719→12.856度、root相対変位最大52.915→58.725→74.151mmと増加しました。全体改善とはせず、90度超0・root固定差0・骨長差最大0.394µmを分けて記録します。beforeは純animationでない点にも注意します。記録は557-558-559-fixed3000-trajectory-summary.jsonです。
+
+559の開始0/2.1秒・Debug/Release各120frame、計480frameは全てexit0でした。通常の検証6type・surface snapshot全payload・IK/時刻各120行・animation map・保存PPM全byte/pixelが両構成で一致し、surface errorは全0です。Release開始0だけのbodybinding13197行は分けて比較しました。Shirtのproxy平均は557比で開始0が6.975→6.808333、2.1秒が8.991667→8.958333。残存16/15IDを除外せず保存しています。Jacket/Skirtと追加2IDは全caseの全120frameでproxy侵入0ですが、実身体面の問題解消とは扱いません。最終集計はfinal-559-fourcase-gpu-parity-and-557-proxy-summary.jsonです。
+
+通常SDKの製品DLLによる可視600frame/warmup0もcompleted=true・exit0でした。17.046FPS、p95 66.921ms、secondary52.586ms、Draw0.451/Present5.014/IK0.548msです。CPU解析/build・他GPU試験を止めて実行し、配置DLLとSDKのSHA256 2df678343d5392a52a108920e66651798090de7f614847674a2ab346ec56b32eの一致を確認しました。Runtimeのソース変更はありません。今回のCMakeを公開用生成関数へ通すと既存mainのCMakeと同一になり、392個の公開許可ファイルに新診断と私有設定は含まれません。記録はproduct-559-realtime600.logとproduct-curation-summary.jsonです。検証後に設定を559球へ更新し、元557の全data行保持・全改行/BOM/formatterを確認してdevへ保存します。

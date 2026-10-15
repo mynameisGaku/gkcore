@@ -229,6 +229,12 @@ native全体はDebug78/78件（571.96秒）、Release78/78件（509.18秒）、C
 
 `GKCORE_SKIN_POINT_DETAIL_PENETRATIONS=1`では、選択したskin点のうち身体形状へ侵入した点だけを全frameで記録します。`gkcore_model_skin_penetration_frame`は位置ID、mesh名、最も深い身体形状番号、描画と同じ位置、侵入深さを含み、`positionSource`は`rendered skin`です。既存のframe指定詳細が使う`pre-contact sparse skin`とは区別してください。この出力は`GKCORE_SKIN_POINT_MESH_SUMMARY`なしでも有効で、点選択・描画・接触判定を変更しません。対象外の頂点やtriangle内部の交差は調べません。
 
+身体形状と実際の身体面を比べるには、`GKCORE_SKIN_SURFACE_MESH=Yumeka_Body`と`GKCORE_SKIN_SURFACE_FRAME=54`を指定します。mesh名はsource nodeの完全一致で選び、同名nodeが複数ある場合は診断を失敗させます。選択frameの`gkcore_model_skin_surface_mesh`には全描画segmentの名前と位置範囲、`gkcore_model_skin_surface_capture`には指定meshの全位置、実描画indexを`SparseVertexMap`で元位置IDへ写した三角形、選択衣服点、身体形状が入ります。面をfanで三角形に分け直さず、元の頂点の並びと別IDを保持します。位置は描画と同じfloatへの保存と接触補正を適用したCPU参照で、instance共通SRTの前のmodel空間です。衣服点の半径は加えません。
+
+`GKCORE_SKIN_SURFACE_BINDINGS=1`を併用すると、そのframeの身体位置へ既存の`gkcore_skin_binding_point`も出力します。`weight`はboneごとにまとめた正規化値、`originalWeightSum`は正規化前の合計で、両者の積から元のbone寄与を復元できます。元の複数bone寄与を保って接近している身体部位を確認します。snapshot作成や追加診断に失敗した場合は`gkcore_model_skin_surface_error`を出し、通常のskin一致検査とは分けます。通常DLLとSDKにはこれらの出力機能を含めません。
+
+身体面の解析では、三角形までの最短距離と近傍面の向き、辺の共有数と開口位置を併記します。面に開口がある場合や、変形で複数の面が重なる場合は、近傍面の法線や一方向のrayだけで内外を断定できません。身体の球・カプセルへの侵入数が0でも、実際の身体面との非貫通を示すものではありません。
+
 点位置は補正前のsparse skin、sphere位置は現在の描画FK、身体は直近Updateのshape snapshotです。頂点補正はOFFの状態で調べます。今回のloop frame81では30点が侵入し、最深は`Yumeka_Cos_Skirt`のposition31877/local28、UpperLeg_L capsuleへ深さ.03001297でした。Skirt_3_L.002/Skirt_4_L.002へ約68%/32%で、腰などのweightはありません。対応sphereからはそれぞれ.03696/.09170離れています。これは小球が実skin面を覆いきれないcaseで、骨の接触成立だけから布の非侵入を導けません。記録は`build/native-validation/secondary-skin-detail-frame81.json`です。
 
 ## 複数鎖を結ぶ接触線分

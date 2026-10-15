@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: NOASSERTION
 #include "tests/support/ModelSkinPointsCapture.h"
+#include "tests/support/ModelSkinSurfaceCapture.h"
 
 #include "core/Context.h"
 #include "model/animation/AModelAnimationSource.h"
@@ -62,6 +63,10 @@ bool EmitSkinBindingDump(uint32_t frame, const gk::model::AModelAnimationSource&
  * 元の点選択を保ち、描画位置の身体接触をmeshごとに記録する。
  */
 bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FVector3d>& positions, const gk::model::FModelSecondaryMotionState& secondary);
+/**
+ * 指定frameだけ、実描画indexで構成した身体面と衣服点を独立した診断へ保存する。
+ */
+void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& resource, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::Array<gk::model::animation::FModelSkinPointCorrection>& corrections, const gk::model::FModelSecondaryMotionState* secondary);
 
 }
 
@@ -280,6 +285,7 @@ extern "C" GKCORE_API int VerifyModelSkinPointsForTesting(gk::ModelHandle model,
         }
     }
     const bool contactClear = contactTested && pointPenetrationCount == 0;
+    EmitSelectedSkinSurface(frame, *resource, *source, *geometry, selectedIds, reference, corrections, secondary);
     EmitReport(frame, evaluatedPoints.Count(), eligibleCount, shapeCount, maximumError, pointPenetrationCount, pointShapeContactCount, maximumPenetrationDepth, contactTested, contactClear, matchesReference);
     if (contactTested && (getenv("GKCORE_SKIN_POINT_MESH_SUMMARY") || getenv("GKCORE_SKIN_POINT_DETAIL_PENETRATIONS")) && !EmitMeshContactReports(frame, *source, *geometry, selectedIds, evaluatedPoints, *secondary))
     {
@@ -547,6 +553,113 @@ bool FindPointSegment(const FModelGpuSkinningGeometry& geometry, uint32_t positi
         found = true;
     }
     return found;
+}
+
+/**
+ * 面の保存失敗を、通常のskin一致判定と分けて記録する。
+ */
+void EmitSkinSurfaceError(uint32_t frame, const char* message)
+{
+    fprintf(stderr, "{\"type\":\"gkcore_model_skin_surface_error\",\"frame\":%u,\"valid\":false,\"message\":", frame);
+    EmitJsonString(message);
+    fprintf(stderr, "}\n");
+}
+
+void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& resource, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::Array<gk::model::animation::FModelSkinPointCorrection>& corrections, const gk::model::FModelSecondaryMotionState* secondary)
+{
+    // どちらも未指定なら、面の診断用処理は行わない。
+    const char* meshName = getenv("GKCORE_SKIN_SURFACE_MESH");
+    const char* frameValue = getenv("GKCORE_SKIN_SURFACE_FRAME");
+    if (!meshName && !frameValue)
+    {
+        return;
+    }
+    // 指定した一つのframeだけ、重い位置と三角形の保存を行う。
+    uint32_t surfaceFrame = 0;
+    if (!meshName || !meshName[0] || !frameValue || !ParseDetailFrame(frameValue, surfaceFrame))
+    {
+        if (frame == 0)
+        {
+            EmitSkinSurfaceError(frame, "GKCORE_SKIN_SURFACE_MESH and a nonnegative uint32 GKCORE_SKIN_SURFACE_FRAME are required");
+        }
+        return;
+    }
+    if (frame != surfaceFrame)
+    {
+        return;
+    }
+    // node名だけで身体を推測せず、実際に描画されるmesh範囲も保存する。
+    for (uint32_t segmentIndex = 0; segmentIndex < geometry.segments.Count(); ++segmentIndex)
+    {
+        const auto& segment = geometry.segments.At(segmentIndex);
+        const char* segmentName = source.BoneName(segment.nodeIndex);
+        if (!segmentName)
+        {
+            EmitSkinSurfaceError(frame, "a drawing mesh segment has no source node name");
+            return;
+        }
+        fprintf(stderr, "{\"type\":\"gkcore_model_skin_surface_mesh\",\"frame\":%u,\"segmentIndex\":%u,\"nodeIndex\":%u,\"firstPosition\":%u,\"positionCount\":%u,\"meshName\":", frame, segmentIndex, segment.nodeIndex, segment.firstPosition, segment.positionCount);
+        EmitJsonString(segmentName);
+        fprintf(stderr, "}\n");
+    }
+    // 同名nodeが複数ある場合は、別のmeshを推測して選ばない。
+    uint32_t bodyNode = UINT32_MAX;
+    for (uint32_t bone = 0; bone < source.Skeleton().parents.Count(); ++bone)
+    {
+        const char* boneName = source.BoneName(bone);
+        if (boneName && strcmp(boneName, meshName) == 0)
+        {
+            if (bodyNode != UINT32_MAX)
+            {
+                EmitSkinSurfaceError(frame, "the body mesh node name is ambiguous");
+                return;
+            }
+            bodyNode = bone;
+        }
+    }
+    // 実描画cornerからunique位置への対応を借用し、faceを三角形へ作り直さない。
+    const auto* vertexMap = source.SparseVertexMap();
+    if (bodyNode == UINT32_MAX || !vertexMap)
+    {
+        EmitSkinSurfaceError(frame, "the body mesh node or sparse drawing vertex map is unavailable");
+        return;
+    }
+    // 揺れものがない構成も、身体形状なしの面診断として扱う。
+    const gk::Array<gk::model::animation::FModelSecondaryMotionCollisionShape> emptyShapes;
+    const auto& shapes = secondary ? secondary->previousCollisionShapes : emptyShapes;
+    // このframeの身体面と衣服点を、書込み完了まで所有する。
+    gk::testing::FModelSkinSurfaceCapture snapshot;
+    // 正常に組み立てられた一行だけを出力するための作業領域。
+    gk::String output;
+    // 通常のskin検証とは別に扱う面診断の失敗理由。
+    gk::String error;
+    if (!gk::testing::BuildModelSkinSurfaceCapture(geometry, *vertexMap, resource.indices, bodyNode, meshName, reference, corrections, selectedIds, shapes, snapshot, error) || !gk::testing::EncodeModelSkinSurfaceCapture(frame, snapshot, output, error))
+    {
+        EmitSkinSurfaceError(frame, error.Empty() ? "body surface capture failed" : error.CStr());
+        return;
+    }
+    // 全行を組み立てられた場合だけ書き込み、途中までのJSONを残さない。
+    fputs(output.CStr(), stderr);
+    if (output.Empty() || output.CStr()[output.Length() - 1u] != '\n')
+    {
+        fputc('\n', stderr);
+    }
+    // 面の所属部位を調べる場合だけ、元body位置の全bone寄与も既存形式で保存する。
+    const char* bindingsFlag = getenv("GKCORE_SKIN_SURFACE_BINDINGS");
+    if (bindingsFlag && strcmp(bindingsFlag, "1") == 0)
+    {
+        // body位置を重複なく要求し、三角形cornerの重複出力を避ける。
+        gk::Array<uint32_t> bodyIds;
+        bool prepared = bodyIds.Reserve(snapshot.bodyPoints.Count());
+        for (uint32_t index = 0; prepared && index < snapshot.bodyPoints.Count(); ++index)
+        {
+            prepared = bodyIds.Append(snapshot.bodyPoints.At(index).positionId);
+        }
+        if (!prepared || !EmitSkinBindingDump(frame, source, geometry, bodyIds, secondary, error))
+        {
+            EmitSkinSurfaceError(frame, !prepared ? "body binding ID allocation failed" : error.CStr());
+        }
+    }
 }
 
 bool EmitMeshContactReports(uint32_t frame, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::Array<FVector3d>& positions, const gk::model::FModelSecondaryMotionState& secondary)
@@ -874,7 +987,7 @@ bool EmitSkinBindingDump(uint32_t frame, const gk::model::AModelAnimationSource&
         }
         fprintf(stderr, "{\"type\":\"gkcore_skin_binding_point\",\"frame\":%u,\"positionId\":%u,\"segmentIndex\":%u,\"meshNode\":%u,\"meshName\":", frame, positionId, segmentIndex, segment.nodeIndex);
         EmitJsonString(source.BoneName(segment.nodeIndex));
-        fprintf(stderr, ",\"meshPositionId\":%u,\"bindPosition\":[%.17g,%.17g,%.17g],\"bindings\":[", positionId - segment.firstPosition, bindPosition.value[0], bindPosition.value[1], bindPosition.value[2]);
+        fprintf(stderr, ",\"meshPositionId\":%u,\"bindPosition\":[%.17g,%.17g,%.17g],\"originalWeightSum\":%.17g,\"bindings\":[", positionId - segment.firstPosition, bindPosition.value[0], bindPosition.value[1], bindPosition.value[2], totalWeight);
         for (uint32_t index = 0; index < bindings.Count(); ++index)
         {
             if (index > 0)

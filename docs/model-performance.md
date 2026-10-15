@@ -257,3 +257,7 @@ Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh�
 557球構成はJacket11球・Shirt17球を追加し、固定1/60秒3000frameと通常製品DLLの可視600frame/warmup0を完走しました。後者は同じRTX4070SUPER・1280×720・VSyncなし・標準効果・debug表示/頂点補正OFFの単独実行で17.690FPS、p95 67.007ms、secondary50.437ms、Draw0.422/Present5.047/IK0.555msです。配置DLLとSDKのbyte一致を確認し、他のGPU検証やCPU build/probeは同時実行していません。記録はbuild/native-validation/garment-contact/product-realtime600.logです。529球の17.929FPSとの差を改善とは扱わず、300FPSも未達です。
 
 開始0/2.1秒・Debug/Release計480GPU frameは全検証記録と保存画像が一致し、両区間のSkirt/Jacket確認点は身体形状侵入0です。Shirtの折り返し区間最大は15.459→12.214mm、平均侵入点数10.750→8.992。開始0は平均6.975点/最大12.997mmで変わりません。身体の近似形状への測定で、衣服面全体や実身体meshとの非貫通は未確認です。残存を速度調整で隠さず、接触範囲・身体形状と実mesh・狭い可行領域での探索を次に調べます。
+
+559球の通常製品DLL・可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じYUMEKAと2motion blend＋右腕IK・13鎖・8形状の600frame/warmup0も完走しました。17.046FPS、p95 66.921ms、secondary52.586ms、Draw0.451/Present5.014/IK0.548msです。CPU解析/buildと他GPU試験を止めた単独実行で、配置DLLはSDKのgkcore.dllとbyte一致（SHA256 2df678343d5392a52a108920e66651798090de7f614847674a2ab346ec56b32e）です。557球の17.690FPSからの速度改善とは扱わず、300FPSは未達です。記録はbuild/native-validation/garment-surface/product-559-realtime600.logです。
+
+固定3000frameの557→559比較では方向変化最大63.075→44.408度・45度超1→0件ですが、p99は12.649→12.856度、root相対変位最大52.915→74.151mmへ増えています。接触追加による全体品質向上とは断定しません。通常Updateの時間精度や、連続時間での非貫通も保証しません。新しい身体面の診断により、proxy侵入の減少と実身体面の改善を別々に確認できます。
