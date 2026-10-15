@@ -5,6 +5,7 @@
 #include "model/animation/ModelSecondaryMotionChainContacts.h"
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionDirection.h"
+#include "model/animation/ModelSecondaryMotionContactMinimax.h"
 
 #include <float.h>
 #include <math.h>
@@ -1535,6 +1536,268 @@ bool ValidateChains(const FSecondaryMotionContactChain* chains, uint32_t chainCo
 
 }
 
+/**
+ * 検証済みの接触定義を同じ判定式で評価し、clear行を含めて二配列へ原子的に保存する。
+ */
+bool EvaluateSecondaryMotionContactSignedRows(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, gk::Array<double>& signedValues, gk::Array<double>& tolerances, gk::String& error)
+{
+    error.Clear();
+    if (chainCount > 1024u || anchorCount > 16384u || contactCount > 1024u || (chainCount > 0u && !chains) || (anchorCount > 0u && !anchors) || (contactCount > 0u && !contacts) || (positionCount > 0u && !positions) || &signedValues == &tolerances)
+    {
+        error.Assign("Secondary motion signed contact input is invalid");
+        return false;
+    }
+    // 行数は確保前に数え、補助探索の作業量を制限する。
+    uint64_t rowCount = 0u;
+    for (uint32_t index = 0u; index < chainCount; ++index)
+    {
+        const auto& chain = chains[index];
+        if (chain.firstPoint >= positionCount || chain.segmentCount >= positionCount - chain.firstPoint || chain.shapeCount > 64u || (chain.shapeCount > 0u && !chain.shapes) || chain.attachmentCount > 1024u || (chain.attachmentCount > 0u && !chain.attachments))
+        {
+            error.Assign("Secondary motion signed chain range is invalid");
+            return false;
+        }
+        rowCount += static_cast<uint64_t>(chain.shapeCount) * chain.segmentCount * 2u;
+        for (uint32_t local = 0u; local < chain.attachmentCount; ++local)
+        {
+            const auto& attachment = chain.attachments[local];
+            if (attachment.segmentIndex >= chain.segmentCount || attachment.shapeCount > 64u || (attachment.shapeCount > 0u && !attachment.shapes))
+            {
+                error.Assign("Secondary motion signed attachment range is invalid");
+                return false;
+            }
+            rowCount += attachment.shapeCount;
+        }
+    }
+    for (uint32_t index = 0u; index < contactCount; ++index)
+    {
+        const auto& contact = contacts[index];
+        if (contact.firstAnchor > anchorCount || contact.anchorCount > anchorCount - contact.firstAnchor || contact.anchorCount == 0u || contact.shapeCount > 64u || (contact.shapeCount > 0u && !contact.shapes))
+        {
+            error.Assign("Secondary motion signed weighted range is invalid");
+            return false;
+        }
+        rowCount += contact.shapeCount;
+    }
+    if (rowCount > 65536u)
+    {
+        return false;
+    }
+    for (uint32_t index = 0u; index < positionCount; ++index)
+    {
+        if (!IsFloatPosition(positions[index]))
+        {
+            error.Assign("Secondary motion signed position is invalid");
+            return false;
+        }
+    }
+    gk::Array<double> values;
+    gk::Array<double> widths;
+    gk::Array<gk::FVector3d> anchorPositions;
+    if (!values.Reserve(static_cast<uint32_t>(rowCount)) || !widths.Reserve(static_cast<uint32_t>(rowCount)) || !anchorPositions.Reserve(anchorCount))
+    {
+        error.Assign("Secondary motion signed contact allocation failed");
+        return false;
+    }
+    // この評価中だけ位置を共有し、重み付き行ごとの同じ回転計算を避ける。
+    for (uint32_t index = 0u; index < anchorCount; ++index)
+    {
+        const auto& anchor = anchors[index];
+        gk::FVector3d point = anchor.constantPosition;
+        if (!isfinite(anchor.weight) || !(anchor.weight > 0.0))
+        {
+            error.Assign("Secondary motion signed anchor weight is invalid");
+            return false;
+        }
+        if (anchor.chainIndex != UINT32_MAX)
+        {
+            if (anchor.chainIndex >= chainCount || anchor.segmentIndex >= chains[anchor.chainIndex].segmentCount)
+            {
+                error.Assign("Secondary motion signed anchor range is invalid");
+                return false;
+            }
+            const uint32_t parent = chains[anchor.chainIndex].firstPoint + anchor.segmentIndex;
+            // 反対向きの特異姿勢は入力エラーにせず、今回の候補だけを捨てる。
+            if (IsSingularAttachmentCandidate(anchor.definition, positions[parent], positions[parent + 1u]))
+            {
+                return false;
+            }
+            if (!EvaluateSecondaryMotionAttachmentPosition(anchor.definition, positions[parent], positions[parent + 1u], point, error))
+            {
+                return false;
+            }
+        }
+        if (!IsFloatPosition(point) || !anchorPositions.Append(point))
+        {
+            error.Assign("Secondary motion signed anchor position is invalid");
+            return false;
+        }
+    }
+    // 一方の配列だけを書き換えず、値と保存余白を同じ行番号にそろえる。
+    const auto Append = [&](double value, double tolerance)
+    {
+        if (!isfinite(value) || !isfinite(tolerance) || tolerance < 0.0)
+        {
+            error.Assign("Secondary motion signed contact value is invalid");
+            return false;
+        }
+        if (!values.Append(value) || !widths.Append(tolerance))
+        {
+            error.Assign("Secondary motion signed contact row allocation failed");
+            return false;
+        }
+        return true;
+    };
+    for (uint32_t index = 0u; index < contactCount; ++index)
+    {
+        const auto& contact = contacts[index];
+        gk::FVector3d center{};
+        for (uint32_t local = 0u; local < contact.anchorCount; ++local)
+        {
+            const uint32_t anchor = contact.firstAnchor + local;
+            center = Add(center, Multiply(anchorPositions.At(anchor), anchors[anchor].weight));
+        }
+        for (uint32_t shapeIndex = 0u; shapeIndex < contact.shapeCount; ++shapeIndex)
+        {
+            double penetration = 0.0;
+            double span = 0.0;
+            gk::FVector3d normal{};
+            if (!QueryPreparedSecondaryMotionFreeSegmentContact(contact.shapes[shapeIndex], center, center, penetration, span, normal, error, kWeightedContactToleranceFraction) || !Append(penetration, contact.shapes[shapeIndex].tolerance))
+            {
+                return false;
+            }
+        }
+    }
+    for (uint32_t index = 0u; index < chainCount; ++index)
+    {
+        const auto& chain = chains[index];
+        for (uint32_t shapeIndex = 0u; shapeIndex < chain.shapeCount; ++shapeIndex)
+        {
+            const auto& shape = chain.shapes[shapeIndex];
+            const double rootThreshold = shape.hasRootContactOverride ? GetPreparedSecondaryMotionRootContactThreshold(shape) : 0.0;
+            if (shape.hasRootContactOverride && (!isfinite(rootThreshold) || rootThreshold < 0.0 || rootThreshold > shape.radius))
+            {
+                error.Assign("Secondary motion signed root threshold is invalid");
+                return false;
+            }
+            for (uint32_t segment = 0u; segment < chain.segmentCount; ++segment)
+            {
+                const auto& first = positions[chain.firstPoint + segment];
+                const auto& second = positions[chain.firstPoint + segment + 1u];
+                double penetration = 0.0;
+                double span = 0.0;
+                gk::FVector3d normal{};
+                if (!QueryPreparedSecondaryMotionFreeSegmentContact(shape, second, second, penetration, span, normal, error, 1.0) || !Append(penetration, shape.tolerance))
+                {
+                    return false;
+                }
+                bool skip = false;
+                double rootDistance = 0.0;
+                if (segment == 0u)
+                {
+                    if (!QueryPreparedSecondaryMotionFreeSegmentContact(shape, first, first, penetration, span, normal, error, 0.0))
+                    {
+                        return false;
+                    }
+                    rootDistance = shape.radius - penetration;
+                    skip = shape.hasRootContactOverride ? penetration > shape.radius - rootThreshold : penetration > shape.tolerance;
+                }
+                if (skip)
+                {
+                    if (!Append(-1.0, 0.0))
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+                const bool override = segment == 0u && shape.hasRootContactOverride;
+                if (!QueryPreparedSecondaryMotionFreeSegmentContact(shape, first, second, penetration, span, normal, error, override ? 0.0 : 1.0))
+                {
+                    return false;
+                }
+                double tolerance = shape.tolerance;
+                if (override)
+                {
+                    const double threshold = GetPreparedSecondaryMotionRootSpanThreshold(shape, rootDistance, 1.0);
+                    penetration += threshold - shape.radius;
+                    // .125倍すると、従来のroot側余白の上限と同じ値になる。
+                    tolerance = fmin(tolerance, fmax(0.0, rootDistance - threshold) * 4.0);
+                }
+                if (!Append(penetration, tolerance))
+                {
+                    return false;
+                }
+            }
+        }
+        for (uint32_t local = 0u; local < chain.attachmentCount; ++local)
+        {
+            const auto& contact = chain.attachments[local];
+            if (contact.shapeCount == 0u)
+            {
+                continue;
+            }
+            const uint32_t parent = chain.firstPoint + contact.segmentIndex;
+            gk::FVector3d first{};
+            gk::FVector3d second{};
+            if (IsSingularAttachmentCandidate(contact.firstDefinition, positions[parent], positions[parent + 1u]) || IsSingularAttachmentCandidate(contact.secondDefinition, positions[parent], positions[parent + 1u]))
+            {
+                return false;
+            }
+            if (!EvaluateSecondaryMotionAttachmentPosition(contact.firstDefinition, positions[parent], positions[parent + 1u], first, error) || !EvaluateSecondaryMotionAttachmentPosition(contact.secondDefinition, positions[parent], positions[parent + 1u], second, error))
+            {
+                return false;
+            }
+            for (uint32_t shapeIndex = 0u; shapeIndex < contact.shapeCount; ++shapeIndex)
+            {
+                double penetration = 0.0;
+                double span = 0.0;
+                gk::FVector3d normal{};
+                if (!QueryPreparedSecondaryMotionFreeSegmentContact(contact.shapes[shapeIndex], first, second, penetration, span, normal, error, 0.5) || !Append(penetration, contact.shapes[shapeIndex].tolerance))
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    signedValues.MoveFrom(values);
+    tolerances.MoveFrom(widths);
+    return true;
+}
+
+bool CheckSecondaryMotionWeightedStoredCandidate(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& positions, bool& clear, gk::String& error)
+{
+    error.Clear();
+    clear = false;
+    if (chainCount > 1024u || (chainCount > 0u && (!chains || !references)))
+    {
+        error.Assign("Secondary motion stored candidate input is invalid");
+        return false;
+    }
+    uint64_t referenceCount = 0u;
+    for (uint32_t index = 0u; index < chainCount; ++index)
+    {
+        referenceCount += chains[index].segmentCount;
+    }
+    if (referenceCount > 16384u)
+    {
+        error.Assign("Secondary motion stored candidate references exceed the limit");
+        return false;
+    }
+    uint32_t pointCount = 0u;
+    if (!ValidateChains(chains, chainCount, references, static_cast<uint32_t>(referenceCount), positions, pointCount, error))
+    {
+        return false;
+    }
+    // 配列範囲と数値を検査してから、既存の保存後検査へ渡す。
+    gk::Array<double> signedValues;
+    gk::Array<double> tolerances;
+    if (!EvaluateSecondaryMotionContactSignedRows(chains, chainCount, anchors, anchorCount, contacts, contactCount, positions.Data(), positions.Count(), signedValues, tolerances, error))
+    {
+        return error.Empty();
+    }
+    return IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, positions, clear, error);
+}
+
 #if defined(GKCORE_TESTING)
 /**
  * 専用検査で同じsolverの従来trialと位置専用trialを比較する。
@@ -2015,6 +2278,55 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
     if (!foundClear && !RefineOwnerPrefixFallback(chains, chainCount, references, referenceCount, roots, anchors, anchorCount, contacts, contactCount, maximumIterations, directions, closestAttemptDirections, closestCoupledDirections, positions, bestPositions, bestDisplacementSquared, foundClear, error))
     {
         return false;
+    }
+    if (!foundClear)
+    {
+        // 等式の侵入二乗和で停滞した場合だけ、clear行も保つ片側制約で補助探索する。
+        const gk::Array<gk::FVector3d>* base = &directions;
+        if (referenceCount > 0u && closestCoupledDirections.Count() == referenceCount)
+        {
+            base = &closestCoupledDirections;
+        }
+        else if (referenceCount > 0u && closestAttemptDirections.Count() == referenceCount)
+        {
+            base = &closestAttemptDirections;
+        }
+        gk::Array<gk::FVector3d> minimaxPositions;
+        bool minimaxClear = false;
+        if (!RefineSecondaryMotionContactMinimax(chains, chainCount, references, referenceCount, anchors, anchorCount, contacts, contactCount, roots, *base, minimaxPositions, minimaxClear, error, maximumIterations))
+        {
+            return false;
+        }
+        if (minimaxClear)
+        {
+            gk::Array<gk::FVector3d> minimaxDirections;
+            for (uint32_t chainIndex = 0u; chainIndex < chainCount; ++chainIndex)
+            {
+                const auto& chain = chains[chainIndex];
+                for (uint32_t segment = 0u; segment < chain.segmentCount; ++segment)
+                {
+                    const uint32_t parent = chain.firstPoint + segment;
+                    auto direction = Subtract(minimaxPositions.At(parent + 1u), minimaxPositions.At(parent));
+                    if (!Normalize(direction) || !minimaxDirections.Append(direction))
+                    {
+                        error.Assign("Secondary motion minimax direction allocation or value is invalid");
+                        return false;
+                    }
+                }
+            }
+            gk::Array<gk::FVector3d> minimaxGradients;
+            gk::Array<FWeightedAnchorEvaluation> minimaxAnchors;
+            bool preserved = false;
+            if (!ContractClearCandidate(chains, chainCount, references, roots, directions, anchors, anchorCount, contacts, contactCount, minimaxDirections, minimaxPositions, minimaxGradients, minimaxAnchors, preserved, error))
+            {
+                return false;
+            }
+            if (preserved)
+            {
+                bestPositions.MoveFrom(minimaxPositions);
+                foundClear = true;
+            }
+        }
     }
     if (!foundClear)
     {

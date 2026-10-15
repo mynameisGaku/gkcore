@@ -267,3 +267,11 @@ Debug/Release各2区間×120frame、計480frameのGPU位置・法線、全mesh�
 2026-10-16、通常探索が全て失敗した場合だけ、最大2鎖の必要な祖先を個別に傾ける探索を追加しました。最大3回・36追加候補で打ち切り、各候補の反復上限32と保存後の全接触検査を保ちます。公式559球・8身体形状・骨球0.038の構成は変えていません。固定1/60秒3000frameの全軌跡と、開始0/2.1秒・Debug/Release計480GPU frameの記録・画像は変更前と一致しました。実身体を覆う複数capsule候補の停止を解消した結果ではありません。
 
 Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.22621.0、通常Release製品DLL・可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、YUMEKA＋Skinning Test/Swinging blend＋右腕IK・13鎖の単独600frame/warmup0は完走しました。17.714FPS、p95 67.624ms、secondary50.190ms、Draw0.568/Present5.090/IK0.538msです。CPU解析/buildや他GPU検査を同時実行せず、配置DLLとSDKのSHA256 b303f4ac1cf2e73263acc61b742ab715b373b1a3b11d171e68f44ab86b5da460の一致、capture DLLを参照しないことを確認しました。実時間の更新履歴が異なるため前回17.046FPSからの速度改善とは扱いません。300FPSは未達です。記録はbuild/native-validation/tapered-thigh/product-final-owner-realtime600.logです。
+
+## 接触条件を同時に扱う補助探索の確認
+
+2026-10-16、従来候補が全て失敗した場合だけ、最大侵入を減らしつつ離れた接触も保つ探索を追加しました。65変数・4096条件・65536係数を上限とし、保存後の全接触検査を維持します。未採用の追加脚capsule設定で以前停止した最初の1/120秒は解けましたが、次の1/120秒は未解決です。公開Update全体の停止解消や新しい身体設定の採用とは扱いません。
+
+公式559球・8身体形状・骨球0.038の固定1/60秒3000frameは完走し、全traceが変更前とbyte一致しました。開始0/2.1秒・Debug/Release計480GPU frameの全記録と4枚の最終画像も一致しています。身体proxyとの一致であり、衣服面と実身体meshの非貫通は未達です。
+
+同じWindows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0、通常Release製品DLL、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、YUMEKA＋Skinning Test/Swinging blend＋右腕IK＋13鎖で、単独600frame/warmup0は完走しました。17.441FPS、p95 67.747ms、secondary51.058ms、Draw0.459/Present5.179/IK0.570msです。CPU解析/buildや他GPU検査は同時実行せず、配置DLLとSDKのSHA256 4bac8b4befb3ac3c83746c17906ed4f78e801e3c528dfe9ae17c5b4d084e9d43の一致、capture DLLを参照しないことを確認しました。実時間の更新履歴が異なるため前回との差を固定負荷の速度比較とは扱いません。300FPSは未達です。記録はbuild/native-validation/contact-feasibility-20261016/product-realtime600.logです。

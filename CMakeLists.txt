@@ -62,7 +62,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionSolver.cpp
     src/model/animation/ModelSecondaryMotionDirection.cpp
     src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp
-    src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp
+    src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionContactMinimax.cpp src/model/animation/FSecondaryMotionContactInequalitySystem.cpp
     src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionContactVelocity.cpp
     src/model/animation/ModelSecondaryMotionStep.cpp
@@ -187,8 +187,14 @@ if(GKCORE_BUILD_TESTS)
     target_compile_definitions(gkcore_model_secondary_motion_contact_linear_system_tests PRIVATE GKCORE_TESTING=1)
     gkcore_enable_warnings(gkcore_model_secondary_motion_contact_linear_system_tests)
     add_test(NAME gkcore.model_secondary_motion_contact_linear_system COMMAND gkcore_model_secondary_motion_contact_linear_system_tests)
+    add_executable(gkcore_model_secondary_motion_contact_inequality_tests tests/model_secondary_motion_contact_inequality_tests.cpp src/model/animation/FSecondaryMotionContactInequalitySystem.cpp src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
+    target_compile_features(gkcore_model_secondary_motion_contact_inequality_tests PRIVATE cxx_std_17)
+    target_include_directories(gkcore_model_secondary_motion_contact_inequality_tests PRIVATE include src)
+    target_compile_definitions(gkcore_model_secondary_motion_contact_inequality_tests PRIVATE GKCORE_TESTING=1)
+    gkcore_enable_warnings(gkcore_model_secondary_motion_contact_inequality_tests)
+    add_test(NAME gkcore.model_secondary_motion_contact_inequality COMMAND gkcore_model_secondary_motion_contact_inequality_tests)
     add_executable(gkcore_model_secondary_motion_weighted_contacts_tests tests/model_secondary_motion_weighted_contacts_tests.cpp
-        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionContactMinimax.cpp src/model/animation/FSecondaryMotionContactInequalitySystem.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_weighted_contacts_tests PRIVATE include src)
@@ -196,7 +202,7 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_secondary_motion_weighted_contacts_tests)
     add_test(NAME gkcore.model_secondary_motion_weighted_contacts COMMAND gkcore_model_secondary_motion_weighted_contacts_tests)
     add_executable(gkcore_model_secondary_motion_contact_reach_tests tests/model_secondary_motion_contact_reach_tests.cpp
-        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionContactMinimax.cpp src/model/animation/FSecondaryMotionContactInequalitySystem.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_contact_reach_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_contact_reach_tests PRIVATE include src)
@@ -204,7 +210,7 @@ if(GKCORE_BUILD_TESTS)
     gkcore_enable_warnings(gkcore_model_secondary_motion_contact_reach_tests)
     add_test(NAME gkcore.model_secondary_motion_contact_reach COMMAND gkcore_model_secondary_motion_contact_reach_tests)
     add_executable(gkcore_model_secondary_motion_merit_only_tests tests/model_secondary_motion_merit_only_tests.cpp
-        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
+        src/model/animation/ModelSecondaryMotionWeightedContacts.cpp src/model/animation/ModelSecondaryMotionContactReach.cpp src/model/animation/ModelSecondaryMotionContactMinimax.cpp src/model/animation/FSecondaryMotionContactInequalitySystem.cpp src/model/animation/ModelSecondaryMotionChainContacts.cpp src/model/animation/FSecondaryMotionContactLinearSystem.cpp src/model/animation/ModelSecondaryMotionDirection.cpp src/model/animation/ModelSecondaryMotionAttachments.cpp src/model/animation/ModelSecondaryMotionCollision.cpp
         src/foundation/Memory.cpp src/foundation/Array.cpp src/foundation/String.cpp)
     target_compile_features(gkcore_model_secondary_motion_merit_only_tests PRIVATE cxx_std_17)
     target_include_directories(gkcore_model_secondary_motion_merit_only_tests PRIVATE include src)

@@ -5,6 +5,7 @@
 #include "model/animation/ModelSecondaryMotionCollision.h"
 #include "model/animation/ModelSecondaryMotionDirection.h"
 #include "model/animation/ModelSecondaryMotionChainContacts.h"
+#include "model/animation/ModelSecondaryMotionContactMinimax.h"
 #include "foundation/Memory.h"
 
 #include <float.h>
@@ -556,7 +557,7 @@ bool TestCapturedWeightedContactCluster()
     if (!HasCapturedFixtureConstraints(chains, 4u, references, anchors, contacts, 8u, initialPositions, positions, error))
         return Fail(error.Empty() ? "the captured solve violated a stored root, length, cone, body, or weighted constraint" : error.CStr());
 
-    // 無関係な鎖を追加して連立方向数の上限を超え、姿勢を変えずに戻ることを確かめる。
+    // 無関係な鎖で従来の連立方向数上限を超えても、接触に必要な方向だけを解く。
     // 上限を超える追加鎖の数。
     const uint32_t unrelatedChainCount = 256u;
     // 元の接触鎖と追加鎖を含む入力範囲。
@@ -596,10 +597,14 @@ bool TestCapturedWeightedContactCluster()
     // 元の16方向と追加256方向で、合計272方向を構成する。
     if (expandedChains[0].segmentCount + expandedChains[1].segmentCount + expandedChains[2].segmentCount + expandedChains[3].segmentCount + unrelatedChainCount != 272u)
         return Fail("the direction-cap fixture does not exceed the coupled solve limit");
-    if (ResolvePreparedSecondaryMotionWeightedContacts(expandedChains, 4u + unrelatedChainCount, expandedReferences, 16u + unrelatedChainCount, anchors, 25u, contacts, 8u, expandedPositions, error, 32u) || !error.Empty())
-        return Fail(error.Empty() ? "the direction-cap case unexpectedly resolved the captured failing input" : error.CStr());
-    if (expandedPositions.Count() != expandedSnapshot.Count() || memcmp(expandedSnapshot.Data(), expandedPositions.Data(), sizeof(gk::FVector3d) * expandedSnapshot.Count()) != 0)
-        return Fail("the direction-cap case changed positions before returning unresolved");
+    if (!ResolvePreparedSecondaryMotionWeightedContacts(expandedChains, 4u + unrelatedChainCount, expandedReferences, 16u + unrelatedChainCount, anchors, 25u, contacts, 8u, expandedPositions, error, 32u) || !error.Empty())
+    {
+        return Fail(error.Empty() ? "必要な方向だけの探索が、全方向数の上限を超える成立可能な入力を解けません" : error.CStr());
+    }
+    if (expandedPositions.Count() != expandedSnapshot.Count() || !HasCapturedFixtureConstraints(expandedChains, 4u + unrelatedChainCount, expandedReferences, anchors, contacts, 8u, expandedSnapshot.Data(), expandedPositions, error) || memcmp(expandedSnapshot.Data() + 20u, expandedPositions.Data() + 20u, sizeof(gk::FVector3d) * (expandedSnapshot.Count() - 20u)) != 0)
+    {
+        return Fail("必要な方向だけの探索が全保存条件を破るか、無関係な鎖を書き換えました");
+    }
     return true;
 }
 
@@ -1843,6 +1848,224 @@ bool TestCurrentInputContactContinuationAndStoredWitness()
 }
 
 /**
+ * 片側制約の成立姿勢と、確保・特異姿勢による原子的な失敗を確認する。
+ */
+bool TestMinimaxStoredSuccessAndBoundedFailure()
+{
+    // 一つの骨と球で、接触を解いた結果のroot・骨長・全接触を調べる。
+    const FModelSecondaryMotionCollisionShape body{ { 1.0f, 0.1f, 0.0f }, { 1.0f, 0.1f, 0.0f }, 0.2f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> shapes;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&body, 1u, shapes, error))
+    {
+        return false;
+    }
+    FSecondaryMotionContactChain chain{};
+    chain.segmentCount = 1u;
+    chain.cosineLimit = -1.0;
+    chain.shapes = shapes.Data();
+    chain.shapeCount = 1u;
+    const FSecondaryMotionReferenceSegment reference{ { { 1.0, 0.0, 0.0 } }, 1.0 };
+    gk::Array<gk::FVector3d> roots;
+    gk::Array<gk::FVector3d> directions;
+    gk::Array<gk::FVector3d> result;
+    const gk::FVector3d sentinel{ { 13.0, 14.0, 15.0 } };
+    if (!roots.Append({ { 0.0, 0.0, 0.0 } }) || !directions.Append(reference.direction) || !result.Append(sentinel))
+    {
+        return false;
+    }
+    bool found = false;
+    if (!RefineSecondaryMotionContactMinimax(&chain, 1u, &reference, 1u, nullptr, 0u, nullptr, 0u, roots, directions, result, found, error, 32u) || !found || result.Count() != 2u || memcmp(&result.At(0u), &roots.At(0u), sizeof(gk::FVector3d)) != 0 || fabs(Distance(result.At(0u), result.At(1u)) - 1.0) > 1.0e-12)
+    {
+        return Fail("片側制約の探索が単骨のrootと骨長を保って接触を解けません");
+    }
+    bool clear = false;
+    if (!CheckSecondaryMotionWeightedStoredCandidate(&chain, 1u, &reference, nullptr, 0u, nullptr, 0u, result, clear, error) || !clear || !error.Empty())
+    {
+        return Fail("片側制約の探索結果が保存後の全検査を通りません");
+    }
+    // 異なる確保段階で中止しても、結果配列を部分変更しない。
+    const uint32_t failurePoints[7] = { 0u, 1u, 2u, 6u, 16u, 32u, 64u };
+    for (uint32_t failure : failurePoints)
+    {
+        result.Clear();
+        if (!result.Append(sentinel) || !error.Assign("片側制約の補助探索で発生する確保失敗の診断を保持する領域"))
+        {
+            return false;
+        }
+        gk::SetAllocationFailureAfterForTesting(failure);
+        const bool accepted = RefineSecondaryMotionContactMinimax(&chain, 1u, &reference, 1u, nullptr, 0u, nullptr, 0u, roots, directions, result, found, error, 32u);
+        gk::ResetAllocationFailureForTesting();
+        if (!accepted && (found || result.Count() != 1u || memcmp(result.Data(), &sentinel, sizeof(sentinel)) != 0 || error.Empty()))
+        {
+            return Fail("片側制約の探索が確保失敗で候補を変更するか診断を失いました");
+        }
+    }
+    // 反対向きで回転を決められない候補は、入力破壊や数値エラーにしない。
+    result.Clear();
+    if (!result.Append(sentinel))
+    {
+        return false;
+    }
+    directions.At(0u) = { { -1.0, 0.0, 0.0 } };
+    FSecondaryMotionWeightedContactAnchor anchor{};
+    anchor.chainIndex = 0u;
+    anchor.definition.direction = reference.direction;
+    anchor.definition.offset = { { 0.5, 0.2, 0.0 } };
+    anchor.definition.cosineLimit = -1.0;
+    anchor.weight = 1.0;
+    FSecondaryMotionWeightedContactPoint contact{};
+    contact.anchorCount = 1u;
+    contact.shapes = shapes.Data();
+    contact.shapeCount = 1u;
+    if (!RefineSecondaryMotionContactMinimax(&chain, 1u, &reference, 1u, &anchor, 1u, &contact, 1u, roots, directions, result, found, error, 32u) || found || !error.Empty() || result.Count() != 1u || memcmp(result.Data(), &sentinel, sizeof(sentinel)) != 0)
+    {
+        return Fail("片側制約の探索が特異候補を原子的な未解決として扱いません");
+    }
+    return true;
+}
+
+/**
+ * 保存後の候補検査は不正な配列を拒否し、成立時に以前のエラーを残さない。
+ */
+bool TestStoredCandidateValidatesViewsAndClearsOldError()
+{
+    FSecondaryMotionContactChain chain{};
+    chain.segmentCount = 1u;
+    chain.cosineLimit = -1.0;
+    FSecondaryMotionReferenceSegment reference{};
+    reference.direction = { { 1.0, 0.0, 0.0 } };
+    reference.length = 1.0;
+    gk::Array<gk::FVector3d> positions;
+    gk::String error;
+    if (!positions.Append({ { 0.0, 0.0, 0.0 } }) || !positions.Append({ { 1.0, 0.0, 0.0 } }) || !error.Assign("以前の候補のエラー"))
+    {
+        return false;
+    }
+    bool clear = false;
+    if (!CheckSecondaryMotionWeightedStoredCandidate(&chain, 1u, &reference, nullptr, 0u, nullptr, 0u, positions, clear, error) || !clear || !error.Empty())
+    {
+        return Fail("保存後検査が成立する候補を拒否するか古いエラーを残しました");
+    }
+    if (CheckSecondaryMotionWeightedStoredCandidate(nullptr, 1u, &reference, nullptr, 0u, nullptr, 0u, positions, clear, error) || clear || error.Empty() || CheckSecondaryMotionWeightedStoredCandidate(&chain, 1u, nullptr, nullptr, 0u, nullptr, 0u, positions, clear, error) || clear || error.Empty())
+    {
+        return Fail("保存後検査が欠損する鎖または基準線分を拒否しません");
+    }
+    chain.firstPoint = 1u;
+    if (CheckSecondaryMotionWeightedStoredCandidate(&chain, 1u, &reference, nullptr, 0u, nullptr, 0u, positions, clear, error) || clear || error.Empty())
+    {
+        return Fail("保存後検査が鎖の範囲外の位置を拒否しません");
+    }
+    return true;
+}
+
+/**
+ * clear行とroot線分の例外を、全接触と同じ符号付きの行へ保持する。
+ */
+bool TestSignedRowsKeepClearContactsAndRootSpanRules()
+{
+    // 固定寄与の侵入点と遠方点を含め、負の接触量も省かない。
+    const FModelSecondaryMotionCollisionShape body{ { 0.5f, 0.2f, 0.0f }, { 0.5f, 0.2f, 0.0f }, 0.3f };
+    gk::Array<FPreparedSecondaryMotionCollisionShape> prepared;
+    gk::String error;
+    if (!PrepareSecondaryMotionCollisionShapes(&body, 1u, prepared, error))
+    {
+        return Fail("符号付き接触の形状を準備できません");
+    }
+    FSecondaryMotionContactChain chain{};
+    chain.segmentCount = 1u;
+    chain.cosineLimit = -1.0;
+    chain.shapes = prepared.Data();
+    chain.shapeCount = 1u;
+    FSecondaryMotionWeightedContactAnchor anchors[2]{};
+    anchors[0].chainIndex = UINT32_MAX;
+    anchors[0].constantPosition = { { 0.5, 0.2, 0.0 } };
+    anchors[0].weight = 1.0;
+    anchors[1] = anchors[0];
+    anchors[1].constantPosition = { { 3.0, 0.0, 0.0 } };
+    FSecondaryMotionWeightedContactPoint contacts[2]{};
+    for (uint32_t index = 0u; index < 2u; ++index)
+    {
+        contacts[index].firstAnchor = index;
+        contacts[index].anchorCount = 1u;
+        contacts[index].shapes = prepared.Data();
+        contacts[index].shapeCount = 1u;
+    }
+    FSecondaryMotionChainAttachmentContact attachment{};
+    attachment.firstDefinition.direction = { { 1.0, 0.0, 0.0 } };
+    attachment.firstDefinition.cosineLimit = -1.0;
+    attachment.secondDefinition = attachment.firstDefinition;
+    attachment.secondDefinition.offset = { { 1.0, 0.0, 0.0 } };
+    attachment.shapes = prepared.Data();
+    attachment.shapeCount = 1u;
+    chain.attachments = &attachment;
+    chain.attachmentCount = 1u;
+    const gk::FVector3d positions[2] = { { { 0.0, 0.0, 0.0 } }, { { 1.0, 0.0, 0.0 } } };
+    gk::Array<double> values;
+    gk::Array<double> tolerances;
+    if (!EvaluateSecondaryMotionContactSignedRows(&chain, 1u, anchors, 2u, contacts, 2u, positions, 2u, values, tolerances, error) || values.Count() != 5u || tolerances.Count() != 5u)
+    {
+        return Fail("符号付き接触が負の行を含む全5行を保存しません");
+    }
+    const auto& shape = prepared.At(0);
+    const double expected[5] = { shape.radius - shape.tolerance * 0.5 - fabs(0.2 - static_cast<double>(body.start.y)), shape.radius - shape.tolerance * 0.5 - sqrt(6.25 + static_cast<double>(body.start.y) * body.start.y), shape.radius - shape.tolerance - sqrt(0.25 + static_cast<double>(body.start.y) * body.start.y), shape.radius - shape.tolerance - body.start.y, shape.radius - shape.tolerance * 0.5 - body.start.y };
+    for (uint32_t index = 0u; index < 5u; ++index)
+    {
+        if (fabs(values.At(index) - expected[index]) > 1.0e-12 || tolerances.At(index) != shape.tolerance)
+        {
+            return Fail("符号付き接触の順序、許容幅または値が異なります");
+        }
+    }
+    // 値と許容幅の片方だけ確保できても、公開する二配列を変更しない。
+    double beforeValues[5]{};
+    double beforeTolerances[5]{};
+    memcpy(beforeValues, values.Data(), sizeof(beforeValues));
+    memcpy(beforeTolerances, tolerances.Data(), sizeof(beforeTolerances));
+    if (!error.Assign("符号付き接触の確保失敗を保存するための領域"))
+    {
+        return false;
+    }
+    for (uint32_t allowed = 0u; allowed < 3u; ++allowed)
+    {
+        gk::SetAllocationFailureAfterForTesting(allowed);
+        const bool accepted = EvaluateSecondaryMotionContactSignedRows(&chain, 1u, anchors, 2u, contacts, 2u, positions, 2u, values, tolerances, error);
+        gk::ResetAllocationFailureForTesting();
+        if (accepted || error.Empty() || values.Count() != 5u || tolerances.Count() != 5u || memcmp(beforeValues, values.Data(), sizeof(beforeValues)) != 0 || memcmp(beforeTolerances, tolerances.Data(), sizeof(beforeTolerances)) != 0)
+        {
+            return Fail("符号付き接触の確保失敗が二配列を部分変更しました");
+        }
+    }
+    anchors[0].weight = NAN;
+    const bool invalidAccepted = EvaluateSecondaryMotionContactSignedRows(&chain, 1u, anchors, 2u, contacts, 2u, positions, 2u, values, tolerances, error);
+    anchors[0].weight = 1.0;
+    if (invalidAccepted || error.Empty() || memcmp(beforeValues, values.Data(), sizeof(beforeValues)) != 0 || memcmp(beforeTolerances, tolerances.Data(), sizeof(beforeTolerances)) != 0 || EvaluateSecondaryMotionContactSignedRows(&chain, 1u, anchors, 2u, contacts, 2u, positions, 2u, values, values, error) || error.Empty())
+    {
+        return Fail("符号付き接触の非有限weightまたは同一出力配列を拒否できません");
+    }
+    // root内部の最初の線分は、除外後も値-1・許容幅0の固定行を残す。
+    const FModelSecondaryMotionCollisionShape rootBody{ { 0.5f, 0.0f, 0.0f }, { 0.5f, 0.0f, 0.0f }, 0.6f };
+    if (!PrepareSecondaryMotionCollisionShapes(&rootBody, 1u, prepared, error))
+    {
+        return false;
+    }
+    chain.shapes = prepared.Data();
+    chain.attachments = nullptr;
+    chain.attachmentCount = 0u;
+    if (!EvaluateSecondaryMotionContactSignedRows(&chain, 1u, nullptr, 0u, nullptr, 0u, positions, 2u, values, tolerances, error) || values.Count() != 2u || values.At(1) != -1.0 || tolerances.At(1) != 0.0)
+    {
+        return Fail("root内部の線分が除外行を保ちません");
+    }
+    prepared.At(0).hasRootContactOverride = true;
+    prepared.At(0).rootContactThreshold = 0.4;
+    const double rootSpan = GetPreparedSecondaryMotionRootSpanThreshold(prepared.At(0), 0.5, 1.0);
+    if (!EvaluateSecondaryMotionContactSignedRows(&chain, 1u, nullptr, 0u, nullptr, 0u, positions, 2u, values, tolerances, error) || fabs(values.At(1) - rootSpan) > 1.0e-12 || fabs(tolerances.At(1) * 0.125 - fmin(prepared.At(0).tolerance * 0.125, fmax(0.0, 0.5 - rootSpan) * 0.5)) > 1.0e-12)
+    {
+        return Fail("rootの特別な境界と線分余白が既存式と異なります");
+    }
+    return true;
+}
+
+/**
  * 全ownerを同時に回すと相殺する接触も、片方だけを回した成立姿勢へ解決する。
  */
 bool TestOpposedOffsetsEscapeSymmetricOwnerSeeds()
@@ -1981,5 +2204,5 @@ bool TestWeightedFirstClearIsNotNearestClearCandidate()
 
 int main()
 {
-    return TestOpposedOffsetsEscapeSymmetricOwnerSeeds() && TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
+    return TestMinimaxStoredSuccessAndBoundedFailure() && TestStoredCandidateValidatesViewsAndClearsOldError() && TestSignedRowsKeepClearContactsAndRootSpanRules() && TestOpposedOffsetsEscapeSymmetricOwnerSeeds() && TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
 }
