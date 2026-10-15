@@ -379,7 +379,7 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 /**
  * 鎖を候補側で積分し、長さ・曲げ角・任意の身体接触を満たすときだけstateを更新する。
  */
-static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false, FModelSecondaryMotionSolverWorkspace* workspace = nullptr, bool* contactUnresolved = nullptr)
+static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, const FModelSecondaryMotionCollisionShape* previousShapes, const FModelSecondaryMotionCollisionShape* currentShapes, uint32_t shapeCount, FModelSecondaryMotionChainState& state, gk::String& error, const FModelSecondaryMotionStepShapes* zeroStepShapes = nullptr, bool forceConstraints = false, FModelSecondaryMotionSolverWorkspace* workspace = nullptr, bool* contactUnresolved = nullptr, bool singleStep = false)
 {
     if (contactUnresolved)
     {
@@ -496,7 +496,7 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
     }
     // リセットと時間0の呼び出しでも、現在の形状との接触だけは解決する。
     const bool integrateMotion = !resetMotion && delta > 0.0;
-    uint32_t substepCount = integrateMotion ? static_cast<uint32_t>(ceil(delta * 120.0)) : 1u;
+    uint32_t substepCount = integrateMotion && !singleStep ? static_cast<uint32_t>(ceil(delta * 120.0)) : 1u;
     if (substepCount == 0)
         substepCount = 1;
     const double step = integrateMotion ? delta / substepCount : 0.0;
@@ -699,13 +699,14 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
                 return false;
             }
         }
-        if (integrateMotion && shapeCount > 0u && !ConstrainContactVelocities(targets, state, settings, previousShapes, currentShapes, contactShapes, shapeCount, static_cast<double>(substep) / substepCount, delta, step, positions, oldPositions, stepTargets, velocities, error))
+        // 共有更新の予測でも、骨長を戻す位置補正を新しい速度として持ち越さない。
+        if (integrateMotion && (shapeCount > 0u || singleStep) && !ConstrainContactVelocities(targets, state, settings, previousShapes, currentShapes, contactShapes, shapeCount, static_cast<double>(substep) / substepCount, delta, step, positions, oldPositions, stepTargets, velocities, error))
         {
             return false;
         }
         for (uint32_t index = 0; index < count; ++index)
         {
-            if (integrateMotion && shapeCount == 0u)
+            if (integrateMotion && shapeCount == 0u && !singleStep)
             {
                 for (uint32_t axis = 0; axis < 3; ++axis)
                 {
@@ -762,6 +763,17 @@ static bool StepSecondaryMotionChainCore(const gk::Vec3* targets, uint32_t count
 bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, FModelSecondaryMotionChainState& state, gk::String& error)
 {
     return StepSecondaryMotionChainCore(targets, count, settings, delta, nullptr, nullptr, 0, state, error);
+}
+
+bool StepSecondaryMotionChainSingleStep(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, FModelSecondaryMotionChainState& state, gk::String& error)
+{
+    // 分割済み区間を丸め誤差で再分割せず、長い区間の誤用は拒否する。
+    if (!isfinite(delta) || delta < 0.0 || delta > (1.0 / 120.0) * (1.0 + 1.0e-12))
+    {
+        error.Assign("secondary motion shared step must be finite and within 1/120 second");
+        return false;
+    }
+    return StepSecondaryMotionChainCore(targets, count, settings, delta, nullptr, nullptr, 0u, state, error, nullptr, false, nullptr, nullptr, true);
 }
 
 #if defined(GKCORE_TESTING) || (defined(_WIN32) && defined(GKCORE_TEST_FRAME_CAPTURE))

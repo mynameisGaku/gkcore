@@ -204,6 +204,10 @@ bool AddPenetration(double penetration, const gk::FVector3d& normal, double dire
         error.Assign("Secondary motion chain contact merit is outside the numeric range");
         return false;
     }
+    if (!gradients)
+    {
+        return true;
+    }
     // 保存時の丸めで接触境界へ戻らないよう、許容幅の内側に余白を取る。
     if (linearSystem && !linearSystem->BeginRow(penetration, error))
     {
@@ -246,6 +250,10 @@ bool AddAttachmentPenetration(double penetration, const gk::FVector3d& normal, d
     {
         error.Assign("Secondary motion chain attachment merit is outside the numeric range");
         return false;
+    }
+    if (!gradients)
+    {
+        return true;
     }
     // 保存時の丸めで接触境界へ戻らないよう、許容幅の内側に余白を取る。
     if (linearSystem && !linearSystem->BeginRow(penetration, error))
@@ -318,12 +326,12 @@ bool IsAttachmentRotationSingular(const FSecondaryMotionAttachmentDefinition& de
 bool EvaluateChainRaw(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* references, uint32_t segmentCount, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* gradients, uint32_t gradientCount, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem = nullptr, uint32_t firstSegment = 0, bool useClearanceMargin = false)
 {
     merit = 0.0;
-    if (positionCount != segmentCount + 1u || gradientCount != segmentCount || (positionCount > 0 && !positions) || (gradientCount > 0 && !gradients))
+    if (positionCount != segmentCount + 1u || (positionCount > 0 && !positions) || (gradients ? gradientCount != segmentCount : gradientCount != 0u || linearSystem != nullptr))
     {
         error.Assign("Secondary motion chain merit view is invalid");
         return false;
     }
-    for (uint32_t index = 0; index < segmentCount; ++index)
+    for (uint32_t index = 0; index < gradientCount; ++index)
     {
         gradients[index] = {};
     }
@@ -415,7 +423,8 @@ bool EvaluateChainRaw(const FPreparedSecondaryMotionCollisionShape* shapes, uint
             }
             return true;
         }
-        if (!EvaluateSecondaryMotionAttachment(contact.firstDefinition, positions[segmentIndex], positions[segmentIndex + 1u], firstEvaluation, error) || !EvaluateSecondaryMotionAttachment(contact.secondDefinition, positions[segmentIndex], positions[segmentIndex + 1u], secondEvaluation, error))
+        const bool evaluated = gradients ? EvaluateSecondaryMotionAttachment(contact.firstDefinition, positions[segmentIndex], positions[segmentIndex + 1u], firstEvaluation, error) && EvaluateSecondaryMotionAttachment(contact.secondDefinition, positions[segmentIndex], positions[segmentIndex + 1u], secondEvaluation, error) : EvaluateSecondaryMotionAttachmentPosition(contact.firstDefinition, positions[segmentIndex], positions[segmentIndex + 1u], firstEvaluation.position, error) && EvaluateSecondaryMotionAttachmentPosition(contact.secondDefinition, positions[segmentIndex], positions[segmentIndex + 1u], secondEvaluation.position, error);
+        if (!evaluated)
         {
             return false;
         }
@@ -619,7 +628,7 @@ bool MakeCoherentTilt(const FSecondaryMotionReferenceSegment* references, uint32
 bool EvaluatePreparedSecondaryMotionChainContactsMerit(const FPreparedSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, const FSecondaryMotionReferenceSegment* referenceSegments, uint32_t segmentCount, double cosineLimit, double toleranceFraction, const FSecondaryMotionChainAttachmentContact* contacts, uint32_t contactCount, const gk::FVector3d* positions, uint32_t positionCount, double& merit, gk::FVector3d* directionGradients, uint32_t gradientCount, gk::String& error, FSecondaryMotionContactLinearSystem* linearSystem, uint32_t firstSegment, bool useClearanceMargin)
 {
     error.Clear();
-    if (shapeCount > 64 || (shapeCount > 0 && !shapes) || segmentCount == UINT32_MAX || (segmentCount > 0 && !referenceSegments) || positionCount != segmentCount + 1u || (positionCount > 0 && !positions) || gradientCount != segmentCount || (gradientCount > 0 && !directionGradients) || contactCount > 1024 || (contactCount > 0 && !contacts) || !isfinite(cosineLimit) || cosineLimit < -1.0 || cosineLimit > 1.0 || !isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
+    if (shapeCount > 64 || (shapeCount > 0 && !shapes) || segmentCount == UINT32_MAX || (segmentCount > 0 && !referenceSegments) || positionCount != segmentCount + 1u || (positionCount > 0 && !positions) || (directionGradients ? gradientCount != segmentCount : gradientCount != 0u || linearSystem != nullptr) || contactCount > 1024 || (contactCount > 0 && !contacts) || !isfinite(cosineLimit) || cosineLimit < -1.0 || cosineLimit > 1.0 || !isfinite(toleranceFraction) || toleranceFraction < 0.0 || toleranceFraction > 1.0)
     {
         error.Assign("Secondary motion chain merit input is invalid");
         return false;

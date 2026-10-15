@@ -24,6 +24,11 @@ bool ResetSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, FModelSe
 bool StepSecondaryMotionChain(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, FModelSecondaryMotionChainState& state, gk::String& error);
 
 /**
+ * 共有更新の1/120秒以下の区間を一度だけ積分し、予測速度を骨長と角度へ合わせる。失敗時はstateを保つ。
+ */
+bool StepSecondaryMotionChainSingleStep(const gk::Vec3* targets, uint32_t count, const gk::FModelSecondaryMotionSettings& settings, double delta, FModelSecondaryMotionChainState& state, gk::String& error);
+
+/**
  * 各小刻み更新で身体の接触と鎖の長さ・角度を解く。pointRadiusは節中心を包む半径で、失敗時はstateを保つ。
  * 形状は前回と今回で同数。高速な更新間移動の連続接触は保証しない。
  * contactUnresolvedは骨長・角度・身体接触の幾何学的未解決だけを示し、入力・数値・確保・保存範囲の失敗ではfalseとなる。

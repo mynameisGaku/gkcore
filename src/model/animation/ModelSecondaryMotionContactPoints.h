@@ -22,8 +22,9 @@ bool ValidateSecondaryMotionContactPoints(const FModelSecondaryMotionState& stat
 
 /**
  * 揺れ鎖を候補位置上で接触から退避させる。失敗時はcandidateの物理状態を変更しない。
+ * usePredictedPositionsがtrueなら、共有更新で予測済みの点列をそのまま接触の初期値に使う。
  */
-bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSkeleton& skeleton, const Array<float>& baseMatrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error);
+bool ConstrainSecondaryMotionContactPoints(FModelSecondaryMotionState& candidate, const FModelSecondaryMotionState& previous, const animation::FModelSkeleton& skeleton, const Array<float>& baseMatrices, const animation::FModelSecondaryMotionCollisionShape* shapes, uint32_t shapeCount, double delta, String& error, bool usePredictedPositions = false);
 
 /**
  * 描画FKで評価したskin weight接触点が身体形状へ侵入しないか調べる。

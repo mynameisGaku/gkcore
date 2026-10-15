@@ -41,6 +41,7 @@ GKCORE_API int SetModelSecondaryMotionChain(ModelHandle model, const uint32_t* b
  * clip・ブレンド・IK後の姿勢へ揺れを進める。deltaSecondsは有限な0以上の秒数。
  * アニメーション更新とIK設定の後、描画の前に1回呼ぶ。照会や描画は揺れを進めない。
  * 重力・風・移動距離はmodel空間で扱う。長い停止や大きな移動では姿勢へ戻す。
+ * 重み付き接触と有効な履歴がある通常更新は、予測を1/120秒以下で進め、接触を最大2回解く。
  * 更新処理に失敗した場合は姿勢を保ち、速度補正の履歴は次の成功更新で作り直す。
  */
 GKCORE_API int UpdateModelSecondaryMotion(ModelHandle model, double deltaSeconds);

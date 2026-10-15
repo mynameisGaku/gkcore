@@ -61,6 +61,7 @@ set(GKCORE_CORE_SOURCES
     src/model/animation/ModelSecondaryMotionWeightedContacts.cpp
     src/model/animation/ModelSecondaryMotionContactPoints.cpp
     src/model/animation/ModelSecondaryMotionContactVelocity.cpp
+    src/model/animation/ModelSecondaryMotionStep.cpp
     src/model/animation/ModelSecondaryMotionAttachments.cpp
     src/model/animation/FModelSecondaryMotionStepShapeCache.cpp
     src/model/animation/FModelSecondaryMotionSolverWorkspace.cpp
