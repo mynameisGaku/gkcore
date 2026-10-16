@@ -1097,9 +1097,23 @@ bool IsStoredCandidateClear(const FSecondaryMotionContactChain* chains, uint32_t
 }
 
 /**
+ * 入力位置から候補位置までの二乗変位を合計する。
+ */
+double PositionDisplacementSquared(const gk::Array<gk::FVector3d>& initialPositions, const gk::Array<gk::FVector3d>& candidatePositions)
+{
+    double displacement = 0.0;
+    for (uint32_t index = 0; index < initialPositions.Count(); ++index)
+    {
+        const gk::FVector3d delta = Subtract(candidatePositions.At(index), initialPositions.At(index));
+        displacement += Dot(delta, delta);
+    }
+    return displacement;
+}
+
+/**
  * clear姿勢を接触制約を保ったまま入力方向へ近づける。
  */
-bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const gk::Array<gk::FVector3d>& initialDirections, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& candidateDirections, gk::Array<gk::FVector3d>& candidatePositions, gk::Array<gk::FVector3d>& candidateGradients, gk::Array<FWeightedAnchorEvaluation>& candidateAnchors, bool& preservedClearance, gk::String& error)
+bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, const gk::Array<gk::FVector3d>& roots, const gk::Array<gk::FVector3d>& initialDirections, const gk::Array<gk::FVector3d>& initialPositions, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& candidateDirections, gk::Array<gk::FVector3d>& candidatePositions, gk::Array<gk::FVector3d>& candidateGradients, gk::Array<FWeightedAnchorEvaluation>& candidateAnchors, bool& preservedClearance, gk::String& error)
 {
     if (!IsStoredCandidateClear(chains, chainCount, references, anchors, anchorCount, contacts, contactCount, candidatePositions, preservedClearance, error))
     {
@@ -1107,9 +1121,27 @@ bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t
     }
     double lowerFraction = 0.0;
     double upperFraction = 1.0;
-    for (uint32_t probe = 0; probe < 12u; ++probe)
+    // 従来の成立姿勢を残し、その手前で見逃した成立区間を最大4回だけ調べる。
+    double scanLowerFraction = 0.0;
+    double scanUpperFraction = 1.0;
+    double bestDisplacementSquared = 0.0;
+    bool foundEarlierInterval = false;
+    for (uint32_t probe = 0; probe < 16u; ++probe)
     {
-        const double fraction = (lowerFraction + upperFraction) * 0.5;
+        const bool earlierIntervalProbe = probe >= 12u;
+        if (probe == 12u)
+        {
+            scanUpperFraction = upperFraction;
+            bestDisplacementSquared = PositionDisplacementSquared(initialPositions, candidatePositions);
+        }
+        if (probe == 15u && !foundEarlierInterval)
+        {
+            break;
+        }
+        // 接触の有無は方向の補間率に対して単調ではないため、手前から区切って確認する。
+        const double fraction = !earlierIntervalProbe ? (lowerFraction + upperFraction) * 0.5 : foundEarlierInterval ? (scanLowerFraction + scanUpperFraction) * 0.5 : scanUpperFraction * static_cast<double>(probe - 11u) * 0.25;
+        double& rejectedLowerFraction = earlierIntervalProbe ? scanLowerFraction : lowerFraction;
+        double& acceptedUpperFraction = earlierIntervalProbe ? scanUpperFraction : upperFraction;
         gk::Array<gk::FVector3d> trialDirections;
         gk::Array<gk::FVector3d> trialPositions;
         gk::Array<gk::FVector3d> trialGradients;
@@ -1140,7 +1172,7 @@ bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t
         }
         if (!valid)
         {
-            lowerFraction = fraction;
+            rejectedLowerFraction = fraction;
             continue;
         }
         for (uint32_t index = 0; index < candidateGradients.Count(); ++index)
@@ -1158,7 +1190,7 @@ bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t
             {
                 return false;
             }
-            lowerFraction = fraction;
+            rejectedLowerFraction = fraction;
             continue;
         }
         bool storedClear = false;
@@ -1168,32 +1200,25 @@ bool ContractClearCandidate(const FSecondaryMotionContactChain* chains, uint32_t
         }
         if (trialMerit == 0.0 && storedClear)
         {
-            upperFraction = fraction;
-            preservedClearance = true;
-            candidatePositions.MoveFrom(trialPositions);
-            candidateGradients.MoveFrom(trialGradients);
-            candidateAnchors.MoveFrom(trialAnchors);
+            acceptedUpperFraction = fraction;
+            foundEarlierInterval = foundEarlierInterval || earlierIntervalProbe;
+            const double displacementSquared = earlierIntervalProbe ? PositionDisplacementSquared(initialPositions, trialPositions) : 0.0;
+            // 追加探索では、全制約を満たし入力からの変位が小さい姿勢だけを採用する。
+            if (!earlierIntervalProbe || !preservedClearance || displacementSquared < bestDisplacementSquared)
+            {
+                preservedClearance = true;
+                bestDisplacementSquared = displacementSquared;
+                candidatePositions.MoveFrom(trialPositions);
+                candidateGradients.MoveFrom(trialGradients);
+                candidateAnchors.MoveFrom(trialAnchors);
+            }
         }
         else
         {
-            lowerFraction = fraction;
+            rejectedLowerFraction = fraction;
         }
     }
     return true;
-}
-
-/**
- * 入力位置から候補位置までの二乗変位を合計する。
- */
-double PositionDisplacementSquared(const gk::Array<gk::FVector3d>& initialPositions, const gk::Array<gk::FVector3d>& candidatePositions)
-{
-    double displacement = 0.0;
-    for (uint32_t index = 0; index < initialPositions.Count(); ++index)
-    {
-        const gk::FVector3d delta = Subtract(candidatePositions.At(index), initialPositions.At(index));
-        displacement += Dot(delta, delta);
-    }
-    return displacement;
 }
 
 /**
@@ -1398,7 +1423,7 @@ bool RefineOwnerPrefixFallback(const FSecondaryMotionContactChain* chains, uint3
                     return false;
                 }
                 bool preservedClearance = false;
-                if (clear && !ContractClearCandidate(chains, chainCount, references, roots, initialDirections, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialGradients, trialAnchors, preservedClearance, error))
+                if (clear && !ContractClearCandidate(chains, chainCount, references, roots, initialDirections, initialPositions, anchors, anchorCount, contacts, contactCount, trialDirections, trialPositions, trialGradients, trialAnchors, preservedClearance, error))
                 {
                     return false;
                 }
@@ -1534,6 +1559,75 @@ bool ValidateChains(const FSecondaryMotionContactChain* chains, uint32_t chainCo
     return true;
 }
 
+}
+
+bool ContractPreparedSecondaryMotionWeightedCandidate(const FSecondaryMotionContactChain* chains, uint32_t chainCount, const FSecondaryMotionReferenceSegment* references, uint32_t referenceCount, const gk::Array<gk::FVector3d>& roots, const gk::Array<gk::FVector3d>& initialDirections, const gk::Array<gk::FVector3d>& candidateDirections, const FSecondaryMotionWeightedContactAnchor* anchors, uint32_t anchorCount, const FSecondaryMotionWeightedContactPoint* contacts, uint32_t contactCount, const gk::Array<gk::FVector3d>& initialPositions, gk::Array<gk::FVector3d>& candidatePositions, bool& preservedClearance, gk::String& error)
+{
+    preservedClearance = false;
+    error.Clear();
+    // 呼出し側で接触定義は検証済みでも、所有配列の対応はこの入口で確認する。
+    if (chainCount > 1024u || referenceCount > 16384u || anchorCount > 16384u || contactCount > 1024u || (chainCount > 0u && !chains) || (referenceCount > 0u && !references) || (anchorCount > 0u && !anchors) || (contactCount > 0u && !contacts) || roots.Count() != chainCount || initialDirections.Count() != referenceCount || candidateDirections.Count() != referenceCount || initialPositions.Count() != candidatePositions.Count())
+    {
+        error.Assign("Secondary motion proximity input arrays are invalid");
+        return false;
+    }
+    for (uint32_t index = 0u; index < initialPositions.Count(); ++index)
+    {
+        if (!IsFloatPosition(initialPositions.At(index)))
+        {
+            error.Assign("Secondary motion proximity initial position is invalid");
+            return false;
+        }
+    }
+    for (uint32_t index = 0u; index < roots.Count(); ++index)
+    {
+        if (!IsFloatPosition(roots.At(index)))
+        {
+            error.Assign("Secondary motion proximity root is invalid");
+            return false;
+        }
+    }
+    uint32_t pointCount = 0u;
+    if (!ValidateChains(chains, chainCount, references, referenceCount, candidatePositions, pointCount, error))
+    {
+        return false;
+    }
+    for (uint32_t index = 0u; index < referenceCount; ++index)
+    {
+        if (!IsFloatPosition(initialDirections.At(index)) || !IsFloatPosition(candidateDirections.At(index)))
+        {
+            error.Assign("Secondary motion proximity direction is invalid");
+            return false;
+        }
+    }
+    // 出力候補とは別に所有し、途中の確保失敗で呼出し元の位置を変更しない。
+    gk::Array<gk::FVector3d> workingPositions;
+    gk::Array<gk::FVector3d> gradients;
+    gk::Array<FWeightedAnchorEvaluation> anchorEvaluations;
+    if (!workingPositions.AppendRange(candidatePositions.Data(), candidatePositions.Count()) || !gradients.Reserve(referenceCount) || !anchorEvaluations.Reserve(anchorCount))
+    {
+        error.Assign("Secondary motion proximity result allocation failed");
+        return false;
+    }
+    for (uint32_t index = 0u; index < referenceCount; ++index)
+    {
+        if (!gradients.Append(gk::FVector3d{}))
+        {
+            error.Assign("Secondary motion proximity gradient allocation failed");
+            return false;
+        }
+    }
+    bool clear = false;
+    if (!ContractClearCandidate(chains, chainCount, references, roots, initialDirections, initialPositions, anchors, anchorCount, contacts, contactCount, candidateDirections, workingPositions, gradients, anchorEvaluations, clear, error))
+    {
+        return false;
+    }
+    if (clear)
+    {
+        candidatePositions.MoveFrom(workingPositions);
+        preservedClearance = true;
+    }
+    return true;
 }
 
 /**
@@ -2236,7 +2330,7 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             if (clear)
             {
                 bool preservedClearance = false;
-                if (!ContractClearCandidate(chains, chainCount, references, roots, directions, anchors, anchorCount, contacts, contactCount, trialDirections, seedPositions, seedGradients, seedAnchors, preservedClearance, error))
+                if (!ContractClearCandidate(chains, chainCount, references, roots, directions, positions, anchors, anchorCount, contacts, contactCount, trialDirections, seedPositions, seedGradients, seedAnchors, preservedClearance, error))
                 {
                     return false;
                 }
@@ -2317,7 +2411,7 @@ bool ResolvePreparedSecondaryMotionWeightedContacts(const FSecondaryMotionContac
             gk::Array<gk::FVector3d> minimaxGradients;
             gk::Array<FWeightedAnchorEvaluation> minimaxAnchors;
             bool preserved = false;
-            if (!ContractClearCandidate(chains, chainCount, references, roots, directions, anchors, anchorCount, contacts, contactCount, minimaxDirections, minimaxPositions, minimaxGradients, minimaxAnchors, preserved, error))
+            if (!ContractClearCandidate(chains, chainCount, references, roots, directions, positions, anchors, anchorCount, contacts, contactCount, minimaxDirections, minimaxPositions, minimaxGradients, minimaxAnchors, preserved, error))
             {
                 return false;
             }

@@ -275,3 +275,12 @@ Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159、SDK10.0.2
 公式559球・8身体形状・骨球0.038の固定1/60秒3000frameは完走し、全traceが変更前とbyte一致しました。開始0/2.1秒・Debug/Release計480GPU frameの全記録と4枚の最終画像も一致しています。身体proxyとの一致であり、衣服面と実身体meshの非貫通は未達です。
 
 同じWindows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0、通常Release製品DLL、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、YUMEKA＋Skinning Test/Swinging blend＋右腕IK＋13鎖で、単独600frame/warmup0は完走しました。17.441FPS、p95 67.747ms、secondary51.058ms、Draw0.459/Present5.179/IK0.570msです。CPU解析/buildや他GPU検査は同時実行せず、配置DLLとSDKのSHA256 4bac8b4befb3ac3c83746c17906ed4f78e801e3c528dfe9ae17c5b4d084e9d43の一致、capture DLLを参照しないことを確認しました。実時間の更新履歴が異なるため前回との差を固定負荷の速度比較とは扱いません。300FPSは未達です。記録はbuild/native-validation/contact-feasibility-20261016/product-realtime600.logです。
+
+
+## 近い成立区間を捨てない接触探索の確認
+
+2026-10-16、従来の縮小探索で得た成立姿勢を保ち、その手前を最大4回だけ追加確認する修正を行いました。保存後の全制約が成立し、入力からの全点の二乗変位合計が小さくなる場合だけ置き換えます。単骨・二球の3軸入力では見落としを解消しましたが、公式設定の固定3000frameと未採用14身体形状の成功1574frameは、どちらも旧traceと全byte一致しています。未採用設定の130.422度の急変とnext1574での停止は未解決で、実モデルの揺れ改善とは扱いません。
+
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0、通常Release製品DLL、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、YUMEKA＋Skinning Test/Swinging blend＋右腕IK・13鎖・559球・8身体形状の単独600frame/warmup0は完走しました。15.407FPS、p95 69.553ms、secondary58.632ms、Draw0.466/Present5.157/IK0.578msです。CPU build/解析や他GPU試験は同時実行せず、SDKと配置DLLのSHA256 c867aa56641ead2b5a8400d7fb12d7a4a9dacf09e2e63511a12605aad9f5ca38の一致と、capture DLLを参照しないことを確認しました。以前の17.441FPSとは実時間の更新履歴が異なるため固定負荷の比較には使いません。現在の代表設定で300FPSは未達です。記録はbuild/native-validation/contact-continuity-20261016/product-realtime600.logです。
+
+公式設定の開始0/2.1秒・Debug/Release計480GPU frameも全記録と保存画像が旧基準と一致しました。身体形状の近似と実衣服面の差、遠方の成立姿勢だけを見つける入力を引き続き扱います。

@@ -2200,9 +2200,263 @@ bool TestWeightedFirstClearIsNotNearestClearCandidate()
         return Fail("最初のclear seedが近い成立姿勢を見落としました");
     return true;
 }
+/**
+ * 初期方向と成立候補の間に、二つの離れた成立区間を作る単骨・二球の入力。
+ */
+struct FNonmonotonicContractionFixture
+{
+    // 同じ形状を節・線分・weighted点の全条件へ与える。
+    gk::Array<FPreparedSecondaryMotionCollisionShape> shapes;
+    FSecondaryMotionContactChain chain{};
+    FSecondaryMotionReferenceSegment reference{};
+    FSecondaryMotionWeightedContactAnchor anchor{};
+    FSecondaryMotionWeightedContactPoint contact{};
+    // 方向補間の両端と、固定するrootを所有する。
+    gk::Array<gk::FVector3d> roots;
+    gk::Array<gk::FVector3d> initialDirections;
+    gk::Array<gk::FVector3d> candidateDirections;
+    gk::Array<gk::FVector3d> initialPositions;
+    gk::Array<gk::FVector3d> farCandidate;
+
+    /**
+     * 直交する二方向を三通りの軸へ写し、番号や特定のworld軸に依存させない。
+     */
+    bool Initialize(uint32_t orientation, gk::String& error)
+    {
+        const gk::FVector3d rootValues[3] = { { { 0.0, 0.0, 0.0 } }, { { 2.0, -3.0, 0.5 } }, { { -0.25, 0.75, 1.0 } } };
+        const gk::FVector3d firstValues[3] = { { { 1.0, 0.0, 0.0 } }, { { 0.0, 1.0, 0.0 } }, { { 0.0, 0.0, -1.0 } } };
+        const gk::FVector3d secondValues[3] = { { { 0.0, 1.0, 0.0 } }, { { 0.0, 0.0, 1.0 } }, { { 1.0, 0.0, 0.0 } } };
+        if (orientation >= 3u)
+        {
+            return false;
+        }
+        const auto& root = rootValues[orientation];
+        const auto& first = firstValues[orientation];
+        const auto& second = secondValues[orientation];
+        FModelSecondaryMotionCollisionShape raw[2]{};
+        raw[0].radius = 0.1f;
+        raw[1].radius = 0.3f;
+        gk::FVector3d firstPoint{};
+        gk::FVector3d secondPoint{};
+        for (uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            firstPoint.value[axis] = root.value[axis] + first.value[axis];
+            secondPoint.value[axis] = root.value[axis] + second.value[axis];
+        }
+        raw[0].start = { static_cast<float>(firstPoint.value[0]), static_cast<float>(firstPoint.value[1]), static_cast<float>(firstPoint.value[2]) };
+        raw[1].start = { static_cast<float>(root.value[0] + 0.75 * (first.value[0] + second.value[0])), static_cast<float>(root.value[1] + 0.75 * (first.value[1] + second.value[1])), static_cast<float>(root.value[2] + 0.75 * (first.value[2] + second.value[2])) };
+        raw[0].end = raw[0].start;
+        raw[1].end = raw[1].start;
+        if (!PrepareSecondaryMotionCollisionShapes(raw, 2u, shapes, error) || !roots.Append(root) || !initialDirections.Append(first) || !candidateDirections.Append(second) || !initialPositions.Append(root) || !initialPositions.Append(firstPoint) || !farCandidate.Append(root) || !farCandidate.Append(secondPoint))
+        {
+            return false;
+        }
+        chain.segmentCount = 1u;
+        chain.cosineLimit = -1.0;
+        chain.shapes = shapes.Data();
+        chain.shapeCount = shapes.Count();
+        reference.direction = first;
+        reference.length = 1.0;
+        anchor.chainIndex = 0u;
+        anchor.segmentIndex = 0u;
+        anchor.definition.direction = first;
+        anchor.definition.offset = first;
+        anchor.definition.cosineLimit = -1.0;
+        anchor.weight = 1.0;
+        contact.anchorCount = 1u;
+        contact.shapes = shapes.Data();
+        contact.shapeCount = shapes.Count();
+        return true;
+    }
+
+    /**
+     * rootと長さを保つ指定角の姿勢を、solverの補間を使わず構成する。
+     */
+    bool MakePose(double angle, gk::Array<gk::FVector3d>& positions) const
+    {
+        gk::FVector3d endpoint = roots.At(0u);
+        for (uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            endpoint.value[axis] += cos(angle) * initialDirections.At(0u).value[axis] + sin(angle) * candidateDirections.At(0u).value[axis];
+        }
+        return positions.Append(roots.At(0u)) && positions.Append(endpoint);
+    }
+
+    /**
+     * 検査済み入力を内部contractionへ渡し、seed探索とは独立に呼び出す。
+     */
+    bool Contract(gk::Array<gk::FVector3d>& positions, bool& clear, gk::String& error) const
+    {
+        return ContractPreparedSecondaryMotionWeightedCandidate(&chain, 1u, &reference, 1u, roots, initialDirections, candidateDirections, &anchor, 1u, &contact, 1u, initialPositions, positions, clear, error);
+    }
+
+    /**
+     * double位置を解析的な球距離で検査し、既存validatorでfloat保存後も確認する。
+     */
+    bool HasAllConstraints(const gk::Array<gk::FVector3d>& positions, gk::String& error) const
+    {
+        if (positions.Count() != 2u || memcmp(&positions.At(0u), roots.Data(), sizeof(gk::FVector3d)) != 0)
+        {
+            return false;
+        }
+        const double length = Distance(positions.At(0u), positions.At(1u));
+        double directionDot = 0.0;
+        for (uint32_t axis = 0u; axis < 3u; ++axis)
+        {
+            if (!isfinite(positions.At(0u).value[axis]) || !isfinite(positions.At(1u).value[axis]))
+            {
+                return false;
+            }
+            directionDot += (positions.At(1u).value[axis] - positions.At(0u).value[axis]) * reference.direction.value[axis];
+        }
+        if (!isfinite(length) || !(length > 0.0) || fabs(length - reference.length) > 1.0e-12 || directionDot / length < chain.cosineLimit)
+        {
+            return false;
+        }
+        const auto weighted = EvaluateCapturedFixtureAnchorPoint(anchor, &chain, positions);
+        for (uint32_t index = 0u; index < shapes.Count(); ++index)
+        {
+            const auto& shape = shapes.At(index);
+            const auto& root = positions.At(0u);
+            const auto& tip = positions.At(1u);
+            double projection = 0.0;
+            for (uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                projection += (shape.start.value[axis] - root.value[axis]) * (tip.value[axis] - root.value[axis]);
+            }
+            const double amount = fmax(0.0, fmin(1.0, projection / (length * length)));
+            gk::FVector3d nearest = root;
+            for (uint32_t axis = 0u; axis < 3u; ++axis)
+            {
+                nearest.value[axis] += amount * (tip.value[axis] - root.value[axis]);
+            }
+            if (Distance(tip, shape.start) < shape.radius - shape.tolerance || Distance(nearest, shape.start) < shape.radius - shape.tolerance || Distance(weighted, shape.start) < shape.radius - 0.5 * shape.tolerance)
+            {
+                return false;
+            }
+        }
+        return HasCapturedFixtureConstraints(&chain, 1u, &reference, &anchor, &contact, 1u, initialPositions.Data(), positions, error);
+    }
+};
+
+/**
+ * 中点が侵入していても、その手前の成立区間を捨てずに入力へ近い姿勢を選ぶ。
+ */
+bool TestNonmonotonicFractionContractionKeepsNearClearInterval()
+{
+    bool passed = true;
+    for (uint32_t orientation = 0u; orientation < 3u; ++orientation)
+    {
+        FNonmonotonicContractionFixture fixture;
+        gk::String error;
+        gk::Array<gk::FVector3d> witness;
+        gk::Array<gk::FVector3d> midpoint;
+        gk::Array<gk::FVector3d> candidate;
+        if (!fixture.Initialize(orientation, error) || !fixture.MakePose(10.0 * 3.14159265358979323846 / 180.0, witness) || !fixture.MakePose(0.25 * 3.14159265358979323846, midpoint) || !candidate.AppendRange(fixture.farCandidate.Data(), fixture.farCandidate.Count()))
+        {
+            return Fail("非単調な接触経路の最小入力を準備できません");
+        }
+        // 両端を一つの境界と見なせないことを、contractionと別の幾何検査で先に確認する。
+        if (fixture.HasAllConstraints(fixture.initialPositions, error) || fixture.HasAllConstraints(midpoint, error) || !fixture.HasAllConstraints(fixture.farCandidate, error) || !fixture.HasAllConstraints(witness, error))
+        {
+            return Fail("初期・中点の侵入または近い成立witnessの独立検査が不正です");
+        }
+        const double witnessDistance = Distance(fixture.initialPositions.At(1u), witness.At(1u));
+        bool preserved = false;
+        if (!fixture.Contract(candidate, preserved, error) || !preserved || !error.Empty() || !fixture.HasAllConstraints(candidate, error))
+        {
+            return Fail("非単調経路のcontractionがdoubleまたは保存後の全制約を保ちません");
+        }
+        const double displacement = Distance(fixture.initialPositions.At(1u), candidate.At(1u));
+        if (displacement > witnessDistance + 0.001)
+        {
+            fprintf(stderr, "非単調経路の近い成立区間を見落としました: axis=%u distance=%.17g witness=%.17g\n", orientation, displacement, witnessDistance);
+            passed = false;
+        }
+    }
+    return passed;
+}
+
+/**
+ * 成立候補を近づける途中の全確保境界で、既存候補の所有配列を保つ。
+ */
+bool TestNonmonotonicFractionContractionAllocationAtomicity()
+{
+    FNonmonotonicContractionFixture fixture;
+    gk::String error;
+    if (!fixture.Initialize(0u, error))
+    {
+        return false;
+    }
+    uint32_t failures = 0u;
+    for (uint32_t allowed = 0u; allowed < 512u; ++allowed)
+    {
+        gk::Array<gk::FVector3d> candidate;
+        if (!candidate.AppendRange(fixture.farCandidate.Data(), fixture.farCandidate.Count()) || !error.Assign("接触候補の全確保段階で、元の位置配列を変更せず、失敗理由を保存するために十分な長さを先に確保する領域です"))
+        {
+            return false;
+        }
+        const auto* allocation = candidate.Data();
+        bool preserved = true;
+        gk::SetAllocationFailureAfterForTesting(allowed);
+        const bool evaluated = fixture.Contract(candidate, preserved, error);
+        gk::ResetAllocationFailureForTesting();
+        if (evaluated)
+        {
+            return failures > 8u && preserved && error.Empty() && fixture.HasAllConstraints(candidate, error);
+        }
+        ++failures;
+        if (preserved || error.Empty() || candidate.Count() != fixture.farCandidate.Count() || candidate.Data() != allocation || memcmp(candidate.Data(), fixture.farCandidate.Data(), static_cast<size_t>(candidate.Count()) * sizeof(gk::FVector3d)) != 0)
+        {
+            return Fail("contractionの確保失敗で候補位置・配列所有・成立flagまたは診断を壊しました");
+        }
+    }
+    return Fail("contractionの確保失敗検査が有限の上限内に完了しません");
+}
+
+/**
+ * 比較元の位置と固定rootの非有限値を拒否し、成立候補の配列を変更しない。
+ */
+bool TestContractionRejectsNonfiniteInitialPositionsAndRoots()
+{
+    bool passed = true;
+    for (uint32_t kind = 0u; kind < 6u; ++kind)
+    {
+        FNonmonotonicContractionFixture fixture;
+        gk::String error;
+        gk::Array<gk::FVector3d> candidate;
+        if (!fixture.Initialize(0u, error) || !candidate.AppendRange(fixture.farCandidate.Data(), fixture.farCandidate.Count()))
+        {
+            return Fail("非有限入力のcontraction検査を準備できません");
+        }
+        const double invalid = kind % 2u == 0u ? NAN : INFINITY;
+        if (kind < 2u)
+        {
+            fixture.initialPositions.At(1u).value[0] = invalid;
+        }
+        else if (kind < 4u)
+        {
+            fixture.initialPositions.At(0u).value[0] = invalid;
+        }
+        else
+        {
+            fixture.roots.At(0u).value[0] = invalid;
+        }
+        const auto* allocation = candidate.Data();
+        bool preserved = true;
+        const bool evaluated = fixture.Contract(candidate, preserved, error);
+        if (evaluated || preserved || error.Empty() || candidate.Count() != fixture.farCandidate.Count() || candidate.Data() != allocation || memcmp(candidate.Data(), fixture.farCandidate.Data(), static_cast<size_t>(candidate.Count()) * sizeof(gk::FVector3d)) != 0)
+        {
+            fprintf(stderr, "contractionが非有限の初期位置またはrootを原子的に拒否しません: input=%u returned=%d clear=%d error=%s\n", kind, evaluated ? 1 : 0, preserved ? 1 : 0, error.CStr());
+            passed = false;
+        }
+    }
+    return passed;
+}
+
 }
 
 int main()
 {
-    return TestMinimaxStoredSuccessAndBoundedFailure() && TestStoredCandidateValidatesViewsAndClearsOldError() && TestSignedRowsKeepClearContactsAndRootSpanRules() && TestOpposedOffsetsEscapeSymmetricOwnerSeeds() && TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
+    return TestContractionRejectsNonfiniteInitialPositionsAndRoots() && TestNonmonotonicFractionContractionAllocationAtomicity() && TestNonmonotonicFractionContractionKeepsNearClearInterval() && TestMinimaxStoredSuccessAndBoundedFailure() && TestStoredCandidateValidatesViewsAndClearsOldError() && TestSignedRowsKeepClearContactsAndRootSpanRules() && TestOpposedOffsetsEscapeSymmetricOwnerSeeds() && TestWeightedFirstClearIsNotNearestClearCandidate() && TestCurrentInputContactContinuationAndStoredWitness() && TestContactContinuationSeedAndStoredWitness() && TestCapturedWeightedContactCluster() && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.8f) && TestOpposedAnchorsUseTheirWeightedSkinPosition(0.99f) && TestUnrelatedChainKeepsItsCurrentDirectionDuringWeightedSeeding() && TestTinyBodyContactDoesNotOvercorrect() && TestRotatedCurrentPoseKeepsNearbyClearCorrection() && TestBodyDirectionPrefersNearbyClearPoseToClearReference() && TestThreeAnchorsAndInvalidInputsAreAtomic() && TestAntiparallelInitialDirectionFindsClearSeed() && TestNearAntiparallelWeightedContactUsesSeedFallback() && TestRootZeroOffsetAndFixedOnlyContacts() && TestRootHeavyWeightedOffsetsWithFixedHip() && TestMultiSegmentWeightedOffsetsUseAncestorRotation() && TestWeightedSpheresCompeteWithChainBodyCapsules() ? 0 : 1;
 }

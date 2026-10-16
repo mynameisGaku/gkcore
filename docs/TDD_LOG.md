@@ -2010,3 +2010,30 @@ Debug/Releaseの最終2frame gateも全339行列・既存JSON62行・IK/時刻/m
 主な記録はbody-proxy-20261016/下のgeometry/breast-two-inside-spheres-manifest.json、breast-two-thigh-three-short-manifest.json、contracts/short-thigh-14shape-serialization-audit.json、fixed-trajectory-comparison.json、fixed-trajectory-prefix1574-comparison.json、design/history750-threecase-body-proxy-summary.json、base-matrix-debug-release-gate.jsonと、各fixed3000のlog/traceです。
 
 失敗した初期exporterの重複PPM4枚をworkspace内の生成物と確認して片づける操作は、自動承認レビューでblocked by policyとなり実行されませんでした。別の方法での削除は試していません。現行build・最新成功画像・候補の再現記録・元assetは保持しています。
+
+
+## 近い成立区間を見落とす縮小探索を修正する
+
+2026-10-16、成立候補を入力へ近づけるContractClearCandidateが、方向の補間率に対して接触の有無が単調だと扱っている問題を修正しました。固定root・長さ1の単骨を+Xから+Yへ向け、中心(1,0,0)/半径.1と中心(.75,.75,0)/半径.3の球を、骨点・線分・weighted点へ同時に適用すると、45度は侵入していても、その手前の10度に成立姿勢があります。従来方式は最初の45度を棄却した時点で手前を捨て、約61.406度、入力からの移動量1.02117888を返しました。独立した10度の成立姿勢は移動量.17431149です。回転・平行移動した計3ケースで、実装変更前のDebug/ReleaseのREDを確認しました。
+
+従来の12回による結果を保持したまま、その手前を近い順に区切って最大4回だけ追加評価します。先に成立区間が見つかれば残りの判定をその局所区間へ使い、同じdouble接触評価とfloat保存後の全骨長・角度・接触検査が通り、全点の二乗変位合計が厳密に小さくなる場合だけ置き換えます。元のseed順、角度、接触許容幅、主探索の反復上限は変更していません。任意に狭い成立区間や大域最短、frame間の最大角度まで保証する探索ではありません。描画FKの最終検査は維持しますが、追加候補が後段FKで失敗した場合に旧候補を再試行する機能は追加していません。
+
+検証用の内部入口では出力を別所有し、途中の全確保失敗で候補のcount・pointer・bytesと成立flagを保持することを検査しました。独立レビューで初期位置のNaN/Infを拒否しない穴を発見し、root/tipの各NaN/InfでREDを追加してから有限値検査を修正しました。本来のResolveは既に入力位置を検査しています。roots配列のNaN/Infも含む6入力で、理由付き失敗と原子性を確認しています。MSVC19.51/SDK10.0.28000.0のRuntimeOFF全buildとCTestはDebug71/71・4.33秒、Release71/71・3.58秒成功し、weighted targetの全24契約、新3軸と全OOM境界を通過しました。追加の独立読取監査に必須所見はなく、自作変更はformatter・UTF-8 BOM/CRLFを通しています。
+
+未採用14身体形状の急変も、旧8a実装の別buildで実入力を保存しました。Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0のReleaseで固定1/60秒759frameが完走し、旧固定traceの先頭759行と全byte一致しました。757/758の各2macro、計4Resolveは全成功で、全89点・全339基準行列と履歴・既存12probeの判定を保存しています。130.422度の急変は758:1:2の接触補正に由来し、Skirt_6.002→003は直前macroからの予測で0.240901度だけ変化した後、Resolveが131.039462度回していました。元clear候補131.113444度を最終fraction.998291015625までしか縮められず、復元89点と実出力は最大3.14e-16mで一致します。この記録だけから手前の成立区間があるとは断定せず、新探索の効果は同じ入力の再生と全軌跡で別に確認します。
+
+記録はbuild/native-validation/contact-continuity-20261016/下のcontracts/nonmonotonic-native-red-summary.json、nonfinite-initial-red-summary.json、final-all-cpu-and-finite-guard-summary.json、capture758/first/continuity-analysis.jsonと入力記録です。
+
+
+修正後の実入力比較はv142の別Out/Intを使い、旧8aの全89点がcapture出力とdouble bit一致することを先に確認しました。新版Resolveと新Contract単独も4入力すべて旧出力と全bit一致し、各9474行と元の保存後検査が成立しました。758:1:2は入力からの二乗変位合計1.708757412176761で不変です。入力の違反はweighted15・node4・span6、最大は左腿shape4に対するweighted369の5.223mmです。手前の3標本では胸・右腿・Spineの別条件が最大違反になり、単一の相殺や不可能性の証明とは扱いません。元入力から既存minimaxを同32上限で直接1回だけ試すCPU診断も、理由付きエラーなしの未解決でした。実身体proxyの変更やmain採用はしていません。
+
+最終Release capture DLLで公式設定の固定1/60秒3000frameは完走し、trace SHA256 dda5c45decfde062c7eca49d6410478da026109a1740949aded2144ad7db8214が旧版と一致しました。方向変化最大44.408度・p99 12.856度、45/90度超0件、root相対移動最大74.151mm・p99 18.115mmも不変です。未採用短腿14形状は1574frame完了後next1574で同じ接触失敗となり、3000成功扱いにはしません。成功prefixの全5,678,536bytesも旧版と一致し、SHA256は848edf38dd87b9f3d34251198a9d8d3234d381d8c7740633bb7dae34fe093988です。最大130.422度、45度超34segment/5frame、90度超6segment/1frame、root相対移動最大258.476mmで改善はありません。今回の一般的な縮小探索の修正と、この実入力の急変解消を明確に分けます。
+
+追加記録はdesign/replay758/four-input-replay-summary.json、minimax-original-input/summary.json、capture758/official-fixed3000-comparison.json、short-thigh-fixed3000-comparison.jsonです。再現入力・設定・元assetは保持します。
+
+
+最終RuntimeはWindows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0でDebug/Releaseともbuild成功しました。公式559球・8形状・骨球.038の開始0/2.1秒・両構成各120frame、計480GPU frameは全有効で、追加339基準行列を除く全既存JSON順序・payload・原文、IK/時刻/map/report、保存4PPM全byteが旧基準と一致しました。Debug/Release間は339行を含め全一致です。各339行の番号順・有限値・元float精度と、現8身体行列の16float全bit一致も確認しました。Skirt/Jacket確認点のproxy侵入は両区間0、Shirtは開始0平均6.8083点・最深12.9971mm、開始2.1平均8.9583点・最深12.2138mmを残します。実身体面や衣服三角形全体の非貫通を意味しません。記録はcontracts/continuity-final-official-fourcase-parity.jsonです。
+
+通常SDKをinstallし、許可リスト61ファイルとconsumerへ配置した22runtimeファイルの全byte一致を確認しました。import tableは通常gkcore.dllだけを参照します。通常DLLのSHA256はc867aa56641ead2b5a8400d7fb12d7a4a9dacf09e2e63511a12605aad9f5ca38、capture DLLは7b2d6ead7308fff59efc26501298a9e5eac30eff1e701cf88962dccdfa82b731です。同じYUMEKA＋Skinning Test/Swinging blend＋右腕IK・13鎖・559球・8形状、可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、単独600frame/warmup0はexit0・completed=true、15.407FPS、p95 69.553ms、secondary58.632ms、Draw0.466/Present5.157/IK0.578msでした。CPU build/解析・他GPU検査は同時実行していません。以前の17.441FPSとは実時間の更新履歴が異なるため固定負荷の比較ではありませんが、現在の速度目標を満たしたとは扱いません。300FPSと追加形状での急変・停止は未解決です。記録はsdk-final-summary.json、product-imports.txt、product-realtime600.logです。
+
+ゲーム用exportは396ファイルで、tests・検証ツール・開発記録・私有assetの混入はありません。独立監査で全期待bytes、local link76件・fragment3件、formatterとBOM/CRLFを確認しました。公開ガイドには有限探索の制限も記載し、元の公式設定は維持しました。記録はcontracts/final-curation-audit.jsonです。
