@@ -398,7 +398,7 @@ bool ParseMode(const char* text, const char*& mode, uint32_t& frameCount)
 }
 
 /**
- * 外部IK captureのframe数を2から120の範囲で読み取る。
+ * 外部IK captureのframe数を2から4096の範囲で読み取り、履歴を保った長時間検証を行えるようにする。
  */
 bool ReadAnimationFrameCount(uint32_t& frameCount)
 {
@@ -413,7 +413,7 @@ bool ReadAnimationFrameCount(uint32_t& frameCount)
     char* end = nullptr;
     // 範囲検査前の整数値。
     const unsigned long parsed = strtoul(text, &end, 10);
-    if (errno == ERANGE || end == text || *end != '\0' || parsed < 2 || parsed > 120)
+    if (errno == ERANGE || end == text || *end != '\0' || parsed < 2 || parsed > 4096)
     {
         return false;
     }

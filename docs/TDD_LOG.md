@@ -1978,3 +1978,15 @@ Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.2
 公式構成の固定1/60秒3000frameも最終capture DLLで完走し、全trace SHA256 dda5c45decfde062c7eca49d6410478da026109a1740949aded2144ad7db8214 が旧実装と一致しました。通常SDKは許可リスト61ファイル、consumerへ配置した22ファイルの全byte一致、import tableの通常gkcore.dllだけの参照を確認しました。通常DLL SHA256は4bac8b4befb3ac3c83746c17906ed4f78e801e3c528dfe9ae17c5b4d084e9d43、capture DLLはa470f40f7bc9043fda2ab58cac1abfd1ca0e6d900af8fcf238abe5848c6ff6daです。単独可視1280×720・VSyncなし・標準効果・debug表示/頂点補正OFF、同じYUMEKA＋2motion blend＋右腕IK＋13鎖・559球・8形状の600frame/warmup0はexit0・completed=true、17.441FPS、p95 67.747ms、secondary51.058ms、Draw0.459/Present5.179/IK0.570msでした。CPU解析/buildと他GPU試験は同時実行していません。前回17.714FPSとの固定負荷比較ではなく、300FPSは未達です。記録は同directoryのfixed3000-parity.json、sdk-final-summary.json、product-imports.txt、product-realtime600.logです。
 
 ゲーム用exportは396ファイルで、新しい内部Runtime4ファイルとCMake登録・公開ガイドを含み、tests・私有asset・開発記録は含みません。独立監査で許可リスト・全期待byteの一致と、文書local link76件・fragment3件の成立を確認しました。自作変更はUTF-8 BOM/CRLF、C++はformatterと独立監査を通しています。記録はcontracts/final-curation-audit.jsonです。
+
+## 身体形状の配置を全boneの実行列で照合する
+
+2026-10-16、capture専用のGKCORE_SKIN_SURFACE_BASE_MATRICES=1を追加しました。指定surface frameの正常なsnapshotに限り、同じ確定更新のpreviousBaseMatricesを全bone番号順でJSONLへ保存します。身体形状が付いていないBreastなどのboneも対象で、元の番号と16個のfloatを保持します。通常DLL・SDKには入りません。encoderは全入力を検査し、全JSONが完成した場合だけ出力を置き換えます。flag未指定では追加配列の確保も行いません。
+
+専用testは常に失敗するstubでREDを確認してから実装しました。339boneの行順・個別平行移動、有限特殊floatのbit復元、JSON名escape、末尾NaN/無限大、不正配列数、出力alias、全確保失敗境界の原子性をDebug/Releaseで確認しています。最初の実機記録は元FBXの名前のないrootを拒否しました。空名の有効契約をRED→GREENで追加しましたが、FBXのBoneName APIは空名や重複名でnullptrを返す仕様でした。最終bridgeでは、有効番号の範囲内で取得できない名前だけを空文字へ変換し、番号と行列をそのまま保存します。名前が得られないことと行列不正を分け、架空のbone名を付けません。初期失敗記録もbody-proxy-20261016/へ保持しています。
+
+Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.22621.0でDebug/Release captureをbuildしました。Releaseの2frame gateで339行・surface error0を確認後、公式559球・8形状・骨球.038の開始0/2.1秒・各120frameを再実行しました。frame54/20の各339行は全て番号順・finite・元float精度を保ち、既存8形状の同bone行列と全bit一致しました。追加339行だけを除く全1460/1718行の順序・payload・JSON原文、IK/時刻/map/reportと2枚のPPM全byteは従来と一致し、記録欠落・surface errorはありません。無名はbone0だけでした。全CPUはMSVC19.51/SDK10.0.28000.0でDebug71/71・4.68秒、Release71/71・3.58秒成功です。独立レビューではbridge・encoderの組み込みに必須所見はありません。
+
+履歴を保って750付近の実身体面を保存するため、実モデルcaptureのframe上限を120から4096へ広げました。旧800指定が引数拒否となるREDを残し、修正後の公式設定は800/800 GPU frameを完走してframe750のsurface・全行列を保存できました。画像枚数1〜16と保存開始frame0〜65535の既存上限は維持しています。独立監査で除算・loop・画像保存範囲を確認しました。固定stepは明示的に1/60秒を渡し、未指定時のduration/(N-1)と混同しません。別プログラムのtraceとは初期時刻と更新履歴を照合する必要があるため、同時刻だけを根拠に同一姿勢とは扱いません。
+
+記録はbuild/native-validation/body-proxy-20261016/下のcontracts/base-matrices-exporter-contracts-summary.json、bridge-readonly-audit.json、long-capture-frame-limit-readonly-audit.json、design/body-proxy-base-matrix-capture-validation.json、cpu-final-*-tests.logです。Runtimeの動作コードや公式の身体設定は、この記録機能の変更では更新していません。

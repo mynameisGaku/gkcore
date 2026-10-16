@@ -363,4 +363,56 @@ bool EncodeModelSkinSurfaceCapture(uint32_t frame, const FModelSkinSurfaceCaptur
     return true;
 }
 
+bool EncodeModelSkinSurfaceBaseMatrices(uint32_t frame, const gk::Array<const char*>& boneNames, const gk::Array<float>& matrices, gk::String& output, gk::String& error)
+{
+    if (&output == &error)
+    {
+        return false;
+    }
+    error.Clear();
+    const uint32_t boneCount = boneNames.Count();
+    if (boneCount == 0u || boneCount > UINT32_MAX / 16u || matrices.Count() != boneCount * 16u)
+    {
+        error.Assign("surface base matrix names or count is invalid");
+        return false;
+    }
+    // 最後のboneに不正値があっても、JSON候補の作成前に検出する。
+    for (uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        if (!boneNames.At(bone))
+        {
+            error.Assign("surface base matrix bone name is null");
+            return false;
+        }
+        for (uint32_t element = 0u; element < 16u; ++element)
+        {
+            if (!isfinite(matrices.At(bone * 16u + element)))
+            {
+                error.Assign("surface base matrix is not finite");
+                return false;
+            }
+        }
+    }
+    // 出力全体を別所有し、途中の確保失敗では公開文字列を変更しない。
+    gk::String json;
+    for (uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        bool encoded = json.Append("{\"type\":\"gkcore_model_skin_surface_base_matrix\",\"frame\":") && json.AppendUnsigned(frame) && json.Append(",\"bone\":") && json.AppendUnsigned(bone) && json.Append(",\"boneCount\":") && json.AppendUnsigned(boneCount) && json.Append(",\"boneName\":") && AppendJsonString(boneNames.At(bone), json) && json.Append(",\"matrixLayout\":\"column-major\",\"matrixSource\":\"previousBaseMatrices from the current completed update; pre-secondary base; model space before instance SRT\",\"previousBaseMatrix\":[");
+        for (uint32_t element = 0u; encoded && element < 16u; ++element)
+        {
+            // floatをdoubleへ正確に拡大し、再読込時のbitを保つ17桁で記録する。
+            char text[64]{};
+            const int count = snprintf(text, sizeof(text), "%s%.17g", element ? "," : "", static_cast<double>(matrices.At(bone * 16u + element)));
+            encoded = count >= 0 && static_cast<size_t>(count) < sizeof(text) && json.Append(text, static_cast<uint32_t>(count));
+        }
+        if (!encoded || !json.Append("]}\n"))
+        {
+            error.Assign("surface base matrix JSON allocation or formatting failed");
+            return false;
+        }
+    }
+    output.MoveFrom(json);
+    return true;
+}
+
 }

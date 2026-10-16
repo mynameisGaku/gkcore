@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <limits>
+#include <stdlib.h>
 
 namespace
 {
@@ -246,6 +247,164 @@ bool TestAllocationAtomicity()
     return false;
 }
 
+/**
+ * 実モデルと同じ339boneで、全要素と特殊な有限floatの保存を検査する。
+ */
+bool TestBaseMatrixEncoding()
+{
+    Array<const char*> names;
+    Array<float> matrices;
+    const float values[16] = { 1.0f, -0.0f, 0.1f, -0.25f, std::numeric_limits<float>::max(), std::numeric_limits<float>::min(), std::numeric_limits<float>::denorm_min(), -std::numeric_limits<float>::max(), 1.00000011920928955078125f, 123.456f, -9.0f, 0.0f, 4.0f, 5.0f, 6.0f, 1.0f };
+    for (uint32_t bone = 0u; bone < 339u; ++bone)
+    {
+        if (!names.Append(bone == 0u ? "" : (bone == 338u ? "Breast_1_L\"\\\n\t\001" : "bone")) || !matrices.AppendRange(values, 16u))
+        {
+            return false;
+        }
+        // 隣のboneの行列を再利用する誤りも検出する。
+        matrices.At(bone * 16u + 12u) = static_cast<float>(bone);
+    }
+    String output;
+    String error;
+    output.Assign("preserved");
+    if (!Check(EncodeModelSkinSurfaceBaseMatrices(54u, names, matrices, output, error), "全bone基準行列の正例をJSONLへ変換できません"))
+    {
+        return false;
+    }
+    const char* cursor = output.CStr();
+    for (uint32_t bone = 0u; bone < names.Count(); ++bone)
+    {
+        char prefix[192]{};
+        snprintf(prefix, sizeof(prefix), "{\"type\":\"gkcore_model_skin_surface_base_matrix\",\"frame\":54,\"bone\":%u,\"boneCount\":339,\"boneName\":", bone);
+        if (!Check(strncmp(cursor, prefix, strlen(prefix)) == 0, "基準行列のframe・bone番号・全bone数が一致しません"))
+        {
+            return false;
+        }
+        if (bone == 0u && !Check(strncmp(cursor + strlen(prefix), "\"\",", 3u) == 0, "名前の無いbone0を空文字のまま保存できません"))
+        {
+            return false;
+        }
+        const char* end = strchr(cursor, '\n');
+        const char* data = strstr(cursor, "\"previousBaseMatrix\":[");
+        const char* metadata = strstr(cursor, "\"matrixLayout\":\"column-major\",\"matrixSource\":\"previousBaseMatrices from the current completed update; pre-secondary base; model space before instance SRT\"");
+        if (!Check(end && data && data < end && metadata && metadata < end, "基準行列の配列または座標系metadataがありません"))
+        {
+            return false;
+        }
+        data += strlen("\"previousBaseMatrix\":[");
+        for (uint32_t element = 0u; element < 16u; ++element)
+        {
+            char* next = nullptr;
+            const float parsed = static_cast<float>(strtod(data, &next));
+            if (!Check(next != data && memcmp(&parsed, matrices.Data() + bone * 16u + element, sizeof(float)) == 0 && *next == (element == 15u ? ']' : ','), "有限floatのbitまたはcolumn-majorの順番が変わりました"))
+            {
+                return false;
+            }
+            data = next + 1;
+        }
+        if (!Check(data[0] == '}' && data[1] == '\n', "基準行列JSONLの末尾が不正です"))
+        {
+            return false;
+        }
+        cursor = end + 1;
+    }
+    return Check(*cursor == '\0' && error.Empty() && strstr(output.CStr(), R"(Breast_1_L\"\\\u000a\u0009\u0001)"), "全bone数または名前のJSON escapeが一致しません");
+}
+
+/**
+ * 最後のboneを含む入力全体を検査し、不正値で既存の出力を変更しない。
+ */
+bool TestBaseMatrixInvalidAtomicity()
+{
+    bool passed = true;
+    for (uint32_t kind = 0u; kind < 8u; ++kind)
+    {
+        Array<const char*> names;
+        Array<float> matrices;
+        names.Append("first");
+        names.Append("last");
+        for (uint32_t element = 0u; element < 32u; ++element)
+        {
+            matrices.Append(1.0f);
+        }
+        switch (kind)
+        {
+        case 0u:
+            names.Clear();
+            matrices.Clear();
+            break;
+        case 1u:
+            names.At(1u) = nullptr;
+            break;
+        case 2u:
+            matrices.Clear();
+            break;
+        case 3u:
+            names.Append("excess");
+            break;
+        case 4u:
+            matrices.Append(0.0f);
+            break;
+        case 5u:
+            matrices.At(31u) = std::numeric_limits<float>::quiet_NaN();
+            break;
+        case 6u:
+            matrices.At(31u) = std::numeric_limits<float>::infinity();
+            break;
+        case 7u:
+            matrices.At(31u) = -std::numeric_limits<float>::infinity();
+            break;
+        }
+        String output;
+        String error;
+        output.Assign("preserved");
+        passed = Check(!EncodeModelSkinSurfaceBaseMatrices(0u, names, matrices, output, error) && !error.Empty() && strcmp(output.CStr(), "preserved") == 0, "不正な基準行列を受理したか既存JSONを書き換えました") && passed;
+        passed = Check(!EncodeModelSkinSurfaceBaseMatrices(0u, names, matrices, output, output) && strcmp(output.CStr(), "preserved") == 0, "基準行列の出力とerrorの同一指定を拒否できません") && passed;
+    }
+    return passed;
+}
+
+/**
+ * JSON候補が途中までできた後を含む全確保境界で、出力を保持する。
+ */
+bool TestBaseMatrixAllocationAtomicity()
+{
+    Array<const char*> names;
+    Array<float> matrices;
+    for (uint32_t bone = 0u; bone < 3u; ++bone)
+    {
+        if (!names.Append("bone"))
+        {
+            return false;
+        }
+        for (uint32_t element = 0u; element < 16u; ++element)
+        {
+            matrices.Append(static_cast<float>(element));
+        }
+    }
+    uint32_t failures = 0u;
+    for (uint32_t limit = 0u; limit < 128u; ++limit)
+    {
+        String output;
+        String error;
+        output.Assign("preserved");
+        error.Assign("diagnostic capacity reserved before failure injection; this storage is longer than any exporter error message");
+        SetAllocationFailureAfterForTesting(limit);
+        const bool encoded = EncodeModelSkinSurfaceBaseMatrices(20u, names, matrices, output, error);
+        ResetAllocationFailureForTesting();
+        if (encoded)
+        {
+            return Check(failures > 1u && error.Empty(), "基準行列JSONの途中確保失敗を検査できません");
+        }
+        ++failures;
+        if (!Check(strcmp(output.CStr(), "preserved") == 0 && !error.Empty(), "基準行列JSONの確保失敗が既存出力またはerrorを壊しました"))
+        {
+            return false;
+        }
+    }
+    return false;
+}
+
 }
 
 int main()
@@ -254,5 +413,8 @@ int main()
     const bool multiple = TestMultipleBodySegments();
     const bool invalid = TestInvalidAndAtomic();
     const bool allocation = TestAllocationAtomicity();
-    return mapping && multiple && invalid && allocation ? 0 : 1;
+    const bool baseMatrices = TestBaseMatrixEncoding();
+    const bool baseInvalid = TestBaseMatrixInvalidAtomicity();
+    const bool baseAllocation = TestBaseMatrixAllocationAtomicity();
+    return mapping && multiple && invalid && allocation && baseMatrices && baseInvalid && baseAllocation ? 0 : 1;
 }

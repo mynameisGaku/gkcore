@@ -694,6 +694,46 @@ void EmitSkinSurfaceColliderMatrices(uint32_t frame, const gk::model::AModelAnim
     }
 }
 
+/**
+ * 身体形状のないboneも含め、確定更新の全基準行列を診断用に記録する。
+ * 出力全体の検査に失敗した場合は、行列を一つも書き出さない。
+ */
+void EmitSkinSurfaceBaseMatrices(uint32_t frame, const gk::model::AModelAnimationSource& source, const gk::model::FModelSecondaryMotionState* secondary)
+{
+    if (!secondary || !secondary->velocityHistoryValid)
+    {
+        EmitSkinSurfaceError(frame, "surface base matrices have no valid completed update history");
+        return;
+    }
+    // 名前はsourceから借用し、行列と同じbone順でencoderへ渡す。
+    gk::Array<const char*> boneNames;
+    const uint32_t boneCount = source.Skeleton().parents.Count();
+    if (!boneNames.Reserve(boneCount))
+    {
+        EmitSkinSurfaceError(frame, "surface base matrix bone name allocation failed");
+        return;
+    }
+    for (uint32_t bone = 0u; bone < boneCount; ++bone)
+    {
+        // 有効な無名nodeにもnullを返す形式があるため、番号を保って空名として記録する。
+        const char* boneName = source.BoneName(bone);
+        if (!boneNames.Append(boneName ? boneName : ""))
+        {
+            EmitSkinSurfaceError(frame, "surface base matrix bone name allocation failed");
+            return;
+        }
+    }
+    // 同じ確定更新の配列を読み、全行が完成した後だけ書き出す。
+    gk::String output;
+    gk::String error;
+    if (!gk::testing::EncodeModelSkinSurfaceBaseMatrices(frame, boneNames, secondary->previousBaseMatrices, output, error))
+    {
+        EmitSkinSurfaceError(frame, error.Empty() ? "surface base matrix encoding failed" : error.CStr());
+        return;
+    }
+    fputs(output.CStr(), stderr);
+}
+
 void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& resource, const gk::model::AModelAnimationSource& source, const FModelGpuSkinningGeometry& geometry, const gk::Array<uint32_t>& selectedIds, const gk::model::animation::FModelSparsePoseGeometry& reference, const gk::Array<gk::model::animation::FModelSkinPointCorrection>& corrections, const gk::model::FModelSecondaryMotionState* secondary)
 {
     // どちらも未指定なら、面の診断用処理は行わない。
@@ -784,6 +824,12 @@ void EmitSelectedSkinSurface(uint32_t frame, const gk::detail::ModelResource& re
     if (matricesFlag && strcmp(matricesFlag, "1") == 0)
     {
         EmitSkinSurfaceColliderMatrices(frame, source, secondary);
+    }
+    // 新しい身体shapeの取付位置を調べる場合だけ、未登録boneの基準行列も保存する。
+    const char* baseMatricesFlag = getenv("GKCORE_SKIN_SURFACE_BASE_MATRICES");
+    if (baseMatricesFlag && strcmp(baseMatricesFlag, "1") == 0)
+    {
+        EmitSkinSurfaceBaseMatrices(frame, source, secondary);
     }
     // 面の所属部位を調べる場合だけ、元body位置の全bone寄与も既存形式で保存する。
     const char* bindingsFlag = getenv("GKCORE_SKIN_SURFACE_BINDINGS");

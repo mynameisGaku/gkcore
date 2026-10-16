@@ -65,6 +65,13 @@ bool BuildModelSkinSurfaceCapture(const gk::model::animation::FModelGpuSkinningG
  */
 bool EncodeModelSkinSurfaceCapture(uint32_t frame, const FModelSkinSurfaceCapture& snapshot, gk::String& output, gk::String& error);
 
+/**
+ * 全boneの基準行列をcolumn-majorのJSONLへ変換する。
+ * nullの名前、行列数不一致、非有限値、確保失敗ではoutputを保つ。
+ * 名前の無いboneは空文字を保存し、bone番号で識別する。
+ */
+bool EncodeModelSkinSurfaceBaseMatrices(uint32_t frame, const gk::Array<const char*>& boneNames, const gk::Array<float>& matrices, gk::String& output, gk::String& error);
+
 }
 
 #endif
