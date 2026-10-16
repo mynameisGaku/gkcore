@@ -10,6 +10,8 @@
 
 身体形状は身体のboneへ取り付けます。揺れもの鎖root自身とその子孫boneだけは指定できません。別枝の脚boneなども使用できます。端点・半径の変換を保つため、取付boneとその祖先は正のほぼ一様scaleである必要があります。
 
+形状の端点をbone原点へそろえる必要はありません。実際に変形する部位のboneを選び、局所端点をずらして身体の厚みに合わせます。親boneとは別に動く胸などの部位には、その子boneへ球や短いカプセルを付けられます。一本の長いカプセルでは太さが合わない脚は、短い形状を複数並べて調整します。身体形状の半径には`margin`を加え、鎖との判定ではさらに鎖の球半径も加えるため、この合計を確認してください。`GetModelSecondaryMotionDebugShapes`やviewerの`--collision-debug`で実際の範囲を表示し、clip・blend・IK後の姿勢と連続再生の両方で合わせます。近似形状に接触しないことと、衣服が身体meshへ入らないことは別に確認します。
+
 鎖ごとの`SetModelSecondaryMotionChainCollisionRadius(model, firstBone, radius)`は、各boneと仮想末端を覆う球の半径をmodel空間で設定します。既定は`0`で、従来の細い節・線分接触を保ちます。指定した半径は身体形状の半径に加えて判定し、鎖を同じ先頭boneで登録し直したときと`ResetModelSecondaryMotion`の後も保持されます。setterはbone姿勢をその場で動かさず、次の`UpdateModelSecondaryMotion`から半径を使います。無効な先頭boneや負値・非有限値は失敗し、前の設定を保ちます。`ClearModelSecondaryMotion`で鎖とともに解放されます。
 
 `SetModelSecondaryMotionChainColliderMask(model, firstBone, colliderMask)`で、その鎖の節球・隣接線分が接触する身体形状を選べます。64bitのbit 0〜63は`SetModelSecondaryMotionColliders`へ渡した配列の順序に対応し、立っているbitの形状だけを使います。既定の`UINT64_MAX`は全形状、`0`はこの鎖の身体接触なしです。登録数より上のbitは無視するため、身体形状を登録する前にも指定できます。身体配列の順序を変えると、同じbitが指す形状も変わります。

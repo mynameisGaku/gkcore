@@ -1990,3 +1990,23 @@ Windows11Pro26200、RTX4070SUPER driver617.42、v142/MSVC19.29.30159・SDK10.0.2
 履歴を保って750付近の実身体面を保存するため、実モデルcaptureのframe上限を120から4096へ広げました。旧800指定が引数拒否となるREDを残し、修正後の公式設定は800/800 GPU frameを完走してframe750のsurface・全行列を保存できました。画像枚数1〜16と保存開始frame0〜65535の既存上限は維持しています。独立監査で除算・loop・画像保存範囲を確認しました。固定stepは明示的に1/60秒を渡し、未指定時のduration/(N-1)と混同しません。別プログラムのtraceとは初期時刻と更新履歴を照合する必要があるため、同時刻だけを根拠に同一姿勢とは扱いません。
 
 記録はbuild/native-validation/body-proxy-20261016/下のcontracts/base-matrices-exporter-contracts-summary.json、bridge-readonly-audit.json、long-capture-frame-limit-readonly-audit.json、design/body-proxy-base-matrix-capture-validation.json、cpu-final-*-tests.logです。Runtimeの動作コードや公式の身体設定は、この記録機能の変更では更新していません。
+
+## 胸と腿の近似形状を実身体面と連続動作で比較する
+
+同じ環境のReleaseで、胸のBreast_1_L/Rへ球を各1個追加する候補を検査しました。局所中心は左右±.012/.045/.010、局所半径.0177312847で、margin込み約22.731mmです。元8形状・559接触球・骨球.038・Skirt mask240を保持します。初期の36組の有限評価から1組に固定し、真の全bone行列を取得した後は再探索していません。54/20と旧失敗750入力の計6球は、実面との最小距離から球半径を引いた値が最小2.001887mmでした。中心の局所法線符号は負、6方向rayは全+1で、open meshのため全体内外はUnknownを保ちます。以前の推定行列との差は球中心で最大0.119µmでした。
+
+公式8形状と胸10形状を、外部clip入力0から明示1/60秒で800frameずつGPU描画しました。各800/800のskin/GPU検査が有効で、frame750の実身体13197点・三角形・全339基準行列は完全一致します。衣服1314点の実際の変化は最大15.078mm、p99 13.586mmです。31937の最寄り実面への局所負距離は12.664→5.523mmへ減りましたが、6ray全+1が残り、解消とは扱いません。32277は9.028→10.054mmへ悪化しました。実時間や別初期時刻のtraceを混ぜず、同じcapture履歴の比較です。
+
+胸10形状は固定1/60秒3000frameを完走しました。同じviewer traceの公式と入力delta・clip時刻・41bone名順・10鎖を全件照合した比較では、方向変化の最大44.408→52.357度、p99 12.856→12.846度、45度超0→2segment/frame、90度超は両0です。急変は1576→1577と2742→2743に残り、root相対移動の最大74.151→75.288mm、p99 18.115→18.394mmでした。root固定差は両0です。胸での局所改善だけを根拠に、この候補を採用しませんでした。
+
+次に、同じ胸2球を保ち、UpperLeg_L/Rの各長い形状を各3個の短いcapsuleへ置き換える1案を検査しました。bodyの0..3/6..9はdata行byteを保持し、4/5を近位に置換、10/11へ左中/遠位、12/13へ右中/遠位を追加します。Skirt10行はmask240→15600のみ変更し、骨球.038と559接触球は保持しました。float保存・scale/margin適用後の3姿勢×6形状は、軸5点の最近接距離と標本間の距離上界から、腿sheetまで最小2.001934mmの名目余白を確認しました。node半径.038やweighted球の拡張に、この余白を継承できるとはしていません。混合Hip・膝・全body面の被覆は未保証です。
+
+短腿14形状は800/800 GPU frameを完走しましたが、frame750の衣服を共通の公式8world形状へ再評価すると、侵入点は公式72/胸10の70/短腿14の80で、14自身のproxyによる61点とは異なりました。実面の31937は局所負距離2.292mmまで減る一方、32277は11.939mmへ悪化します。Shirt33727も、公式の局所正距離1.089mm・6ray全0から、局所負距離4.681mm・6ray全+1へ変わりました。公式との衣服移動は最大98.351mm、p99 79.071mmです。形状変更でproxy集計だけがよく見えることと、実身体面への改善を分けました。
+
+この14形状の固定3000要求は1574frame完了後、次のframe1574で接触の成立候補を見つけられず終了しました。completed=false、traceは0..1573だけです。同じ成功済み1574frameにそろえた公式/胸10/短腿14の方向変化最大は44.408/44.408/130.422度、45度超segment数0/0/34、90度超0/0/6でした。最大急変は757→758のSkirt_6.002→.003で、同区間のUpdate前の観測方向変化0.773度に対し、Update後は130.422度です。Update前値は前回secondaryを含むgetterで、純animation/referenceの誤差とは断定しません。root相対移動最大は短腿14で258.476mm、root固定差は全0でした。停止frameの状態自体は記録外で、品質を数値化していません。短腿14も不採用とし、公式設定・通常Runtime DLLを維持しました。次はこのような接触補正の急変を再現し、近い成立姿勢への探索を検証します。
+
+Debug/Releaseの最終2frame gateも全339行列・既存JSON62行・IK/時刻/map/report・PPM全byteが一致しました。今回の全bone記録・長時間capture拡張はdevへ反映し、一般的な身体形状の配置と可視化の使い方を公開ガイドへ追記しました。未採用候補の再現データはbuild内の検証記録として保持し、サンプルの起動設定やゲーム用treeには入れません。通常Runtimeの性能を変える変更はなく、FPSの再計測や改善主張はしていません。
+
+主な記録はbody-proxy-20261016/下のgeometry/breast-two-inside-spheres-manifest.json、breast-two-thigh-three-short-manifest.json、contracts/short-thigh-14shape-serialization-audit.json、fixed-trajectory-comparison.json、fixed-trajectory-prefix1574-comparison.json、design/history750-threecase-body-proxy-summary.json、base-matrix-debug-release-gate.jsonと、各fixed3000のlog/traceです。
+
+失敗した初期exporterの重複PPM4枚をworkspace内の生成物と確認して片づける操作は、自動承認レビューでblocked by policyとなり実行されませんでした。別の方法での削除は試していません。現行build・最新成功画像・候補の再現記録・元assetは保持しています。
