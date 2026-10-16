@@ -24,6 +24,14 @@
 別枝の脚boneなども使用できます。
 端点・半径の変換を保つため、取付boneとその祖先は正のほぼ一様scaleである必要があります。
 
+形状の端点をbone原点へそろえる必要はありません。
+実際に変形する部位のboneを選び、局所端点をずらして身体の厚みに合わせます。
+親boneとは別に動く胸などの部位には、その子boneへ球や短いカプセルを付けられます。
+一本の長いカプセルでは太さが合わない脚は、短い形状を複数並べて調整します。
+身体形状の半径には`margin`を加え、鎖との判定ではさらに鎖の球半径も加えるため、この合計を確認してください。
+`GetModelSecondaryMotionDebugShapes`やviewerの`--collision-debug`で実際の範囲を表示し、clip・blend・IK後の姿勢と連続再生の両方で合わせます。
+近似形状に接触しないことと、衣服が身体meshへ入らないことは別に確認します。
+
 鎖ごとの`SetModelSecondaryMotionChainCollisionRadius(model, firstBone, radius)`は、各boneと仮想末端を覆う球の半径をmodel空間で設定します。
 既定は`0`で、従来の細い節・線分接触を保ちます。
 指定した半径は身体形状の半径に加えて判定し、鎖を同じ先頭boneで登録し直したときと`ResetModelSecondaryMotion`の後も保持されます。
